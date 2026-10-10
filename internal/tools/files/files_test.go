@@ -12,8 +12,14 @@ import (
 )
 
 func setup(t *testing.T) (*FS, string, string) {
-	root := t.TempDir()
-	outside := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	os.WriteFile(filepath.Join(root, "app-site.xml"), []byte("<name>app.replicas</name>\n<value>3</value>\n"), 0o644)
 	os.MkdirAll(filepath.Join(root, "sub"), 0o755)
 	os.WriteFile(filepath.Join(root, "sub", "bin"), []byte{0, 1, 2}, 0o644)
