@@ -129,6 +129,7 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
 
 ### Format
 
+- `keywords` : termes qui, présents dans une demande, font proposer l'instance aux agents (en plus du nom de l'instance, du template et des cibles), voir Activation d'une instance ;
 - `params` : paramètres de l'instance, typés (`string`, `url`, `int`, `bool`, `env`, `path`, `enum`, `list` avec `item`), avec `required` et `default`. Un paramètre inconnu est rejeté ;
 - `connectors` : connexions nommées, dont les options sont rendues avec les paramètres (`{{.proxy_url}}`) :
   - `http` : `base_url`, `methods` (défaut `[GET]`), `allow` (expressions régulières sur le chemin), `headers`, `auth` (`user_env`, `password_env`, `label` : authentification basic, saisie sur le terminal si les variables sont vides), `proxy`, `proxy_port`, `verify_tls`, `ca_file`, `timeout` (défaut 60s), `max_bytes` (défaut 32 Mio) ;
@@ -216,11 +217,13 @@ tool(
 
 ### Activation d'une instance
 
-Au démarrage d'un run, une instance est seulement déclarée : ses outils et son environnement sont transmis au planner, sans identifiants ni appel réseau. L'environnement reprend l'inventaire en cache du même template, script et paramètres, quel que soit son âge, sinon les cibles statiques de la configuration. Une instance n'est activée qu'au premier appel de l'un de ses outils par une tâche. Une demande qui ne concerne pas l'instance ne l'active donc pas, même sans `-t`.
+Au démarrage d'un run, une instance est seulement déclarée : ses outils et son environnement sont transmis au planner, sans identifiants ni appel réseau. L'environnement reprend l'inventaire en cache du même template, script et paramètres, quel que soit son âge, sinon les cibles statiques de la configuration. Une instance n'est activée qu'au premier appel de l'un de ses outils par une tâche. Un outil `inventory` lit l'inventaire en cache sans activer l'instance, s'il a déjà été découvert (sa date figure dans la réponse).
+
+Une instance n'est proposée aux agents (outils et environnement) que si la demande du tour ou une demande précédente de la session la mentionne : nom de l'instance, nom du template, nom d'une cible de l'inventaire ou l'un des `keywords` du template (mot entier, sans tenir compte de la casse). `-t <instance>` la force, et une instance déjà activée dans le processus (tour précédent d'une conversation) reste proposée. Sinon, l'environnement indique seulement qu'elle existe et comment l'utiliser : une question sans rapport ne peut ni l'activer ni demander ses identifiants. Le choix est tracé dans l'audit (`instances_scope`).
 
 À l'activation :
 
-1. **Identifiants** des connecteurs `http` avec `auth` : `user_env`/`password_env` si les variables sont définies, sinon saisie sur le terminal (mot de passe masqué). Pendant la saisie, le tableau de progression est suspendu et la saisie se fait sur l'écran alternatif du terminal. Ctrl-C interrompt le run. Des identifiants vides, ou l'absence de terminal et de variables, rendent l'instance indisponible pour le run.
+1. **Identifiants** des connecteurs `http` avec `auth` : `user_env`/`password_env` si les variables sont définies, sinon saisie sur le terminal (mot de passe masqué). Pendant la saisie, le tableau de progression est suspendu et la saisie se fait sur l'écran alternatif du terminal. Ctrl-C interrompt le run (en mode conversation : la conversation entière). Des identifiants vides, ou l'absence de terminal et de variables, rendent l'instance indisponible pour le run.
 2. **Découverte** (`discover` du script), sauf si l'inventaire en cache (`templates.cache_dir`) a moins de `templates.cache_ttl` et correspond au même template, au même script et aux mêmes paramètres. `--refresh` force la découverte. Un inventaire incomplet (cible injoignable, avertissement) n'est pas mis en cache.
 3. **Cibles injoignables** : retirées pour le run, avec un avertissement. Si aucune cible ne répond, l'instance est indisponible pour le run.
 
@@ -372,6 +375,14 @@ clotr run "audit des limites de ressources des déploiements" -t k8s,fs -o rappo
 clotr run -m collector=ollama/qwen2.5-coder:7b --json "inventaire des ingress exposés" > result.json
 ```
 
+```sh
+clotr run --direct "quelle version de kubelet sur les nœuds de prod ?"
+```
+
+```sh
+clotr run --chat --direct
+```
+
 | Option | Effet |
 |---|---|
 | `-c, --config` | fichier de configuration |
@@ -385,6 +396,10 @@ clotr run -m collector=ollama/qwen2.5-coder:7b --json "inventaire des ingress ex
 | `--json` | sortie JSON : plan, résultats par tâche, rapport, `models_used` |
 | `-q, --quiet` | n'affiche pas la progression sur stderr |
 | `--plain` | progression ligne par ligne au lieu du tableau dynamique |
+| `--max-agents N`, `--max-tasks N`, `--max-steps N` (`plan`, `run`) | remplacent `limits.max_agents`, `limits.max_tasks` et `limits.max_steps` pour ce run |
+| `--direct[=<rôle>]` (`run`) | réponse directe, voir Réponse directe |
+| `--chat` (`run`) | mode conversation, voir Conversation |
+| `--raw` (`run`, `session`) | rapport en Markdown brut, sans mise en forme pour le terminal |
 | `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
 
 La demande `-` est lue sur stdin. Ctrl-C annule proprement les agents en cours.
@@ -404,6 +419,31 @@ Les libellés suivent la langue d'interface (voir Langue de sortie). Tant que le
 
 Le tableau final reste affiché au-dessus du bilan, et le rapport est écrit sur stdout. Hors terminal (redirection, CI) ou avec `--plain`, la progression est écrite ligne par ligne. `-q` la supprime.
 
+### Rendu du rapport
+
+Si stdout est un terminal, `run` et `session` affichent le rapport mis en forme (titres, gras, tableaux, listes, blocs de code colorés, retour à la ligne à la largeur du terminal, 120 colonnes au plus) avec [glamour](https://github.com/charmbracelet/glamour). Le thème clair ou sombre suit le fond du terminal ; `GLAMOUR_STYLE` (`dark`, `light`, `dracula`, `tokyo-night`, `ascii`, `notty` ou un fichier JSON de style) l'impose. Le rapport reste en Markdown brut avec `--raw`, `-o`, `--json` ou une redirection, ainsi que dans `report.md`.
+
+### Réponse directe
+
+`run --direct` court-circuite le planner : un seul agent répond directement en Markdown, avec tous les outils, sans sous-agents, vérification des constats ni synthèse. L'agent identifie d'abord la source qui couvre la demande et n'utilise que ses outils ; si aucune source connectée ne la couvre, il le dit sans explorer. Comme en mode planifié, une instance que la demande ne mentionne pas ne lui est pas proposée (voir Activation d'une instance). Il garde le contrôle de progression (`stall_steps`, `max_steps`), les preuves citées `[Exxx]` avec leur annexe et le marquage des lignes appuyées sur une seule note de mémoire. Par défaut, il prend le rôle outillé de tier le plus léger (`collector` avec les rôles par défaut) ; `--direct=analyst` choisit un autre rôle. Le tour est enregistré dans la session comme un `run` : `run -s <session>` permet ensuite d'affiner, avec ou sans `--direct`.
+
+### Conversation
+
+`run --chat [demande]` ouvre un écran plein terminal (écran alternatif) sur une session, nouvelle ou reprise avec `-s`. Chaque échange est un tour de la session : mêmes outils, preuves, mémoire et enregistrement qu'un `run`. Les connecteurs (k8s, MCP, instances) sont préparés une fois pour toute la conversation, et les identifiants saisis restent en mémoire jusqu'à la fin.
+
+Pendant un tour, le tableau de progression s'affiche sous la demande, puis la réponse s'écrit en direct (texte du synthesizer, ou de l'agent avec `--direct`), mise en forme comme ci-dessus. Les lignes écrites sur stderr (avertissements, activation d'une instance) s'affichent sous le tableau, et le bilan du tour (modèles, coût, preuves, chemin du `report.md`) sous la réponse. `max_run_cost` s'applique à chaque tour.
+
+| Touche | Effet |
+|---|---|
+| `r` | répondre : ouvre la saisie pour le tour suivant |
+| `entrée` / `alt+entrée` (ou `ctrl+j`) | envoyer / nouvelle ligne |
+| `c` | copie la dernière réponse en Markdown dans le presse-papiers : `wl-copy` (Wayland), `xclip` ou `xsel` (X11), `pbcopy`, `clip.exe`, sinon séquence OSC 52 du terminal |
+| `↑` `↓` `pgup` `pgdown` `home` `end` | défilement |
+| `ctrl+c` | interrompt le tour en cours (deux fois : quitte) ; hors tour, quitte |
+| `q`, `échap` | quitte |
+
+`--chat` exige un terminal et n'accepte ni `--json` ni `-o`.
+
 ## Langue de sortie
 
 `language` (config) ou `--lang` règle deux choses :
@@ -421,6 +461,7 @@ Une session mémorise sa langue : un tour d'affinage sans `--lang` reprend celle
 Les appels LLM sont en streaming SSE (`stream: true` avec `stream_options.include_usage`) :
 - **réponse** : contenu, `reasoning_content` et fragments d'appels d'outils sont réassemblés au fil du flux ;
 - **progression** : le tableau affiche en direct `reasoning… ~N tok`, `writing… ~N tok` ou `preparing N tool call(s)…` ;
+- **texte** : en mode conversation, le texte de la réponse finale est affiché au fil du flux, sans les blocs `<think>` ;
 - **délais** : un appel est interrompu si le flux reste muet plus de `limits.idle_timeout`, ou s'il dépasse `limits.request_timeout` au total. Ces deux erreurs sont temporaires (nouvel essai, puis bascule) ;
 - **désactivation** : `providers[].stream: false` repasse un provider en mode classique. Un serveur qui ignore `stream` et répond en JSON est aussi accepté.
 
@@ -467,7 +508,7 @@ internal/catalog/       découverte des modèles, profils, cache
 internal/router/        sélection et fallback par rôle
 internal/llm/           client /chat/completions, pool par provider
 internal/agent/         boucle tool-calling
-internal/orchestrator/  planner, DAG concurrent, synthèse
+internal/orchestrator/  planner, DAG concurrent, synthèse, réponse directe
 internal/memory/        mémoire partagée
 internal/session/       sessions et tours
 internal/budget/        budget et coûts par provider
@@ -476,7 +517,8 @@ internal/template/      moteur de templates : chargement, paramètres, hôte Sta
 internal/driver/ssh/    SSH en lecture seule : commandes fixes, chemins autorisés, known_hosts
 internal/creds/         identifiants : variables d'environnement ou saisie
 internal/audit/         journal JSONL
-internal/progress/      progression stderr
+internal/progress/      progression stderr, écran conversation
+internal/markdown/      rendu Markdown pour le terminal
 packaging/homebrew/     modèle de la formule Homebrew
 .github/workflows/      CI (vet, tests, cross) et release sur tag
 ```

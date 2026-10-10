@@ -290,6 +290,14 @@ func fmtDur(d time.Duration) string {
 }
 
 func (b *board) render() string {
+	lines := []string{b.header()}
+	for _, r := range b.rows {
+		lines = append(lines, b.line(r))
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func (b *board) header() string {
 	done, failed, total := b.counts()
 	state := i18n.T("state.running")
 	if b.finished {
@@ -304,11 +312,7 @@ func (b *board) render() string {
 		head += i18n.T("header.failed", failed)
 	}
 	head += " · " + i18n.N(b.toolCalls, "tool call")
-	lines := []string{stHeader.Render(ansi.Truncate(head, max(b.width-1, 20), "…"))}
-	for _, r := range b.rows {
-		lines = append(lines, b.line(r))
-	}
-	return strings.Join(lines, "\n") + "\n"
+	return stHeader.Render(ansi.Truncate(head, max(b.width-1, 20), "…"))
 }
 
 func (b *board) View() tea.View {
@@ -327,8 +331,8 @@ type TUI struct {
 
 func NewTUI(stderr *os.File, maxSteps int, title string) *TUI {
 	t := &TUI{done: make(chan struct{}), stop: make(chan struct{}), drained: make(chan struct{})}
-	out, pipe := captureStderr(stderr, t)
-	t.out = out
+	out, pipe, restore := captureStderr(stderr)
+	t.out, t.restore = out, restore
 	width, height, err := term.GetSize(out.Fd())
 	if err != nil || width <= 0 || height <= 0 {
 		width, height = 120, 40
@@ -351,7 +355,7 @@ func NewTUI(stderr *os.File, maxSteps int, title string) *TUI {
 	} else {
 		close(t.drained)
 	}
-	go watchResize(t, out)
+	go watchResize(t.p, t.stop, out)
 	go func() {
 		defer close(t.done)
 		if _, err := t.p.Run(); err != nil {

@@ -86,6 +86,7 @@ type Spec struct {
 	Candidates []catalog.ModelInfo
 	Deadline   time.Time
 	Check      func(content string) string
+	OnText     func(text string)
 }
 
 type Output struct {
@@ -126,6 +127,7 @@ type session struct {
 	cur   int
 	out   *Output
 	model catalog.ModelInfo
+	shown string
 }
 
 func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
@@ -177,12 +179,14 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 			full := msg.Content
 			for i := 0; i < maxResumes && resp.Choices[0].FinishReason == "length"; i++ {
 				r.Audit.Log("truncated", map[string]any{"task": spec.TaskID, "step": step, "model": s.out.Model, "resume": i + 1})
+				s.shown = full
 				msgs = append(msgs, llm.Message{Role: "assistant", Content: resp.Choices[0].Message.Content}, llm.Message{Role: "user", Content: continueMsg})
 				if resp, err = s.chat(ctx, step, llm.Request{Messages: msgs, Session: s.id, OnProgress: s.streamProgress(step)}); err != nil {
 					return s.out, err
 				}
 				full += resp.Choices[0].Message.Content
 			}
+			s.shown = ""
 			content := strings.TrimSpace(thinkBlock.ReplaceAllString(full, ""))
 			for i := 0; content == "" && i < maxEmptyRetries; i++ {
 				r.Audit.Log("empty_answer", map[string]any{"task": spec.TaskID, "step": step, "model": s.out.Model, "retry": i + 1})
@@ -317,6 +321,9 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 			req.Model = m.ID
 			req.MaxTokens = min(m.MaxOutput, maxOutputTokens)
 			sent := req
+			if s.spec.OnText != nil {
+				sent.OnContent = liveText(s.spec.OnText, s.shown)
+			}
 			if !m.Sovereign {
 				sent.Messages = r.boundary().Outbound(m, req.Messages)
 			}
@@ -451,6 +458,24 @@ func (s *session) streamProgress(step int) func(llm.StreamProgress) {
 		}
 		s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "stream", Model: s.spec.Candidates[s.cur].Ref(), Detail: detail, Step: step})
 	}
+}
+
+func liveText(show func(string), prefix string) func(string) {
+	var b strings.Builder
+	b.WriteString(prefix)
+	show(visibleText(prefix))
+	return func(delta string) {
+		b.WriteString(delta)
+		show(visibleText(b.String()))
+	}
+}
+
+func visibleText(s string) string {
+	s = thinkBlock.ReplaceAllString(s, "")
+	if i := strings.Index(s, "<think>"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimLeft(s, " \n")
 }
 
 func approxTokens(chunks int) string {

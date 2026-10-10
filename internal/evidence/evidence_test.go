@@ -97,3 +97,28 @@ func TestImportAndSearchAcrossTurns(t *testing.T) {
 		t.Fatal("annexe sans la preuve du tour précédent")
 	}
 }
+
+func TestBeginNextTurn(t *testing.T) {
+	root := t.TempDir()
+	s := Open("", 1)
+	s.Begin(filepath.Join(root, "001"), 1)
+	id1 := s.Add("t1", "k8s_list", "{}", "a", nil)
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	s.Begin(filepath.Join(root, "002"), 2)
+	id2 := s.Add("direct", "k8s_list", "{}", "b", nil)
+	if id1 != "E001" || id2 != "E2.001" || s.Len() != 1 || !s.Has(id1) {
+		t.Fatalf("ids %s %s, len %d", id1, id2, s.Len())
+	}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	list, err := Load(filepath.Join(root, "002"))
+	if err != nil || len(list) != 1 || list[0].ID != id2 {
+		t.Fatalf("index du tour 2: %+v %v", list, err)
+	}
+	if !strings.Contains(s.Annex("["+id1+"] ["+id2+"]", "A", "x", filepath.Base), "E001.txt") {
+		t.Fatal("preuve du tour 1 absente de l'annexe")
+	}
+}

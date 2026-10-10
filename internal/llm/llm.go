@@ -114,6 +114,7 @@ type Request struct {
 	StreamOptions *StreamOptions       `json:"stream_options,omitempty"`
 	Session       string               `json:"-"`
 	OnProgress    func(StreamProgress) `json:"-"`
+	OnContent     func(delta string)   `json:"-"`
 }
 
 type StreamOptions struct {
@@ -460,6 +461,9 @@ func (c *Client) chatStream(ctx context.Context, req Request) (*Response, error)
 				if d.Content != nil {
 					content.WriteString(*d.Content)
 					progress.ContentChars += len(*d.Content)
+					if req.OnContent != nil && *d.Content != "" {
+						req.OnContent(*d.Content)
+					}
 				}
 				for _, r := range []*string{d.ReasoningContent, d.Reasoning} {
 					if r != nil {

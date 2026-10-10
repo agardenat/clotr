@@ -473,3 +473,33 @@ func TestCheckRejectsThenAccepts(t *testing.T) {
 		t.Fatalf("out=%+v err=%v appels=%d", out, err, n.Load())
 	}
 }
+
+func TestLiveText(t *testing.T) {
+	var calls atomic.Int32
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		if calls.Add(1) == 1 {
+			req.OnContent("je regarde")
+			return testutil.Reply("je regarde", testutil.Call("k8s_list", map[string]string{"r": "pods"})), nil
+		}
+		for _, d := range []string{"<think>calcul", "</think>## Ré", "ponse"} {
+			req.OnContent(d)
+		}
+		return testutil.Reply("<think>calcul</think>## Réponse"), nil
+	}}
+	var cur, peak int32
+	var mu sync.Mutex
+	var shown []string
+	r := runner(chat, registry(&cur, &peak))
+	out, err := r.Run(context.Background(), Spec{TaskID: "direct", System: "s", User: "u", Tools: []string{"k8s_list"}, Candidates: models[:1], OnText: func(s string) {
+		mu.Lock()
+		shown = append(shown, s)
+		mu.Unlock()
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"", "je regarde", "", "", "## Ré", "## Réponse"}
+	if out.Content != "## Réponse" || strings.Join(shown, "|") != strings.Join(want, "|") {
+		t.Fatalf("texte affiché: %q (réponse %q)", shown, out.Content)
+	}
+}

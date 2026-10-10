@@ -48,23 +48,31 @@ func (in *Instance) Tools() []tools.Tool {
 			out = append(out, in.scriptToolAdapter(st))
 		}
 	}
+	var cached []bool
+	for range out {
+		cached = append(cached, false)
+	}
 	for _, ts := range in.T.Tools {
 		out = append(out, kinds[ts.Kind].build(in, in.Name+"_"+ts.ToolName(), ts.Description))
+		cached = append(cached, ts.Kind == "inventory")
 	}
 	for i, t := range out {
-		out[i] = activatingTool{t, in}
+		out[i] = activatingTool{t, in, cached[i]}
 	}
 	return out
 }
 
 type activatingTool struct {
 	tools.Tool
-	in *Instance
+	in     *Instance
+	cached bool
 }
 
 func (t activatingTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
-	if err := t.in.ensure(); err != nil {
-		return "", err
+	if !t.cached || !t.in.hasCachedInventory() {
+		if err := t.in.ensure(); err != nil {
+			return "", err
+		}
 	}
 	return t.Tool.Call(ctx, raw)
 }

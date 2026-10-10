@@ -405,3 +405,46 @@ func TestCheckVerdicts(t *testing.T) {
 		t.Fatal("contrôle JSON des sous-agents")
 	}
 }
+
+func TestDirect(t *testing.T) {
+	o, _ := newOrch(t, []string{dagPlan}, nil)
+	o.Runner.Evidence = evidence.Open(t.TempDir(), 1)
+	var mu sync.Mutex
+	var systems []string
+	o.Runner.Chat = &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		mu.Lock()
+		systems = append(systems, req.Messages[0].Content)
+		mu.Unlock()
+		if req.Messages[len(req.Messages)-1].Role != "tool" {
+			return testutil.Reply("", testutil.Call("k8s_list", map[string]string{"resource": "nodes"})), nil
+		}
+		req.OnContent("3 nœuds Ready [E001].")
+		return testutil.Reply("3 nœuds Ready [E001]."), nil
+	}}
+	var live []string
+	o.OnAnswer = func(s string) { live = append(live, s) }
+	rep, err := o.Direct(context.Background(), "combien de nœuds ?", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Plan.Tasks) != 1 || rep.Plan.Tasks[0].Role != "collector" || !slices.Contains(rep.Plan.Tasks[0].Tools, "k8s_list") {
+		t.Fatalf("plan: %+v", rep.Plan)
+	}
+	if !strings.HasPrefix(rep.Markdown, "3 nœuds Ready [E001].") || !strings.Contains(rep.Markdown, "k8s_list") || rep.Results[0].Status != "ok" || rep.Results[0].ToolCalls != 1 {
+		t.Fatalf("rapport: %+v\n%s", rep.Results, rep.Markdown)
+	}
+	if live[len(live)-1] != "3 nœuds Ready [E001]." {
+		t.Fatalf("texte en direct: %q", live)
+	}
+	for _, s := range systems {
+		if strings.Contains(s, "planificateur") || !strings.Contains(s, "sans planification") {
+			t.Fatalf("prompt: %s", s)
+		}
+	}
+	if r, err := o.DirectRole("thinker"); err != nil || r != "thinker" {
+		t.Fatalf("rôle explicite: %s %v", r, err)
+	}
+	if _, err := o.DirectRole("planner"); err == nil {
+		t.Fatal("planner accepté comme rôle direct")
+	}
+}

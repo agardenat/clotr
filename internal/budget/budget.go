@@ -166,6 +166,19 @@ func (t *Tracker) Seed(statuses []Status) []string {
 	return excluded
 }
 
+func (t *Tracker) NewRun() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, a := range t.accounts {
+		a.runCost, a.calls, a.reported, a.estimated, a.viaInfo = 0, 0, false, false, false
+		a.baseline = a.spend
+		a.exhausted = a.check()
+	}
+}
+
 func (a *account) check() string {
 	if !a.cfg.Limited() {
 		return ""

@@ -75,3 +75,22 @@ func TestGroupMembers(t *testing.T) {
 		t.Fatalf("hors groupe: %v", got)
 	}
 }
+
+func TestWithout(t *testing.T) {
+	r := NewRegistry(100)
+	for _, n := range []string{"k8s_list", "prod_ssh_read", "prod_inventory", "production_x"} {
+		r.Add(fake{n})
+	}
+	r.AddGroup("prod")
+	r.AddCompanions("prod", "k8s_list")
+	w := r.Without("prod")
+	if got := strings.Join(w.Names(), ","); got != "k8s_list,production_x" {
+		t.Fatalf("outils: %s", got)
+	}
+	if _, err := w.Expand([]string{"prod"}); err == nil {
+		t.Fatal("groupe masqué encore accepté")
+	}
+	if len(r.Names()) != 4 {
+		t.Fatal("registre d'origine modifié")
+	}
+}

@@ -114,6 +114,16 @@ var msgs = map[string]msg{
 	"plan.tools":           {"  tools: %s\n", "  outils : %s\n"},
 	"plan.deps":            {"  depends on: %s\n", "  dépend de : %s\n"},
 	"progress.unavailable": {"progress: dynamic display unavailable: %v", "progression : affichage dynamique indisponible : %v"},
+	"chat.placeholder":     {"Your request…", "Votre demande…"},
+	"chat.interrupted":     {"interrupted", "interrompu"},
+	"chat.interrupting":    {"interrupting… (ctrl+c again to quit)", "interruption… (ctrl+c à nouveau pour quitter)"},
+	"chat.copied":          {"copied as Markdown: %d characters (%s)", "copié en Markdown : %d caractères (%s)"},
+	"chat.copy.none":       {"no answer to copy", "aucune réponse à copier"},
+	"chat.logs.more":       {"… %d earlier lines", "… %d lignes précédentes"},
+	"chat.help.input":      {"enter send · alt+enter new line · pgup/pgdown scroll · esc cancel · ctrl+c quit", "entrée envoyer · alt+entrée nouvelle ligne · pgup/pgdown défiler · échap annuler · ctrl+c quitter"},
+	"chat.help.running":    {"ctrl+c interrupt · ↑/↓ pgup/pgdown scroll", "ctrl+c interrompre · ↑/↓ pgup/pgdown défiler"},
+	"chat.help.idle":       {"r reply · c copy as Markdown · q quit · ↑/↓ pgup/pgdown home/end scroll", "r répondre · c copier en Markdown · q quitter · ↑/↓ pgup/pgdown début/fin défiler"},
+	"chat.report":          {"report: %s", "rapport : %s"},
 }
 
 var plurals = map[string]msg{

@@ -146,7 +146,8 @@ func TestStream(t *testing.T) {
 	defer srv.Close()
 	cfg, _ := config.Parse([]byte("providers:\n  - {name: p, base_url: " + srv.URL + "}\n"))
 	var calls []StreamProgress
-	resp, err := NewPool(cfg, srv.Client()).Chat(context.Background(), "p", Request{Model: "m", OnProgress: func(p StreamProgress) { calls = append(calls, p) }})
+	var deltas []string
+	resp, err := NewPool(cfg, srv.Client()).Chat(context.Background(), "p", Request{Model: "m", OnProgress: func(p StreamProgress) { calls = append(calls, p) }, OnContent: func(d string) { deltas = append(deltas, d) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +160,9 @@ func TestStream(t *testing.T) {
 	}
 	if resp.Usage.CompletionTokens != 7 || resp.Cost.Reported {
 		t.Fatalf("usage/cost: %+v %+v", resp.Usage, resp.Cost)
+	}
+	if strings.Join(deltas, "|") != "Voici |le plan" {
+		t.Fatalf("texte en direct: %q", deltas)
 	}
 	if len(calls) != 7 || calls[len(calls)-1].ToolCalls != 2 || calls[0].ReasoningChars == 0 {
 		t.Fatalf("progression: %+v", calls)

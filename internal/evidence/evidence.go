@@ -43,6 +43,17 @@ func Open(dir string, turn int) *Store {
 	return &Store{dir: dir, prefix: prefix, items: map[string]Item{}}
 }
 
+func (s *Store) Begin(dir string, turn int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prior = append(s.prior, s.order...)
+	s.order, s.n, s.dir = nil, 0, dir
+	s.prefix = "E"
+	if turn > 1 {
+		s.prefix = fmt.Sprintf("E%d.", turn)
+	}
+}
+
 func (s *Store) Add(task, tool, args, output string, callErr error) string {
 	if s == nil {
 		return ""

@@ -88,6 +88,7 @@ type Orchestrator struct {
 	Turn            int
 	AfterTask       func(ctx context.Context)
 	Language        string
+	OnAnswer        func(text string)
 }
 
 func (o *Orchestrator) langDirective() string {
@@ -597,23 +598,101 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 		System:     o.synthesizerSystem(),
 		User:       user,
 		Candidates: cands,
+		OnText:     o.OnAnswer,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("synthesizer: %w", err)
 	}
 	o.Events.Emit(progress.Event{Task: "synthesizer", Kind: "done", Model: out.Model})
 	o.afterTask(ctx)
-	content := out.Content
-	if n := 0; o.Runner.Evidence != nil {
-		content, n = flagNoteOnlyLines(content, o.Runner.Evidence, o.noteContents())
-		if n > 0 {
-			o.Audit.Log("note_only_lines", map[string]any{"count": n})
+	return o.finalize(out.Content), out.Model, nil
+}
+
+func (o *Orchestrator) finalize(content string) string {
+	if o.Runner.Evidence == nil {
+		return content
+	}
+	content, n := flagNoteOnlyLines(content, o.Runner.Evidence, o.noteContents())
+	if n > 0 {
+		o.Audit.Log("note_only_lines", map[string]any{"count": n})
+	}
+	return content + o.Runner.Evidence.Annex(content, i18n.T("evidence.title"), i18n.T("evidence.unknown"), o.displayPath)
+}
+
+const DirectTask = "direct"
+
+func (o *Orchestrator) DirectRole(role string) (string, error) {
+	workers := o.Cfg.WorkerRoles()
+	if role != "" {
+		if !slices.Contains(workers, role) {
+			return "", fmt.Errorf("--direct: rôle %q invalide (valides: %s)", role, strings.Join(workers, ", "))
+		}
+		return role, nil
+	}
+	best := ""
+	for _, name := range workers {
+		r := o.Cfg.Roles[name]
+		if !r.Tools {
+			continue
+		}
+		if best == "" || config.TierRank(r.Tier) < config.TierRank(o.Cfg.Roles[best].Tier) {
+			best = name
 		}
 	}
-	if o.Runner.Evidence != nil {
-		content += o.Runner.Evidence.Annex(content, i18n.T("evidence.title"), i18n.T("evidence.unknown"), o.displayPath)
+	if best == "" {
+		return "", errors.New("--direct: aucun rôle outillé dans la configuration")
 	}
-	return content, out.Model, nil
+	return best, nil
+}
+
+func (o *Orchestrator) Direct(ctx context.Context, request, role string) (*Report, error) {
+	role, err := o.DirectRole(role)
+	if err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	t := Task{ID: DirectTask, Role: role, Goal: request}
+	if o.Cfg.Roles[role].Tools {
+		t.Tools = o.Tools.Names()
+	}
+	plan := &Plan{Tasks: []Task{t}}
+	res := Result{TaskID: t.ID, Role: role, Goal: request}
+	cands, err := o.Router.Candidates(role)
+	if err != nil {
+		return nil, err
+	}
+	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: t.ID, Role: role, Goal: request}}})
+	o.Events.Emit(progress.Event{Task: t.ID, Kind: "start", Model: o.Runner.First(cands), Detail: request})
+	o.Audit.Log("direct", map[string]any{"role": role, "tools": len(t.Tools)})
+	out, err := o.Runner.Run(ctx, agent.Spec{
+		TaskID:     t.ID,
+		Role:       role,
+		System:     o.directPrompt(role),
+		User:       o.withHistory(request),
+		Tools:      t.Tools,
+		Candidates: cands,
+		OnText:     o.OnAnswer,
+	})
+	if out != nil {
+		res.Model, res.Steps, res.ToolCalls, res.Cost, res.Limited, res.Limit = out.Model, out.Steps, out.ToolCalls, out.Cost, out.Limited, out.Limit
+		plan.Model = out.Model
+	}
+	res.Duration = time.Since(start).Truncate(time.Millisecond).String()
+	report := &Report{Plan: plan, Model: res.Model}
+	if err != nil {
+		res.Status, res.Error = "failed", err.Error()
+		report.Results = []Result{res}
+		o.Events.Emit(progress.Event{Task: t.ID, Kind: "failed", Model: res.Model, Detail: res.Error, Step: res.Steps, Duration: time.Since(start)})
+		o.Audit.Log("task_end", map[string]any{"task": t.ID, "status": res.Status, "model": res.Model, "error": res.Error, "steps": res.Steps, "tool_calls": res.ToolCalls, "duration": res.Duration})
+		return report, err
+	}
+	res.Status, res.Raw = "ok", out.Content
+	report.Results = []Result{res}
+	report.Markdown = o.finalize(out.Content)
+	o.Events.Emit(progress.Event{Task: t.ID, Kind: "done", Model: res.Model, Detail: i18n.N(res.ToolCalls, "tool call"), Cost: res.Cost, Step: res.Steps, Duration: time.Since(start)})
+	o.Audit.Log("task_end", map[string]any{"task": t.ID, "status": res.Status, "model": res.Model, "steps": res.Steps, "tool_calls": res.ToolCalls, "duration": res.Duration})
+	o.afterTask(ctx)
+	return report, nil
 }
 
 func ExtractJSON(s string, v any) error {
@@ -781,6 +860,26 @@ Quand tu as terminé, réponds UNIQUEMENT avec un objet JSON:
 {"findings":["[CRITIQUE|MAJEUR|MINEUR|INFO] constat [E012]"],"evidence":["[E012] outil + paramètres essentiels : extrait factuel"],"gaps":["ce qui n'a pas pu être vérifié et pourquoi"]}
 Chaque sortie d'outil commence par son identifiant de preuve [Exxx] (archivée en entier) : cite-le au début de chaque evidence et à la fin de chaque finding qu'il établit.
 %s`, role, r.Description, o.webRule(), o.Environment, o.langDirective())
+}
+
+func (o *Orchestrator) directPrompt(role string) string {
+	r := o.Cfg.Roles[role]
+	tools := "Tu n'as pas d'outil : réponds à partir de la demande et du contexte de session ; ce que tu ne peux pas établir, dis-le."
+	if r.Tools {
+		tools = `Tes outils sont uniquement des outils de lecture. Commence par déterminer, d'après l'environnement ci-dessous, quelle source couvre la demande, et n'utilise que ses outils. Si aucune source disponible ne la couvre (annuaire, application ou système non connecté), réponds-le tout de suite en citant les sources disponibles, sans explorer au hasard : ni recherche de noms dans des logs, ni listing exploratoire. Une instance non activée demande des identifiants à l'utilisateur au premier appel de l'un de ses outils : ne l'appelle que si la demande la concerne.
+Va droit au but : les appels strictement nécessaires pour répondre, en parallèle quand ils sont indépendants, requêtes ciblées plutôt que listings massifs. Chaque sortie d'outil commence par son identifiant de preuve [Exxx] (archivée en entier) : cite-le à côté de chaque fait qui en vient.
+Avant de collecter, regarde si la donnée existe déjà dans la session (evidence_search, evidence_read, memory_search) et ne recollecte que ce qui a pu changer depuis.
+Une erreur d'outil est une limite de ta collecte, pas un constat sur l'infrastructure : signale-la comme telle.`
+	}
+	return fmt.Sprintf(`Tu es un agent d'analyse d'infrastructure en LECTURE SEULE (rôle %s: %s) qui répond directement à l'utilisateur, sans planification ni sous-agents.
+Tu travailles en autonomie complète : ne pose aucune question, n'attends aucune confirmation, ne modifie jamais rien.
+%s
+Reste factuel : n'invente jamais une valeur par défaut, un comportement de produit, la signification d'un message ou d'un paramètre, ni une chronologie. Un lien de cause à effet doit être appuyé par une preuve, sinon présente-le comme hypothèse. Pour un problème, vise la cause et le correctif durable, pas seulement l'état actuel.
+%s
+Environnement:
+%s
+Réponse finale : Markdown, directe et concise, sans préambule ; si la demande impose une forme ou une longueur, respecte-la strictement. Les notes de mémoire (#N) ne sont pas des preuves : cite les preuves [Exxx]. Ne fais suivre aucune annexe de preuves : clotr l'ajoute.
+%s`, role, r.Description, tools, o.webRule(), o.Environment, o.langDirective())
 }
 
 func (o *Orchestrator) webRule() string {

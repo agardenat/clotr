@@ -15,9 +15,8 @@ func TestCaptureStderr(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer origR.Close()
-	tui := &TUI{}
-	out, pipe := captureStderr(origW, tui)
-	if pipe == nil || tui.restore == nil {
+	out, pipe, restore := captureStderr(origW)
+	if pipe == nil || restore == nil {
 		t.Fatal("capture non installée")
 	}
 	fmt.Fprintln(origW, "W1008 warning from client-go")
@@ -31,7 +30,7 @@ func TestCaptureStderr(t *testing.T) {
 	if !strings.Contains(string(buf[:n]), "board frame") {
 		t.Fatalf("sortie du tableau détournée: %q", buf[:n])
 	}
-	tui.restore()
+	restore()
 	fmt.Fprintln(origW, "after restore")
 	n, _ = origR.Read(buf)
 	if !strings.Contains(string(buf[:n]), "after restore") {

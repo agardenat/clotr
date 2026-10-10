@@ -507,4 +507,47 @@ def discover(ctx):
 	if _, err := inv.Call(context.Background(), []byte(`{}`)); err != nil || hits != 1 {
 		t.Fatalf("cache frais non utilisé: %v (%d requêtes)", err, hits)
 	}
+	t.Setenv("T_P", "")
+	before := prompts
+	in, inv = newInst()
+	if env := strings.Join(in.EnvironmentLines(), "\n"); !strings.Contains(env, "i_inventory lit ce cache sans activer") {
+		t.Fatalf("environnement: %s", env)
+	}
+	if out, err := inv.Call(context.Background(), []byte(`{}`)); err != nil || !strings.Contains(out, "n=7") || prompts != before || hits != 1 {
+		t.Fatalf("inventaire en cache sans activation: %q %v (%d saisies, %d requêtes)", out, err, prompts-before, hits)
+	}
+}
+
+func TestMentioned(t *testing.T) {
+	tpl := writeTemplate(t, `name: acme-cloud
+keywords: [acme, widget]
+targets:
+  - {kind: cluster, name: prod-etl}
+tools:
+  - kind: inventory
+`, "")
+	in, err := NewInstance("lab", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Defer(context.Background(), "", time.Hour, false); err != nil {
+		t.Fatal(err)
+	}
+	for text, want := range map[string]bool{
+		"pourquoi Alice ne fait plus partie du groupe Finance ?": false,
+		"état de la plateforme ACME":                             true,
+		"files WIDGET en retard":                                 true,
+		"logs du cluster prod-etl":                               true,
+		"compare avec lab":                                       true,
+		"contexte lab-staging":                                   true,
+		"widgets et labx":                                        false,
+		"acme-cloud ou pas":                                      true,
+	} {
+		if got := in.Mentioned(text); got != want {
+			t.Errorf("%q: %v, attendu %v", text, got, want)
+		}
+	}
+	if in.Activated() {
+		t.Fatal("instance différée vue comme activée")
+	}
 }

@@ -19,6 +19,7 @@ type Template struct {
 	Name        string               `yaml:"name"`
 	Version     int                  `yaml:"version"`
 	Description string               `yaml:"description"`
+	Keywords    []string             `yaml:"keywords"`
 	Params      map[string]Param     `yaml:"params"`
 	Connectors  map[string]Connector `yaml:"connectors"`
 	Targets     []map[string]string  `yaml:"targets"`
