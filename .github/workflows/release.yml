@@ -35,7 +35,7 @@ jobs:
           flags=()
           case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
-            --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}" dist/*.tar.gz dist/*.deb dist/*.rpm dist/SHA256SUMS
+            --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}" dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/SHA256SUMS
 
   homebrew:
     needs: release

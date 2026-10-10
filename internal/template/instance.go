@@ -361,7 +361,7 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 	}
 	kh := o.str("known_hosts")
 	if kh == "" {
-		kh = filepath.Join(stateDir(), "clotr", "known_hosts")
+		kh = filepath.Join(config.StateDir(), "clotr", "known_hosts")
 	}
 	p, err := ssh.NewPool(ssh.Options{Proxy: px, KnownHosts: config.ExpandHome(kh), HostKey: ssh.HostKeyPolicy(o.str("host_key")), MaxConns: maxConns})
 	if err != nil {
@@ -369,14 +369,6 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 	}
 	in.pool = p
 	return p, nil
-}
-
-func stateDir() string {
-	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
-		return d
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state")
 }
 
 func (in *Instance) sshEndpoint(t *Target, h *Host) (ssh.Endpoint, error) {

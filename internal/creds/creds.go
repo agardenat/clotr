@@ -23,9 +23,19 @@ var (
 	cache = map[string]Pair{}
 )
 
-var OpenTTY = func() (*os.File, error) {
-	return os.OpenFile("/dev/tty", os.O_RDWR, 0)
+type Console struct {
+	In  *os.File
+	Out *os.File
 }
+
+func (c *Console) Close() {
+	_ = c.In.Close()
+	if c.Out != c.In {
+		_ = c.Out.Close()
+	}
+}
+
+var OpenTTY = openConsole
 
 func Resolve(userEnv, passEnv, label string) (Pair, error) {
 	p := Pair{}
@@ -48,21 +58,21 @@ func Resolve(userEnv, passEnv, label string) (Pair, error) {
 		return Pair{}, fmt.Errorf("%s: identifiants absents (variables %s / %s) et aucun terminal pour les saisir", label, orNone(userEnv), orNone(passEnv))
 	}
 	defer tty.Close()
-	if !term.IsTerminal(tty.Fd()) {
+	if !term.IsTerminal(tty.In.Fd()) {
 		return Pair{}, fmt.Errorf("%s: identifiants absents (variables %s / %s) et aucun terminal pour les saisir", label, orNone(userEnv), orNone(passEnv))
 	}
 	if p.User == "" {
-		fmt.Fprint(tty, i18n.T("prompt.user", label))
-		line, err := bufio.NewReader(tty).ReadString('\n')
+		fmt.Fprint(tty.Out, i18n.T("prompt.user", label))
+		line, err := bufio.NewReader(tty.In).ReadString('\n')
 		if err != nil && err != io.EOF {
 			return Pair{}, err
 		}
 		p.User = strings.TrimSpace(line)
 	}
 	if p.Pass == "" {
-		fmt.Fprint(tty, i18n.T("prompt.password", label, p.User))
-		b, err := term.ReadPassword(tty.Fd())
-		fmt.Fprintln(tty)
+		fmt.Fprint(tty.Out, i18n.T("prompt.password", label, p.User))
+		b, err := term.ReadPassword(tty.In.Fd())
+		fmt.Fprintln(tty.Out)
 		if err != nil {
 			return Pair{}, err
 		}
@@ -81,11 +91,11 @@ func Confirm(question string) (bool, error) {
 		return false, err
 	}
 	defer tty.Close()
-	if !term.IsTerminal(tty.Fd()) {
+	if !term.IsTerminal(tty.In.Fd()) {
 		return false, fmt.Errorf("aucun terminal")
 	}
-	fmt.Fprint(tty, question)
-	line, err := bufio.NewReader(tty).ReadString('\n')
+	fmt.Fprint(tty.Out, question)
+	line, err := bufio.NewReader(tty.In).ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, err
 	}
