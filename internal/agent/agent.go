@@ -213,6 +213,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 				msg.ToolCalls[i].ID = fmt.Sprintf("call_%d_%d", step, i)
 			}
 			msg.ToolCalls[i].Type = "function"
+			msg.ToolCalls[i].Function.Name = cleanToolName(msg.ToolCalls[i].Function.Name)
 		}
 		fresh := false
 		for _, tc := range msg.ToolCalls {
@@ -471,4 +472,11 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func cleanToolName(name string) string {
+	if i := strings.Index(name, "<|"); i > 0 {
+		name = name[:i]
+	}
+	return strings.TrimSpace(name)
 }

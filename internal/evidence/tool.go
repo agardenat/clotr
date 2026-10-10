@@ -109,17 +109,18 @@ func (t searchTool) Call(_ context.Context, raw json.RawMessage) (string, error)
 func (readTool) Name() string { return ToolName }
 
 func (readTool) Description() string {
-	return "Relit la sortie complète d'un appel d'outil déjà archivée sous son identifiant de preuve (ex: E012), sans refaire l'appel. Utile quand une sortie a été raccourcie dans l'historique. pattern filtre les lignes (expression régulière), sinon offset/lines choisissent une plage."
+	return "Relit la sortie complète d'un appel d'outil déjà archivée sous son identifiant de preuve (ex: E012), sans refaire l'appel. Utile quand une sortie a été raccourcie dans l'historique. pattern garde les lignes correspondantes et exclude retire celles qui correspondent (expressions régulières RE2, combinables), sinon offset/lines choisissent une plage."
 }
 
 func (readTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"identifiant de preuve, ex: E012 ou E2.005"},"pattern":{"type":"string","description":"expression régulière (syntaxe RE2 : pas de lookahead (?!…) ni de référence arrière) : seules les lignes correspondantes sont renvoyées"},"offset":{"type":"integer","description":"première ligne (1 par défaut)"},"lines":{"type":"integer","description":"nombre de lignes (200 par défaut)"}},"required":["id"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"identifiant de preuve, ex: E012 ou E2.005"},"pattern":{"type":"string","description":"expression régulière RE2 : seules les lignes correspondantes sont renvoyées"},"exclude":{"type":"string","description":"expression régulière RE2 : les lignes correspondantes sont retirées (remplace un lookahead négatif (?!…), non pris en charge)"},"offset":{"type":"integer","description":"première ligne (1 par défaut)"},"lines":{"type":"integer","description":"nombre de lignes (200 par défaut)"}},"required":["id"]}`)
 }
 
 func (t readTool) Call(_ context.Context, raw json.RawMessage) (string, error) {
 	a, err := tools.Decode[struct {
 		ID      string `json:"id"`
 		Pattern string `json:"pattern"`
+		Exclude string `json:"exclude"`
 		Offset  int    `json:"offset"`
 		Lines   int    `json:"lines"`
 	}](raw)
@@ -147,14 +148,18 @@ func (t readTool) Call(_ context.Context, raw json.RawMessage) (string, error) {
 		limit = 200
 	}
 	var b strings.Builder
-	if a.Pattern != "" {
-		re, err := regexp.Compile(a.Pattern)
+	if a.Pattern != "" || a.Exclude != "" {
+		keep, err := compileFilter("pattern", a.Pattern)
 		if err != nil {
-			return "", fmt.Errorf("pattern invalide: %w", err)
+			return "", err
+		}
+		drop, err := compileFilter("exclude", a.Exclude)
+		if err != nil {
+			return "", err
 		}
 		n := 0
 		for i, l := range all {
-			if !re.MatchString(l) {
+			if (keep != nil && !keep.MatchString(l)) || (drop != nil && drop.MatchString(l)) {
 				continue
 			}
 			n++
@@ -173,4 +178,19 @@ func (t readTool) Call(_ context.Context, raw json.RawMessage) (string, error) {
 		fmt.Fprintf(&b, "%d: %s\n", i+1, all[i])
 	}
 	return fmt.Sprintf("%s (%s) : lignes %d à %d sur %d\n%s", id, it.Tool, from, to, len(all), b.String()), nil
+}
+
+func compileFilter(name, expr string) (*regexp.Regexp, error) {
+	if expr == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		hint := ""
+		if strings.Contains(expr, "(?!") || strings.Contains(expr, "(?<!") {
+			hint = " ; pour écarter des lignes, utiliser exclude avec le motif positif"
+		}
+		return nil, fmt.Errorf("%s invalide (syntaxe RE2, sans lookahead ni lookbehind): %w%s", name, err, hint)
+	}
+	return re, nil
 }
