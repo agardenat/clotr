@@ -2,7 +2,7 @@ BIN      := clotr
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 GOFLAGS  := -trimpath
-PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
 DIST     := dist
 REPO     := agardenat/clotr
 NFPM     ?= go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
@@ -20,16 +20,20 @@ vet:
 
 cross:
 	@for p in $(PLATFORMS); do \
-		os=$${p%/*}; arch=$${p#*/}; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o bin/$(BIN)-$$os-$$arch ./cmd/clotr || exit 1; \
+		os=$${p%/*}; arch=$${p#*/}; ext=; [ "$$os" = windows ] && ext=.exe; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o bin/$(BIN)-$$os-$$arch$$ext ./cmd/clotr || exit 1; \
 	done
 
 dist: cross
 	rm -rf $(DIST) && mkdir -p $(DIST)
 	@for p in $(PLATFORMS); do \
-		os=$${p%/*}; arch=$${p#*/}; d=$$(mktemp -d); \
-		cp bin/$(BIN)-$$os-$$arch $$d/$(BIN) && cp LICENSE README.md $$d/ && \
-		tar --owner=0 --group=0 --numeric-owner -C $$d -czf $(DIST)/$(BIN)_$(VERSION:v%=%)_$${os}_$${arch}.tar.gz $(BIN) LICENSE README.md || exit 1; \
+		os=$${p%/*}; arch=$${p#*/}; d=$$(mktemp -d); name=$(BIN)_$(VERSION:v%=%)_$${os}_$${arch}; \
+		cp LICENSE README.md $$d/ || exit 1; \
+		if [ "$$os" = windows ]; then \
+			cp bin/$(BIN)-$$os-$$arch.exe $$d/$(BIN).exe && (cd $$d && zip -q -X $(CURDIR)/$(DIST)/$$name.zip $(BIN).exe LICENSE README.md) || exit 1; \
+		else \
+			cp bin/$(BIN)-$$os-$$arch $$d/$(BIN) && tar --owner=0 --group=0 --numeric-owner -C $$d -czf $(DIST)/$$name.tar.gz $(BIN) LICENSE README.md || exit 1; \
+		fi; \
 		rm -rf $$d; \
 	done
 	@for p in $(PLATFORMS); do \
@@ -38,7 +42,7 @@ dist: cross
 			PKG_ARCH=$$arch VERSION=$(VERSION:v%=%) $(NFPM) package --config packaging/nfpm.yaml --packager $$f --target $(DIST)/ || exit 1; \
 		done; \
 	done
-	cd $(DIST) && sha256sum *.tar.gz *.deb *.rpm > SHA256SUMS
+	cd $(DIST) && sha256sum *.tar.gz *.zip *.deb *.rpm > SHA256SUMS
 
 notes:
 	@awk -v h='## [$(VERSION:v%=%)]' 'index($$0, h) == 1 { p = 1; f = 1; next } /^## \[/ { p = 0 } p { print } END { exit !f }' CHANGELOG.md

@@ -274,7 +274,9 @@ RHEL, Fedora, Rocky, SUSE :
 sudo dnf install ./clotr-<version>-1.x86_64.rpm
 ```
 
-La page Releases du dépôt publie les paquets `.deb` et `.rpm` (amd64 et arm64 ; `aarch64` pour le `.rpm`), les archives `clotr_<version>_<os>_<arch>.tar.gz` (linux et darwin, amd64 et arm64) et `SHA256SUMS`. Les paquets installent `/usr/bin/clotr` et la documentation dans `/usr/share/doc/clotr/`, dont `clotr.example.yaml`.
+Windows : extraire `clotr.exe` de `clotr_<version>_windows_amd64.zip` (ou `_arm64`) dans un répertoire du `PATH`.
+
+La page Releases du dépôt publie les paquets `.deb` et `.rpm` (amd64 et arm64 ; `aarch64` pour le `.rpm`), les archives `clotr_<version>_<os>_<arch>.tar.gz` (linux et darwin, amd64 et arm64), les archives `.zip` Windows (amd64 et arm64) et `SHA256SUMS`. Les paquets installent `/usr/bin/clotr` et la documentation dans `/usr/share/doc/clotr/`, dont `clotr.example.yaml`.
 
 ## Build
 
@@ -292,7 +294,7 @@ make test
 make cross
 ```
 
-Les binaires sont produits dans `bin/` (`clotr`, puis `clotr-<os>-<arch>` pour linux et darwin, amd64 et arm64). La version est injectée par `VERSION=...`, sinon `git describe`, sinon `dev`.
+Les binaires sont produits dans `bin/` (`clotr`, puis `clotr-<os>-<arch>` pour linux, darwin et windows, amd64 et arm64, avec `.exe` pour windows). La version est injectée par `VERSION=...`, sinon `git describe`, sinon `dev`.
 
 `make dist` produit les archives, les paquets `.deb` et `.rpm` (via nfpm, lancé avec `go run`) et `SHA256SUMS` dans `dist/`, `make formula` la formule Homebrew `dist/clotr.rb` à partir de `SHA256SUMS`, et `make notes` la section du CHANGELOG correspondant à `VERSION`.
 
@@ -315,7 +317,9 @@ La publication dans le tap utilise le secret `HOMEBREW_TAP_TOKEN` du dépôt : j
 
 ## Configuration
 
-Le fichier est cherché dans cet ordre : `--config`, puis `$CLOTR_CONFIG`, puis `~/.config/clotr/config.yaml`. Voir [clotr.example.yaml](clotr.example.yaml). Les clés inconnues sont rejetées. Si le fichier contient des clés en clair, le protéger avec `chmod 600`.
+Le fichier est cherché dans cet ordre : `--config`, puis `$CLOTR_CONFIG`, puis `~/.config/clotr/config.yaml` (`%AppData%\clotr\config.yaml` sous Windows). Voir [clotr.example.yaml](clotr.example.yaml).
+
+Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration et les templates, `%LocalAppData%\clotr` pour le cache, les sessions, l'audit et `known_hosts`. Les chemins de la configuration acceptent `~\` comme `~/`. Les clés inconnues sont rejetées. Si le fichier contient des clés en clair, le protéger avec `chmod 600`.
 
 | Section | Rôle |
 |---|---|

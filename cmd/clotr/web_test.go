@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/agardenat/clotr/internal/config"
@@ -10,7 +9,7 @@ import (
 )
 
 func TestResolveWeb(t *testing.T) {
-	creds.OpenTTY = func() (*os.File, error) { return nil, errors.New("pas de terminal") }
+	creds.OpenTTY = func() (*creds.Console, error) { return nil, errors.New("pas de terminal") }
 	cfg := &config.Config{WebSearch: config.WebSearch{Policy: "ask", MCP: "search"}}
 	cases := []struct {
 		name         string

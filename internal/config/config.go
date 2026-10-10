@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -356,21 +357,11 @@ func (c *Config) applyDefaults() {
 		c.Catalog.CacheTTL.Duration = time.Hour
 	}
 	if c.Audit.Dir == "" {
-		base := os.Getenv("XDG_STATE_HOME")
-		if base == "" {
-			home, _ := os.UserHomeDir()
-			base = filepath.Join(home, ".local", "state")
-		}
-		c.Audit.Dir = filepath.Join(base, "clotr", "audit")
+		c.Audit.Dir = filepath.Join(StateDir(), "clotr", "audit")
 	}
 	c.Audit.Dir = ExpandHome(c.Audit.Dir)
 	if c.Sessions.Dir == "" {
-		base := os.Getenv("XDG_STATE_HOME")
-		if base == "" {
-			home, _ := os.UserHomeDir()
-			base = filepath.Join(home, ".local", "state")
-		}
-		c.Sessions.Dir = filepath.Join(base, "clotr", "sessions")
+		c.Sessions.Dir = filepath.Join(StateDir(), "clotr", "sessions")
 	}
 	c.Sessions.Dir = ExpandHome(c.Sessions.Dir)
 	if c.K8s != nil {
@@ -565,8 +556,21 @@ func (c *Config) Provider(name string) (Provider, bool) {
 	return Provider{}, false
 }
 
+func StateDir() string {
+	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
+		return d
+	}
+	if runtime.GOOS == "windows" {
+		if d, err := os.UserCacheDir(); err == nil {
+			return d
+		}
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "state")
+}
+
 func ExpandHome(p string) string {
-	if p == "~" || strings.HasPrefix(p, "~/") {
+	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "~"+string(filepath.Separator)) {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			return filepath.Join(home, strings.TrimPrefix(p, "~"))

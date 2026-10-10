@@ -4,10 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,7 +13,6 @@ import (
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
-	"golang.org/x/sys/unix"
 )
 
 var spinner = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -351,21 +348,7 @@ func NewTUI(stderr *os.File, maxSteps int, title string) *TUI {
 	} else {
 		close(t.drained)
 	}
-	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
-	go func() {
-		defer signal.Stop(winch)
-		for {
-			select {
-			case <-t.stop:
-				return
-			case <-winch:
-				if w, h, err := term.GetSize(out.Fd()); err == nil {
-					t.p.Send(tea.WindowSizeMsg{Width: w, Height: h})
-				}
-			}
-		}
-	}()
+	go watchResize(t, out)
 	go func() {
 		defer close(t.done)
 		if _, err := t.p.Run(); err != nil {
@@ -373,30 +356,6 @@ func NewTUI(stderr *os.File, maxSteps int, title string) *TUI {
 		}
 	}()
 	return t
-}
-
-func captureStderr(stderr *os.File, t *TUI) (*os.File, *os.File) {
-	fd := int(stderr.Fd())
-	saved, err := unix.Dup(fd)
-	if err != nil {
-		return stderr, nil
-	}
-	r, w, err := os.Pipe()
-	if err != nil {
-		_ = unix.Close(saved)
-		return stderr, nil
-	}
-	if err := unix.Dup2(int(w.Fd()), fd); err != nil {
-		_ = unix.Close(saved)
-		_ = r.Close()
-		_ = w.Close()
-		return stderr, nil
-	}
-	_ = w.Close()
-	t.restore = func() {
-		_ = unix.Dup2(saved, fd)
-	}
-	return os.NewFile(uintptr(saved), "terminal"), r
 }
 
 func (t *TUI) Emit(e Event) {
