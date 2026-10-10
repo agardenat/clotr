@@ -1,0 +1,43 @@
+name: demo
+version: 1
+description: service fictif de démonstration (API REST, API RPC signée, hôtes en SSH)
+script: demo.star
+params:
+  api_url: {type: url, required: true}
+  user_env: {type: env, default: DEMO_USER}
+  password_env: {type: env, default: DEMO_PASSWORD}
+  ssh_key_path: {type: path}
+  ssh_port: {type: int, default: 22}
+connectors:
+  api:
+    driver: http
+    base_url: "{{.api_url}}"
+    auth: {user_env: "{{.user_env}}", password_env: "{{.password_env}}", label: API demo}
+    allow: ["^/api/"]
+  rpc:
+    driver: http
+    base_url: "{{.api_url}}"
+    methods: [POST]
+    allow: ["^/rpc/(list|describe)[A-Z]"]
+  ssh:
+    driver: ssh
+    user: demo
+    key: "{{.ssh_key_path}}"
+    port: "{{.ssh_port}}"
+    sudo: true
+targets:
+  - kind: group
+    name: main
+files: ["~/.demo/credentials"]
+env: [DEMO_KEY]
+tools:
+  - kind: inventory
+  - kind: ssh_list
+  - kind: ssh_tail
+  - kind: log_stats
+companions: [inventory, node_status]
+ssh_paths:
+  allow: [/var/log, /var/log/**]
+  deny: ["**/*.key"]
+hints: |
+  Consigne de démonstration.

@@ -1,0 +1,68 @@
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Notes de version
+        run: make --no-print-directory notes VERSION="$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+      - run: make vet test
+      - run: make dist VERSION="$GITHUB_REF_NAME"
+      - name: Release GitHub
+        run: |
+          flags=()
+          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}" dist/*.tar.gz dist/*.deb dist/*.rpm dist/SHA256SUMS
+
+  homebrew:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAP_REPO: ${{ github.repository_owner }}/homebrew-clotr
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Formule
+        run: |
+          gh release download "$GITHUB_REF_NAME" --pattern SHA256SUMS --dir dist
+          make formula VERSION="$GITHUB_REF_NAME"
+      - name: Publication dans le tap
+        run: |
+          test -n "$TAP_TOKEN" || { echo "::error::secret HOMEBREW_TAP_TOKEN absent"; exit 1; }
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" "$RUNNER_TEMP/tap"
+          install -D -m 644 dist/clotr.rb "$RUNNER_TEMP/tap/Formula/clotr.rb"
+          cd "$RUNNER_TEMP/tap"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/clotr.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "clotr ${GITHUB_REF_NAME#v}"
+          git push origin HEAD:main
