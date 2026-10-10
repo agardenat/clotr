@@ -1,0 +1,106 @@
+providers:
+  - name: litellm
+    base_url: https://llm.internal/v1
+    api_key_env: LITELLM_API_KEY
+    max_concurrency: 4
+    model_info: true
+    budget:
+      min_remaining: 5
+      max_run_cost: 2
+  - name: gateway
+    base_url: https://gateway.internal/v1
+    api_key: ${GATEWAY_API_KEY}
+    weight: 20
+    sovereign: true
+    budget: unlimited
+  - name: opencode-go
+    base_url: https://opencode.ai/zen/go/v1
+    api_key: ${OPENCODE_API_KEY}
+    session_header: x-opencode-session
+    weight: 15
+  - name: ollama
+    base_url: http://localhost:11434/v1
+    max_concurrency: 2
+
+profiles:
+  - match: "*embed*"
+    exclude: true
+  - match: "*opus*"
+    tier: deep
+    context: 200000
+    tools: true
+  - match: "*qwen2.5-coder:7b*"
+    tier: fast
+    context: 32000
+    tools: true
+  - match: "ollama/*"
+    tier: fast
+
+language: auto
+
+web_search:
+  policy: ask
+  mcp: ""
+
+routing:
+  sovereign: prefer
+
+roles:
+  planner:
+    description: décompose la demande en tâches
+    tier: deep
+  collector:
+    description: collecte factuelle via les outils, sans interprétation poussée
+    tier: fast
+    tools: true
+  analyst:
+    description: analyse approfondie d'un périmètre, détection d'anomalies et de mauvaises pratiques
+    tier: balanced
+    tools: true
+    min_context: 64000
+  synthesizer:
+    description: rédige le rapport final
+    tier: deep
+
+limits:
+  max_agents: 6
+  max_tasks: 12
+  max_steps: 100
+  stall_steps: 3
+  request_timeout: 10m
+  tool_output_max_chars: 20000
+
+catalog:
+  cache_ttl: 1h
+
+k8s:
+  kubeconfig: ~/.kube/config
+  contexts: [prod, recette]
+
+files:
+  roots: [/etc/app/conf, /opt/app/conf]
+
+mcp:
+  - name: local-tool
+    command: /usr/local/bin/mon-serveur-mcp
+    args: [--read-only]
+    env:
+      API_TOKEN: ${MON_TOKEN}
+    deny: ["delete_*"]
+  - name: remote
+    url: https://mcp.internal/mcp
+    headers:
+      Authorization: Bearer ${MCP_REMOTE_TOKEN}
+    allow: [search, "get_*"]
+    timeout: 30s
+
+templates:
+  dir: ~/.config/clotr/templates
+  cache_ttl: 15m
+
+instances:
+  - name: prod
+    template: mon-template
+    params:
+      api_url: https://api.example.com/
+      proxy_url: socks5h://localhost:3128

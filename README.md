@@ -1,0 +1,470 @@
+# clotr
+
+Agent CLI d'analyse d'infrastructure en lecture seule (Kubernetes, fichiers de configuration, serveurs MCP et toute cible décrite par un template), exécuté sans interaction une fois lancé. Les modèles sont découverts sur un ou plusieurs endpoints OpenAI-compatibles, puis chaque sous-agent reçoit le modèle adapté à son rôle.
+
+Binaire Go statique, sans dépendance d'exécution.
+
+## Fonctionnement
+
+1. **Catalogue** : `GET {base_url}/models` sur chaque provider, en parallèle. Les capacités (tier, contexte, tool-calling) viennent des `profiles` de la config, ou de `/model/info` si le provider est un proxy LiteLLM (`model_info: true`). Le résultat est mis en cache (`~/.cache/clotr/catalog.json`, TTL `catalog.cache_ttl`).
+2. **Planner** (rôle `planner`) : découpe la demande en tâches JSON `{id, role, goal, tools, depends_on}`. Le plan est validé (rôles, outils, dépendances, cycles), avec une nouvelle tentative si le plan est invalide.
+3. **Sous-agents** : une goroutine par tâche. Une tâche démarre dès que ses dépendances sont terminées, et reçoit leurs résultats en entrée. La concurrence est bornée globalement (`limits.max_agents`) et par provider (`max_concurrency`). Chaque agent exécute une boucle de tool-calling, et les appels d'outils d'un même tour sont lancés en parallèle.
+4. **Durée des tâches** : une tâche n'est pas arrêtée parce qu'elle dure, mais parce qu'elle ne progresse plus. Une étape progresse si elle lance au moins un appel d'outil nouveau (outil et paramètres jamais utilisés dans la tâche). Après `limits.stall_steps` étapes sans appel nouveau (défaut 3), l'agent conclut avec ce qu'il a, et la tâche est marquée « plus de progression ». `limits.max_steps` (défaut 100) n'est qu'un plafond de sécurité contre les boucles. `limits.agent_timeout` est désactivé par défaut ; s'il est réglé, l'agent conclut avant ce délai, avec une réserve de `min(5 min, request_timeout)` pour la conclusion. Seuls les appels individuels restent bornés : `request_timeout` pour un appel trop long, `idle_timeout` pour un flux muet. Une tâche arrêtée par `max_steps` ou `agent_timeout` est poursuivie par une suite (`tN.2`, `limits.continuations`, défaut 1) qui reçoit le résultat partiel ; pas de suite après un arrêt pour absence de progression. Une tâche encore limitée après ses suites reçoit un gap « investigation incomplète ».
+5. **Contrôle des preuves** (par clotr) : un constat qui ne cite aucune preuve existante dans la session est marqué « [NON PROUVÉ] ».
+6. **Vérification** (`limits.verify_findings`, activée par défaut) : pour chaque tâche, un agent de vérification (rôle `analyst`, sinon le premier rôle outillé) relit, avec `evidence_read` et `evidence_search` uniquement, les preuves citées par les constats CRITIQUE et MAJEUR. Il les marque « [VÉRIFIÉ] », « [PARTIEL : raison] » ou « [NON ÉTAYÉ : raison] ». Les verdicts partiels et négatifs sont enregistrés en mémoire de session. Le synthesizer ne reprend un constat non étayé que dans les points non vérifiés.
+7. **Synthesizer** : produit le rapport Markdown à partir des résultats `{findings, evidence, gaps}`. Une ligne du rapport qui ne s'appuie que sur une note de mémoire, sans preuve existante, est suffixée « ⚠ non vérifié ».
+
+Une tâche en échec n'interrompt pas les autres. Elle apparaît dans le rapport comme point non vérifié.
+
+### Routage
+
+Pour chaque rôle, `roles.<nom>` définit `tier` minimal (`fast` < `balanced` < `deep`), `tools` (tool-calling requis) et `min_context`. Chaque modèle reçoit un score égal au `weight` de son provider plus la `priority` de son profil. Les modèles éligibles sont triés par tier croissant (le plus léger suffisant d'abord), puis par score décroissant, puis par ordre des providers et par nom.
+
+Chaque modèle porte aussi un indicateur souverain : `sovereign` du provider, surchargeable par profil. La politique souveraine se règle à trois niveaux, du moins au plus prioritaire : `routing.sovereign`, puis `roles.<nom>.sovereign`, puis `--sovereign`. Elle prend l'une de ces valeurs :
+- `any` (défaut) : sans effet sur le tri ;
+- `prefer` : les modèles souverains passent en tête, quel que soit leur tier, et les autres restent en fallback ;
+- `require` : seuls les modèles souverains sont éligibles. Un `--model` non souverain est alors refusé.
+
+Cette liste ordonnée sert aussi de chaîne de fallback :
+- sur 408/425/429/5xx ou une erreur réseau, le même modèle est retenté une fois (backoff, ou `Retry-After` plafonné à 30 s), puis l'appel bascule sur le suivant. Le modèle reste candidat pour les appels suivants, y compris en cas de 429 quota ;
+- sur 400/404/422, on bascule directement ;
+- sur 401/403, l'exécution s'arrête ;
+- sur 403 lié au quota ou au budget (corps contenant quota, budget ou insufficient), la bascule est immédiate ;
+- sur 404, la bascule est immédiate et le modèle est écarté pour le reste du run.
+
+Les profils sont évalués dans l'ordre : le premier glob qui correspond à `model` ou `provider/model` (insensible à la casse) s'applique. `exclude: true` retire le modèle du catalogue. Un modèle sans profil reçoit `tier=balanced` et `tools=false`. Un profil final `match: "*"` avec `exclude: true` transforme la liste en liste blanche.
+
+## Sessions
+
+Chaque `run` ouvre une session au nom aléatoire (par exemple `cosmic-walrus`) dans `sessions.dir` (défaut `~/.local/state/clotr/sessions`) :
+
+```
+<session>/
+  session.json        méta, politique souveraine et confidentialité, liste des tours (demande, statut, modèles, coût)
+  memory.json         mémoire partagée cumulée de la session
+  report.md           dernier rapport
+  turns/001/          request.txt, plan.json, results.json, report.md, summary.json, audit.jsonl
+    evidence/         E001.txt… (sortie complète de chaque appel d'outil), index.json
+```
+
+`clotr run -s <session|last> "…"` ajoute un tour à une session existante pour l'affiner. Le nouveau tour démarre avec :
+- la mémoire de la session ;
+- les demandes précédentes et le dernier rapport, transmis au planner et au synthesizer.
+
+Le planner ne planifie que ce qui manque. Le synthesizer répond à la nouvelle demande, ou produit le rapport complet mis à jour si c'est ce qui est demandé.
+
+`clotr session <nom|last> --synthesize [--turn N] [-o fichier]` régénère le rapport d'un tour à partir de son `results.json`, sans relancer les tâches (par exemple après un rapport coupé ou une synthèse en échec). Seuls les connecteurs du tour d'origine sont préparés (même filtre `-t`, modifiable avec `-t`), et leurs identifiants sont redemandés, car le contexte des templates sert à la synthèse.
+
+Une session ouverte avec `--confidential` (ou `--sovereign require`) reste confidentielle pour tous ses tours. Un `--sovereign any` ou `prefer` y est refusé.
+
+```sh
+clotr run "état du cluster prod"
+```
+
+```sh
+clotr run -s last "détaille les pods en CrashLoopBackOff"
+```
+
+```sh
+clotr sessions
+```
+
+```sh
+clotr session cosmic-walrus --turn 1
+```
+
+## Preuves
+
+Pendant un `run`, chaque sortie d'outil (hors mémoire) est archivée en entier dans `turns/NNN/evidence/` sous un identifiant : `E001`, `E002`… au premier tour, `E2.001`… aux tours suivants. Le fichier contient la tâche, l'outil, les arguments, l'heure et la sortie telle que le modèle l'a reçue.
+
+- L'identifiant est placé en tête de la sortie transmise au modèle.
+- Les sous-agents citent cet identifiant dans `evidence` et `findings`, et le synthesizer le reprend dans le rapport.
+- clotr ajoute ensuite une annexe « preuves citées » : outil, arguments et fichier de chaque identifiant cité. Un identifiant absent de l'archive y est signalé.
+
+```sh
+clotr session <nom|last> --evidence E012
+```
+
+Les preuves de tous les tours d'une session restent consultables : `evidence_search` les retrouve (termes sur l'outil et ses arguments, filtre optionnel sur le contenu, heure de collecte), et l'annexe d'un rapport résout aussi les identifiants des tours précédents. Pendant un run, les agents relisent une preuve avec l'outil `evidence_read` (`id`, puis `pattern` en expression régulière, ou `offset`/`lines`), sans refaire l'appel distant.
+
+### Historique allégé
+
+Chaque étape d'un agent renvoie toute sa conversation au modèle. Pour éviter que le contexte enfle à chaque appel d'outil (plus de 100 000 tokens sur les longues tâches), les sorties d'outils plus anciennes que `limits.history_keep_steps` étapes (défaut 2) sont raccourcies à `limits.history_tool_chars` caractères (défaut 1500), suivies de l'identifiant de preuve à relire avec `evidence_read`. Les agents notent au fil de l'eau avec `memory_write` les faits nécessaires à leur conclusion, et ces notes leur sont rendues dans le message de conclusion. `history_tool_chars: 0` désactive le raccourcissement. Mesuré sur un run réel de 11 tâches : 62 % de caractères de sorties d'outils renvoyés en moins.
+
+## Mémoire partagée
+
+Pendant un run, les agents partagent une mémoire interne :
+- `memory_write` enregistre un fait (`key`, `content`, `tags`) ; réutiliser la même `key` met l'entrée à jour ;
+- `memory_search` interroge la mémoire par mots-clés et tags.
+
+Ces deux outils sont ajoutés à chaque tâche outillée. Les constats de chaque tâche terminée y sont versés automatiquement, et les notes (`kind: note`) sont transmises au synthesizer. La mémoire n'écrit que dans le processus clotr, jamais sur l'infrastructure.
+
+Chaque entrée garde la tâche, le modèle et l'indicateur souverain de son auteur. À la fin du `run`, stderr affiche le nombre d'entrées, dont les souveraines, ainsi que le nombre d'entrées souveraines lues via `memory_search` par un modèle non souverain. La mémoire est sauvegardée dans le `memory.json` de la session, puis rechargée au tour suivant.
+
+## Recherche web
+
+Les agents doivent rester factuels : chaque affirmation repose sur une preuve `[Exxx]`, et aucune valeur par défaut, aucun comportement de produit ni aucune signification de message n'est supposé. En cas de doute, ils cherchent sur le web si la recherche est autorisée pour le run. Sinon, le point va dans les non vérifiés.
+
+- `web_search.mcp` désigne le serveur MCP qui fournit la recherche. Ce serveur n'est connecté que si la recherche est autorisée, même avec `-t`.
+- `web_search.policy` : `ask` (défaut, question au démarrage de `run` et `plan`, refus sans terminal), `allow` ou `deny`. `--web yes|no` l'emporte sur la politique pour un run.
+- Une session confidentielle n'autorise jamais la recherche web (`--web yes` y est refusé).
+- Les outils web sont ajoutés à chaque tâche outillée. Les consignes demandent de privilégier la documentation officielle de l'éditeur, et de ne jamais mettre d'identifiant interne (hôte, IP, cluster, compte, domaine) dans les requêtes.
+- Chaque page lue est archivée comme preuve, comme toute sortie d'outil.
+
+## Passage souverain → non souverain
+
+Tout ce qu'un agent envoie à un modèle non souverain passe par un point unique de l'agent, l'interface `agent.Boundary`, qui couvre :
+- le prompt ;
+- les résultats d'outils ;
+- les résultats de dépendances ;
+- le contenu lu dans la mémoire.
+
+`Outbound` transforme les messages sortants, `Inbound` la réponse, arguments d'appels d'outils compris. La mémoire stocke la version souveraine, en clair. L'implémentation fournie, `Passthrough`, ne transforme rien : c'est le point d'insertion d'une anonymisation.
+
+## Templates
+
+Un template décrit un type de cible ; une instance de la config l'applique à un environnement réel. Le binaire n'embarque aucun template : il charge à chaque exécution les fichiers `*.yaml` de `templates.dir` (défaut `~/.config/clotr/templates`) et les scripts qu'ils référencent. Deux fichiers portant le même `name` sont refusés, et un fichier invalide est ignoré avec un avertissement. `clotr templates` liste les templates chargés et les instances, `clotr templates <nom>` affiche le YAML et le script.
+
+Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appels d'API, authentification, découverte, interprétation des réponses, outils) est écrite dans le script du template, en [Starlark](https://github.com/google/starlark-go/blob/master/doc/spec.md). Le moteur fournit des primitives génériques et applique les garde-fous de lecture seule. Les templates ne sont pas fournis avec l'outil ; `templates.dir` peut être un clone d'un dépôt de templates.
+
+### Format
+
+- `params` : paramètres de l'instance, typés (`string`, `url`, `int`, `bool`, `env`, `path`, `enum`, `list` avec `item`), avec `required` et `default`. Un paramètre inconnu est rejeté ;
+- `connectors` : connexions nommées, dont les options sont rendues avec les paramètres (`{{.proxy_url}}`) :
+  - `http` : `base_url`, `methods` (défaut `[GET]`), `allow` (expressions régulières sur le chemin), `headers`, `auth` (`user_env`, `password_env`, `label` : authentification basic, saisie sur le terminal si les variables sont vides), `proxy`, `proxy_port`, `verify_tls`, `ca_file`, `timeout` (défaut 60s), `max_bytes` (défaut 32 Mio) ;
+  - `ssh` (un seul par template) : `user`, `key`, `port`, `proxy`, `proxy_port`, `host_key`, `sudo`, `max_conns`, `known_hosts` ;
+- `targets` : cibles statiques. `foreach: <paramètre list>` crée une cible par élément ; un champ vide de l'élément hérite du paramètre de même nom. Les attributs `ssh_user`, `ssh_key_path` et `ssh_port` d'une cible remplacent ceux du connecteur ssh ;
+- `script` : fichier Starlark, chemin relatif au YAML ;
+- `files`, `env` : fichiers et variables d'environnement que le script peut lire ;
+- `tools` : outils génériques du moteur (`inventory`, `ssh_list`, `ssh_read`, `ssh_tail`, `ssh_grep`, `ssh_disk`, `log_stats`), avec `name` et `description` optionnels ;
+- `companions` : outils ajoutés d'office à toute tâche qui utilise un outil de l'instance ;
+- `ssh_paths` : `allow` et `deny` (globs, `**` récursif) ;
+- `hints` : consignes transmises au planner et aux agents.
+
+Les outils sont préfixés par le nom de l'instance (`<instance>_<outil>`).
+
+```yaml
+instances:
+  - name: prod
+    template: mon-template
+    params:
+      api_url: https://api.example.com/
+      proxy_url: socks5h://localhost:3128
+```
+
+### Script
+
+Le script définit `discover(ctx)` et déclare ses outils au chargement :
+
+```python
+def discover(ctx):
+    nodes = http.request("api", "GET", "/v1/nodes", jq = ".nodes").data[0]
+    return {"targets": [{
+        "name": n["name"],
+        "kind": "node",
+        "status": n["state"],
+        "summary": "%d services" % len(n["services"]),
+        "hosts": [{"name": n["fqdn"], "ip": n["ip"]}],
+    } for n in nodes]}
+
+def node_status(args):
+    t = instance.target(args["target"])
+    return http.request("api", "GET", "/v1/nodes/" + t["name"]).body
+
+tool(
+    name = "node_status",
+    description = "État d'un nœud",
+    schema = {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]},
+    fn = node_status,
+)
+```
+
+`discover` reçoit `ctx.params` et `ctx.targets` (cibles statiques). Il renvoie :
+- `targets` : `name`, `kind`, `status`, `error`, `summary` (ligne d'environnement), `attrs`, `hosts` (`name`, `ip`, `group`, `state`, `roles`, `attrs`) et `data` (libre). Une cible avec `error` est retirée pour le run ;
+- `lines` : lignes d'environnement globales ;
+- `warnings` et `data` (libre).
+
+`description` peut être une fonction, appelée après la découverte. Un outil renvoie un texte, ou une valeur convertie en JSON. `fail()` renvoie une erreur à l'agent.
+
+| Primitive | Rôle |
+|---|---|
+| `http.request(conn, method, path, base=, query=, json=, body=, headers=, jq=, max_bytes=)` | requête via un connecteur `http` ; renvoie `status`, `headers`, `body`, `url` et `data` (résultats de `jq`) |
+| `http.snippet(text, max)` | résumé d'un corps de réponse (titre si page HTML) |
+| `ssh.list`, `ssh.read`, `ssh.tail` (`filter`), `ssh.grep`, `ssh.disk`, `ssh.stat_tail`, `ssh.recent` | commandes SSH fixes sur un hôte de l'inventaire ; `ssh.format(res)` met en forme un résultat, `ssh.allowed(path)` teste `ssh_paths` |
+| `jq(expr, data)` | filtre JSON exécuté en Go ; renvoie la liste des résultats |
+| `json`, `time`, `math`, `re`, `url`, `base64` | encodage, dates et durées, calcul, expressions régulières, URL |
+| `crypto.sign(key, msg)`, `crypto.key_type(key)` | signature ed25519 (graine base64 ou PKCS#8) ou RSA SHA-256 |
+| `file.read`, `file.exists`, `env` | fichiers et variables déclarés dans `files` et `env` |
+| `parallel(fn, items, limit=4)` | exécution concurrente ; `value` ou `error` par élément |
+| `catch(fn, *args)` | appel protégé ; `value` ou `error` |
+| `instance.name`, `instance.params`, `instance.inventory()`, `instance.target(nom)`, `instance.find_host(hôte, target=)`, `instance.memo(clé, fn)` | instance courante, inventaire, cache par instance |
+| `sprintf`, `compact_json`, `logstats`, `redact` | formatage à la Go, JSON compact, statistiques de log, masquage des secrets |
+| `load("module.star", …)` | bibliothèque `.star` du même répertoire |
+
+### Garde-fous
+
+- `http` : la méthode doit figurer dans `methods`, et toute méthode autre que GET ou HEAD exige une liste `allow`. Le chemin est absolu et sans `..`. Un chemin qui contient `keytab`, `secret`, `password` ou `token` est toujours refusé. La réponse est plafonnée à `max_bytes` (512 Mio au plus). Chaque requête est tracée dans l'audit (`http_call`).
+- `ssh` : voir Outils SSH.
+- Le script n'accède au disque, au réseau et à l'environnement qu'à travers ces primitives. Il est interrompu avec le run et soumis à un plafond de pas d'exécution.
+
+### Tests
+
+`clotr templates test <nom> [--dir <répertoire>]` exécute les fonctions `test_*` de `<script>_test.star`, sans réseau :
+- `template.instance(params=, http=, ssh=, env=, files=, creds=, now=)` crée une instance avec un faux serveur HTTP (dict `"MÉTHODE /chemin"` → réponse, ou fonction) et un faux SSH (fonction `(hôte, commande)`) ;
+- `inst.discover()`, `inst.call(outil, args)`, `inst.error(outil, args)`, `inst.environment()`, `inst.tools()`, `inst.requests()`, `inst.commands()`, `inst.fn(nom, *args)` ;
+- `assert.eq`, `assert.true`, `assert.contains`, `assert.not_contains`, `assert.fails`.
+
+### Démarrage d'une instance
+
+1. **Identifiants** des connecteurs `http` avec `auth` : `user_env`/`password_env` si les variables sont définies, sinon saisie sur le terminal (mot de passe masqué), avant l'affichage du tableau. Sans terminal ni variables, l'instance est désactivée.
+2. **Découverte** (`discover` du script), sauf si l'inventaire en cache (`templates.cache_dir`) a moins de `templates.cache_ttl` et correspond au même template, au même script et aux mêmes paramètres. `--refresh` force la découverte. Un inventaire incomplet (cible injoignable, avertissement) n'est pas mis en cache.
+3. **Cibles injoignables** : retirées pour le run, avec un avertissement. Si aucune cible ne répond, l'instance est désactivée.
+4. **Environnement** : les cibles (statut, résumé fourni par le script), les lignes globales et les consignes du template sont transmises au planner et aux agents.
+
+### Outils SSH
+
+- Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `df -hP`, `du -xh`. Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
+- `host` doit appartenir à l'inventaire de l'instance (FQDN, nom court ou IP) ;
+- `path` doit être absolu, sans `..`, couvert par `ssh_paths.allow` et par aucun `ssh_paths.deny` (keytabs, jceks, jks, clés, `*password*`…). En récursif, les motifs `deny` sont aussi passés en `--exclude` ;
+- `sudo -n` est ajouté si `sudo: true` : le compte SSH doit disposer de sudo sans mot de passe ;
+- les valeurs de type `password=…`, `token: …` et `<name>…password…</name><value>…</value>` sont masquées dans les sorties ;
+- connexions via le proxy SOCKS5 de l'instance, clé privée sans passphrase, `max_conns` sessions simultanées par instance ;
+- `known_hosts` propre à clotr (`~/.local/state/clotr/known_hosts`) : `accept-new` (défaut) enregistre une clé inconnue et refuse une clé changée, `strict` refuse les hôtes inconnus, `insecure` ne vérifie pas ;
+- chaque commande est tracée dans l'audit (`remote_exec` : hôte, utilisateur, commande, durée, exit, taille).
+
+`<instance>_log_stats` lit la fin d'un log (4 Mio par défaut, 16 Mio au plus) et calcule localement :
+- la taille du fichier ;
+- la période couverte et le débit (lignes et octets par heure, extrapolés par jour) ;
+- la répartition par niveau et par heure ;
+- les loggers les plus bavards ;
+- les messages les plus répétés, après normalisation des nombres, IP, UUID et identifiants hexadécimaux.
+
+Les hôtes SSH peuvent être désignés par leur nom complet, leur IP, leur nom court ou la fin de leur nom court (`node0`) ; un nom ambigu est refusé avec la liste des candidats.
+
+`<instance>_ssh_disk` donne `df`, les sous-répertoires les plus gros (`du`) et le nombre de fichiers d'un répertoire.
+
+## Lecture seule
+
+Le CLI n'expose aucun outil d'écriture et n'exécute aucune commande locale. Les seules commandes distantes sont celles des outils SSH des templates, construites par clotr à partir d'une liste fixe (voir Templates).
+
+| Groupe | Outils | Mécanisme |
+|---|---|---|
+| `k8s` | `k8s_contexts`, `k8s_api_resources`, `k8s_list`, `k8s_get`, `k8s_logs`, `k8s_events`, `k8s_top` | client-go, uniquement des appels get/list/logs. Contextes limités à `k8s.contexts`. `managedFields` et `last-applied` retirés, valeurs des Secrets masquées. `k8s_list` accepte `fields` (chemins pointés extraits pour chaque objet, tous namespaces en un appel) et son résumé inclut la stratégie de mise à jour. |
+| `fs` | `fs_list`, `fs_read`, `fs_grep` | chemins résolus (`EvalSymlinks`) et confinés à `files.roots`. Fichiers binaires et fichiers au-delà de `max_file_bytes` refusés. |
+| `mcp_<serveur>` | outils du serveur | seuls sont exposés les outils annotés `readOnlyHint: true` ou listés dans `allow`. `deny` est prioritaire. |
+| `<instance>_*` | outils du template | voir Templates : requêtes HTTP limitées par les garde-fous des connecteurs, SSH limité à des commandes fixes, aux hôtes de l'inventaire et aux chemins autorisés. |
+
+Les sorties d'outils sont tronquées à `limits.tool_output_max_chars`. Les droits effectifs dépendent des comptes utilisés (kubeconfig, comptes des connecteurs des templates), qui doivent être en lecture seule.
+
+## Installation
+
+```sh
+brew install agardenat/clotr/clotr
+```
+
+Les archives `clotr_<version>_<os>_<arch>.tar.gz` (linux et darwin, amd64 et arm64) et `SHA256SUMS` sont aussi publiées sur la page Releases du dépôt.
+
+## Build
+
+Prérequis : Go ≥ 1.27.
+
+```sh
+make build
+```
+
+```sh
+make test
+```
+
+```sh
+make cross
+```
+
+Les binaires sont produits dans `bin/` (`clotr`, puis `clotr-<os>-<arch>` pour linux et darwin, amd64 et arm64). La version est injectée par `VERSION=...`, sinon `git describe`, sinon `dev`.
+
+`make dist` produit les archives et `SHA256SUMS` dans `dist/`, `make formula` la formule Homebrew `dist/clotr.rb` à partir de `SHA256SUMS`, et `make notes` la section du CHANGELOG correspondant à `VERSION`.
+
+## Release
+
+1. Dans [CHANGELOG.md](CHANGELOG.md), renommer `[Unreleased]` en `[X.Y.Z] - AAAA-MM-JJ` et rouvrir une section `[Unreleased]` vide.
+2. Committer, puis tagger et pousser :
+
+```sh
+git tag vX.Y.Z
+```
+
+```sh
+git push origin main vX.Y.Z
+```
+
+Le workflow `release` vérifie que la section `[X.Y.Z]` existe dans le CHANGELOG, lance `vet` et les tests, publie la release GitHub (notes = section du CHANGELOG, archives, `SHA256SUMS`), puis pousse `Formula/clotr.rb` dans le dépôt `agardenat/homebrew-clotr`. Un tag avec suffixe (`v1.2.0-rc.1`) donne une pré-release, sans mise à jour du tap.
+
+La publication dans le tap utilise le secret `HOMEBREW_TAP_TOKEN` du dépôt : jeton fine-grained limité au dépôt `homebrew-clotr`, permission Contents en lecture et écriture.
+
+## Configuration
+
+Le fichier est cherché dans cet ordre : `--config`, puis `$CLOTR_CONFIG`, puis `~/.config/clotr/config.yaml`. Voir [clotr.example.yaml](clotr.example.yaml). Les clés inconnues sont rejetées. Si le fichier contient des clés en clair, le protéger avec `chmod 600`.
+
+| Section | Rôle |
+|---|---|
+| `providers` | endpoints OpenAI-compatibles : `name`, `base_url` (jusqu'à `/v1`), `api_key` (clé en clair ou `${VAR}`) ou `api_key_env` (nom de variable), `weight`, `sovereign`, `budget`, `session_header`, `stream` (défaut true), `max_concurrency`, `model_info`, `headers` |
+| `profiles` | `match` (glob), `tier`, `context`, `tools`, `priority`, `sovereign`, `exclude` |
+| `routing` | `sovereign` : `any`, `prefer` ou `require` |
+| `roles` | `tier`, `tools`, `min_context`, `sovereign`, `description`. `planner` et `synthesizer` obligatoires, plus au moins un rôle de travail. Défauts : `collector` (fast, outils) et `analyst` (balanced, outils, 32k) |
+| `limits` | `max_agents`, `max_tasks` (par tour de planification), `max_steps` (plafond de sécurité, défaut 100), `stall_steps` (étapes sans appel nouveau avant conclusion, défaut 3, 0 désactive), `verify_findings` (vérification des constats CRITIQUE et MAJEUR, défaut true), `continuations` (défaut 1), `agent_timeout` (désactivé par défaut), `request_timeout` (plafond par appel LLM, défaut 10m ; dépassé, l'appel bascule sur le modèle suivant sans nouvel essai), `idle_timeout` (silence max du flux, défaut 2m), `tool_output_max_chars`, `history_keep_steps` (défaut 2), `history_tool_chars` (défaut 1500, 0 désactive), voir Historique allégé |
+| `catalog` | `cache_ttl` |
+| `audit` | `dir` (défaut `~/.local/state/clotr/audit`), utilisé par `plan`. L'audit d'un `run` est écrit dans le tour de sa session. |
+| `sessions` | `dir` (défaut `~/.local/state/clotr/sessions`) |
+| `language` | `auto` (défaut), `fr` ou `en` : langue de sortie, voir ci-dessous |
+| `k8s` | `kubeconfig`, `contexts` (défaut : current-context seul), `timeout` (défaut 30s). Au démarrage, chaque contexte est testé (`/version`, 5 s) ; un contexte injoignable (tunnel fermé, VPN…) est retiré pour le run, avec un avertissement. |
+| `files` | `roots`, `max_file_bytes` |
+| `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
+| `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true) |
+| `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`). Voir Recherche web. |
+| `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. |
+
+Une section absente désactive les outils correspondants. Un outil dont l'initialisation échoue est désactivé, avec un avertissement.
+
+## Usage
+
+```sh
+clotr models
+```
+
+```sh
+clotr tools
+```
+
+```sh
+clotr templates
+```
+
+```sh
+clotr plan "état de santé du cluster prod : pods en erreur, events warning récents"
+```
+
+```sh
+clotr run "audit des limites de ressources des déploiements" -t k8s,fs -o rapport.md
+```
+
+```sh
+clotr run -m collector=ollama/qwen2.5-coder:7b --json "inventaire des ingress exposés" > result.json
+```
+
+| Option | Effet |
+|---|---|
+| `-c, --config` | fichier de configuration |
+| `--refresh` | ignore le cache du catalogue |
+| `-m, --model role=provider/model` | force le modèle d'un rôle |
+| `--sovereign any\|prefer\|require` | politique souveraine pour l'exécution |
+| `--confidential` | run confidentiel, équivalent de `--sovereign require` |
+| `--lang auto\|fr\|en` | langue de sortie (prioritaire sur `language`) |
+| `-t, --tools` | restreint les groupes d'outils (`k8s`, `fs`, `mcp`, `mcp_<serveur>`, `<instance>`) |
+| `-o, --output` | écrit le rapport dans un fichier |
+| `--json` | sortie JSON : plan, résultats par tâche, rapport, `models_used` |
+| `-q, --quiet` | n'affiche pas la progression sur stderr |
+| `--plain` | progression ligne par ligne au lieu du tableau dynamique |
+| `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
+
+La demande `-` est lue sur stdin. Ctrl-C annule proprement les agents en cours.
+
+### Progression
+
+Si stderr est un terminal, `plan` et `run` affichent un tableau dynamique, rafraîchi sur place (Bubble Tea v2, mode inline) :
+- **en-tête** : état, durée, tâches terminées sur le total (avec les échecs), nombre d'appels d'outils ;
+- **une ligne par tâche**, `planner` et `synthesizer` compris :
+  - statut : `·` en attente, spinner en cours, `✓` terminé, `✗` en échec ;
+  - identifiant, rôle, modèle courant (mis à jour en cas de bascule) ;
+  - barre d'avancement (étape LLM / `max_steps`, une borne haute et non un pourcentage) et durée ;
+  - colonne steps : `step N` en cours, `N steps` une fois terminé, `max!` si la limite `max_steps` a forcé la conclusion ;
+  - texte de l'étape en cours : objectif, `thinking…`, `tool <nom> <arguments>`, `fallback to …`, `waiting for …`, puis résumé (`N findings, M tool calls`) et coût une fois la tâche terminée.
+
+Les libellés suivent la langue d'interface (voir Langue de sortie). Tant que le tableau est affiché, tout ce qui est écrit sur stderr par une bibliothèque (par exemple les avertissements de l'API server via client-go) est capturé et réaffiché au-dessus du tableau, pour ne pas le décaler.
+
+Le tableau final reste affiché au-dessus du bilan, et le rapport est écrit sur stdout. Hors terminal (redirection, CI) ou avec `--plain`, la progression est écrite ligne par ligne. `-q` la supprime.
+
+## Langue de sortie
+
+`language` (config) ou `--lang` règle deux choses :
+
+| Valeur | Rapport, constats, objectifs (modèles) | Interface (tableau, bilan, `models`, `tools`, `plan`, `sessions`) |
+|---|---|---|
+| `auto` | langue de la demande | anglais |
+| `fr` | français, consigne explicite aux modèles | français |
+| `en` | anglais, consigne explicite aux modèles | anglais |
+
+Une session mémorise sa langue : un tour d'affinage sans `--lang` reprend celle de la session. Les messages d'erreur et d'avertissement, ainsi que l'aide des commandes, restent en français.
+
+## Streaming
+
+Les appels LLM sont en streaming SSE (`stream: true` avec `stream_options.include_usage`) :
+- **réponse** : contenu, `reasoning_content` et fragments d'appels d'outils sont réassemblés au fil du flux ;
+- **progression** : le tableau affiche en direct `reasoning… ~N tok`, `writing… ~N tok` ou `preparing N tool call(s)…` ;
+- **délais** : un appel est interrompu si le flux reste muet plus de `limits.idle_timeout`, ou s'il dépasse `limits.request_timeout` au total. Ces deux erreurs sont temporaires (nouvel essai, puis bascule) ;
+- **désactivation** : `providers[].stream: false` repasse un provider en mode classique. Un serveur qui ignore `stream` et répond en JSON est aussi accepté.
+
+## Budget
+
+`providers[].budget` déclare le budget de chaque provider. Les valeurs possibles sont :
+- **absent** : non déclaré ;
+- **`unlimited`** : provider illimité, pas de contrôle ;
+- **`{info_path, min_remaining, max_run_cost}`** : budget limité, suivi comme suit :
+  - avant le run, `GET <base sans /v1><info_path>` (défaut `/key/info`, format LiteLLM : `info.spend`, `info.max_budget`). Le provider est écarté si son reste est inférieur à `min_remaining` ;
+  - pendant le run, le coût de chaque appel est pris dans l'en-tête `x-litellm-response-cost` s'il est présent (mode non streaming). Sinon, il est estimé à partir de l'`usage` du flux et des prix par token de `/model/info` (`model_info: true`), et affiché avec `~`. Le provider est écarté si le coût cumulé du run atteint `max_run_cost` ;
+  - après chaque tâche, `/key/info` est relu pour suivre le solde de la clé. Le provider est écarté si son reste passe sous `min_remaining`. LiteLLM écrit la dépense en base par lots : le solde lu peut retarder de quelques secondes.
+
+`clotr models` affiche le statut et l'état du budget de chaque provider. À la fin du `run`, stderr affiche le coût par provider, ou « coût non communiqué » si le provider ne renvoie pas d'en-tête de coût.
+
+## Identification des requêtes
+
+Toutes les requêtes HTTP portent le User-Agent `clotr/<version>`. `providers[].session_header` envoie dans l'en-tête indiqué un identifiant stable par sous-agent. Exemple : `x-opencode-session`, exigé par OpenCode Go.
+
+## Audit
+
+Chaque `run` écrit `turns/NNN/audit.jsonl` dans sa session (et `plan` écrit `<audit.dir>/<AAAAMMJJ-HHMMSS>.jsonl`). Ce fichier contient :
+- `run_start` et `run_end` ;
+- `plan` ;
+- `llm_call` : tâche, modèle, étape, durée, tokens, outils demandés ;
+- `tool_call` : outil, arguments, durée, taille, erreur ;
+- `http_call` : requête HTTP d'un template (instance, connecteur, méthode, URL, statut, durée, taille) ;
+- `remote_exec` : commande SSH d'un template (instance, hôte, utilisateur, commande, durée, exit, taille) ;
+- `task_end`.
+
+À la fin du `run`, stderr affiche :
+- les modèles utilisés ;
+- ceux qui ne sont pas souverains ;
+- le chemin du fichier d'audit.
+
+`run_end` reprend la liste des modèles avec leur indicateur souverain.
+
+## Structure
+
+```
+cmd/clotr/              CLI (cobra)
+internal/config/        chargement et validation YAML
+internal/catalog/       découverte des modèles, profils, cache
+internal/router/        sélection et fallback par rôle
+internal/llm/           client /chat/completions, pool par provider
+internal/agent/         boucle tool-calling
+internal/orchestrator/  planner, DAG concurrent, synthèse
+internal/memory/        mémoire partagée
+internal/session/       sessions et tours
+internal/budget/        budget et coûts par provider
+internal/tools/         registre et outils k8s, files, mcp
+internal/template/      moteur de templates : chargement, paramètres, hôte Starlark, primitives, outils génériques, tests
+internal/driver/ssh/    SSH en lecture seule : commandes fixes, chemins autorisés, known_hosts
+internal/creds/         identifiants : variables d'environnement ou saisie
+internal/audit/         journal JSONL
+internal/progress/      progression stderr
+packaging/homebrew/     modèle de la formule Homebrew
+.github/workflows/      CI (vet, tests, cross) et release sur tag
+```
+
+## Limites connues
+
+- Aucune donnée n'est anonymisée avant envoi vers un modèle non souverain (`Boundary` = `Passthrough`). `--confidential` limite le run aux modèles souverains.
+- La mémoire partagée suit la session : elle n'est pas partagée entre sessions.
+- Les tâches du plan ne sont pas relancées après un échec ; seul le modèle bascule au sein d'une tâche.
+- `k8s_top` nécessite metrics-server.
+- k8s et fs sont intégrés au binaire et ne sont pas des templates.
+- SSH : clés avec passphrase et agent SSH non supportés.
