@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-10
+
 ### Ajouté
 - Agent CLI en lecture seule : planner, sous-agents concurrents, synthèse Markdown ou JSON.
 - Découverte des modèles sur des endpoints OpenAI-compatibles, routage par rôle avec fallback, politique souveraine et suivi de budget.
