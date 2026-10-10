@@ -1,0 +1,6 @@
+bin/
+templates/
+/*rapport*.md
+/etat-*.md
+dist/
+.git.old/

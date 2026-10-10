@@ -1,0 +1,28 @@
+name: clotr
+arch: ${PKG_ARCH}
+platform: linux
+version: ${VERSION}
+section: utils
+priority: optional
+maintainer: Antoine Gardenat <50456751+agardenat@users.noreply.github.com>
+description: Read-only multi-model agent CLI for infrastructure diagnostics
+homepage: https://github.com/agardenat/clotr
+license: Apache-2.0
+contents:
+  - src: ./bin/clotr-linux-${PKG_ARCH}
+    dst: /usr/bin/clotr
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ./LICENSE
+    dst: /usr/share/doc/clotr/LICENSE
+    file_info:
+      mode: 0644
+  - src: ./README.md
+    dst: /usr/share/doc/clotr/README.md
+    file_info:
+      mode: 0644
+  - src: ./clotr.example.yaml
+    dst: /usr/share/doc/clotr/clotr.example.yaml
+    file_info:
+      mode: 0644
