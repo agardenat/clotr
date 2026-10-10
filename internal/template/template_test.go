@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/testutil"
+	"github.com/agardenat/clotr/internal/tools"
 )
 
 func TestDemoScriptTests(t *testing.T) {
@@ -260,7 +263,7 @@ tool(name = "big", description = "d", schema = {"type": "object"}, fn = big)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := in.Prepare(); err != nil {
+		if err := in.Prepare(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		return in
@@ -304,7 +307,7 @@ tool(name = "big", description = "d", schema = {"type": "object"}, fn = big)
 	}
 	t.Setenv("T_P", "bad")
 	in3, _ := NewInstance("i", tpl, map[string]any{"url": srv.URL, "key": keyPath, "port": port})
-	in3.Prepare()
+	in3.Prepare(context.Background())
 	if err := in3.Discover(context.Background(), "", 0, true); err == nil {
 		t.Fatal("401 attendu en erreur de discover")
 	}
@@ -411,5 +414,97 @@ func TestFindHostShortNames(t *testing.T) {
 	}
 	if _, _, err := in.findHost("", "ode0"); err == nil {
 		t.Fatal("suffixe partiel accepté")
+	}
+}
+
+func TestDeferredActivation(t *testing.T) {
+	var mu sync.Mutex
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u, p, ok := r.BasicAuth(); !ok || u != "u" || p != "p" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		mu.Lock()
+		hits++
+		mu.Unlock()
+		w.Write([]byte(`{"n":7}`))
+	}))
+	defer srv.Close()
+	tpl := writeTemplate(t, `name: x
+script: x.star
+params:
+  url: {type: url, required: true}
+connectors:
+  api:
+    driver: http
+    base_url: "{{.url}}"
+    auth: {user_env: T_U, password_env: T_P, label: api}
+targets:
+  - {kind: k, name: t1}
+tools:
+  - kind: inventory
+`, `
+def discover(ctx):
+    n = http.request("api", "GET", "/n", jq = ".n").data[0]
+    return {"targets": [{"name": "t1", "kind": "k", "summary": "n=%d" % n}]}
+`)
+	t.Setenv("T_U", "u")
+	t.Setenv("T_P", "")
+	prompts := 0
+	defer func(o func() (*creds.Console, error)) { creds.OpenTTY = o }(creds.OpenTTY)
+	creds.OpenTTY = func() (*creds.Console, error) {
+		mu.Lock()
+		prompts++
+		mu.Unlock()
+		return nil, errors.New("pas de terminal")
+	}
+	cache := t.TempDir()
+	newInst := func() (*Instance, tools.Tool) {
+		in, err := NewInstance("i", tpl, map[string]any{"url": srv.URL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := in.Defer(context.Background(), cache, time.Hour, false); err != nil {
+			t.Fatal(err)
+		}
+		return in, in.Tools()[0]
+	}
+	in, inv := newInst()
+	if hits != 0 || prompts != 0 {
+		t.Fatalf("activation avant appel: %d requêtes, %d saisies", hits, prompts)
+	}
+	if env := strings.Join(in.EnvironmentLines(), "\n"); !strings.Contains(env, "inventaire pas encore découvert") || !strings.Contains(env, "k t1") {
+		t.Fatalf("environnement: %s", env)
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = inv.Call(context.Background(), []byte(`{}`))
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err == nil || !strings.Contains(err.Error(), "instance i indisponible") {
+			t.Fatalf("erreur attendue: %v", err)
+		}
+	}
+	if prompts != 1 || hits != 0 {
+		t.Fatalf("une seule saisie attendue: %d saisies, %d requêtes", prompts, hits)
+	}
+	t.Setenv("T_P", "p")
+	_, inv = newInst()
+	if out, err := inv.Call(context.Background(), []byte(`{}`)); err != nil || !strings.Contains(out, "n=7") || hits != 1 {
+		t.Fatalf("activation: %q %v (%d requêtes)", out, err, hits)
+	}
+	in, inv = newInst()
+	if env := strings.Join(in.EnvironmentLines(), "\n"); !strings.Contains(env, "issu du cache") || !strings.Contains(env, "n=7") {
+		t.Fatalf("environnement depuis le cache: %s", env)
+	}
+	if _, err := inv.Call(context.Background(), []byte(`{}`)); err != nil || hits != 1 {
+		t.Fatalf("cache frais non utilisé: %v (%d requêtes)", err, hits)
 	}
 }

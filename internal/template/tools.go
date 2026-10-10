@@ -51,7 +51,22 @@ func (in *Instance) Tools() []tools.Tool {
 	for _, ts := range in.T.Tools {
 		out = append(out, kinds[ts.Kind].build(in, in.Name+"_"+ts.ToolName(), ts.Description))
 	}
+	for i, t := range out {
+		out[i] = activatingTool{t, in}
+	}
 	return out
+}
+
+type activatingTool struct {
+	tools.Tool
+	in *Instance
+}
+
+func (t activatingTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
+	if err := t.in.ensure(); err != nil {
+		return "", err
+	}
+	return t.Tool.Call(ctx, raw)
 }
 
 func (in *Instance) scriptToolAdapter(st *scriptTool) tools.Tool {

@@ -3,6 +3,7 @@ package progress
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -316,6 +317,7 @@ func (b *board) View() tea.View {
 
 type TUI struct {
 	p       *tea.Program
+	out     *os.File
 	done    chan struct{}
 	stop    chan struct{}
 	once    sync.Once
@@ -326,6 +328,7 @@ type TUI struct {
 func NewTUI(stderr *os.File, maxSteps int, title string) *TUI {
 	t := &TUI{done: make(chan struct{}), stop: make(chan struct{}), drained: make(chan struct{})}
 	out, pipe := captureStderr(stderr, t)
+	t.out = out
 	width, height, err := term.GetSize(out.Fd())
 	if err != nil || width <= 0 || height <= 0 {
 		width, height = 120, 40
@@ -356,6 +359,22 @@ func NewTUI(stderr *os.File, maxSteps int, title string) *TUI {
 		}
 	}()
 	return t
+}
+
+func (t *TUI) Suspend() (resume func()) {
+	select {
+	case <-t.stop:
+		return func() {}
+	default:
+	}
+	if t.p.ReleaseTerminal() != nil {
+		return func() {}
+	}
+	_, _ = io.WriteString(t.out, ansi.SetModeAltScreenSaveCursor+ansi.CursorHomePosition+ansi.EraseEntireScreen)
+	return func() {
+		_, _ = io.WriteString(t.out, ansi.ResetModeAltScreenSaveCursor)
+		_ = t.p.RestoreTerminal()
+	}
 }
 
 func (t *TUI) Emit(e Event) {

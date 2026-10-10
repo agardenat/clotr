@@ -497,33 +497,16 @@ func (rt *app) setupInstances(ctx context.Context, o *options, enabled func(stri
 		}
 		in, err := template.NewInstance(ic.Name, t, ic.Params)
 		if err == nil {
-			err = in.Prepare()
-		}
-		if err == nil {
 			in.Audit = rt.audit.Log
+			in.Warn = func(msg string) { warn("%s", msg) }
 			if !o.quiet {
-				fmt.Fprintln(os.Stderr, i18n.T("instance.discovering", ic.Name, t.Name))
+				name, tname := ic.Name, t.Name
+				in.Activating = func() { fmt.Fprintln(os.Stderr, i18n.T("instance.discovering", name, tname)) }
 			}
-			dctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-			err = in.Discover(dctx, cfg.Templates.CacheDir, cfg.Templates.CacheTTL.Duration, o.refresh)
-			cancel()
+			err = in.Defer(ctx, cfg.Templates.CacheDir, cfg.Templates.CacheTTL.Duration, o.refresh)
 		}
 		if err != nil {
 			warn("%v (instance %s désactivée)", err, ic.Name)
-			continue
-		}
-		inv := in.Inventory()
-		for _, w := range inv.Warnings {
-			warn("instance %s: %s", ic.Name, w)
-		}
-		for _, tg := range inv.Targets {
-			if tg.Error != "" {
-				warn("instance %s: cible %s injoignable, retirée pour ce run: %s", ic.Name, tg.Name, tg.Error)
-			}
-		}
-		if len(in.Reachable()) == 0 {
-			warn("instance %s: aucune cible joignable (instance désactivée)", ic.Name)
-			in.Close()
 			continue
 		}
 		rt.instances = append(rt.instances, in)
@@ -1272,7 +1255,9 @@ func newProgress(o *options, maxSteps int, title string) progress.Closer {
 		return progress.Nop{}
 	}
 	if !o.plain && term.IsTerminal(os.Stderr.Fd()) {
-		return progress.NewTUI(os.Stderr, maxSteps, title)
+		t := progress.NewTUI(os.Stderr, maxSteps, title)
+		creds.Suspend = t.Suspend
+		return t
 	}
 	return progress.NewPrinter(os.Stderr)
 }
