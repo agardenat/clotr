@@ -96,7 +96,7 @@ var msgs = map[string]msg{
 	"yesno.no":             {"no", "non"},
 	"prompt.user":          {"%s — user: ", "%s — utilisateur : "},
 	"prompt.password":      {"%s — password for %s: ", "%s — mot de passe de %s : "},
-	"instance.discovering": {"instance %s: discovering (template %s)…", "instance %s : découverte (template %s)…"},
+	"instance.discovering": {"instance %s: activation (template %s)…", "instance %s : activation (template %s)…"},
 	"templates.head":       {"TEMPLATE\tVERSION\tSOURCE\tINSTANCES\tDESCRIPTION", "TEMPLATE\tVERSION\tSOURCE\tINSTANCES\tDESCRIPTION"},
 	"templates.dir":        {"templates directory: %s (clotr templates <name> prints a template)", "répertoire des templates : %s (clotr templates <nom> affiche un template)"},
 	"instances.title":      {"INSTANCES", "INSTANCES"},

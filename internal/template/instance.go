@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -68,6 +69,9 @@ type Instance struct {
 
 	Audit func(kind string, fields map[string]any)
 	Print func(msg string)
+	Warn  func(msg string)
+
+	Activating func()
 
 	mu        sync.Mutex
 	inv       *Inventory
@@ -87,6 +91,16 @@ type Instance struct {
 	now       func() time.Time
 	transport http.RoundTripper
 	creds     map[string]creds.Pair
+	pending   *activation
+}
+
+type activation struct {
+	ctx      context.Context
+	cacheDir string
+	ttl      time.Duration
+	refresh  bool
+	once     sync.Once
+	err      error
 }
 
 func NewInstance(name string, t *Template, given map[string]any) (*Instance, error) {
@@ -200,7 +214,7 @@ func (in *Instance) buildTargets() ([]*Target, error) {
 	return out, nil
 }
 
-func (in *Instance) Prepare() error {
+func (in *Instance) Prepare(ctx context.Context) error {
 	for _, cn := range sortedKeys(in.https) {
 		hc := in.https[cn]
 		if hc.auth == nil {
@@ -209,13 +223,78 @@ func (in *Instance) Prepare() error {
 		if _, ok := in.creds[cn]; ok {
 			continue
 		}
-		p, err := creds.Resolve(hc.auth.userEnv, hc.auth.passEnv, in.Name+" ("+hc.auth.label+")")
+		p, err := creds.Resolve(ctx, hc.auth.userEnv, hc.auth.passEnv, in.Name+" ("+hc.auth.label+")")
 		if err != nil {
 			return err
 		}
 		in.creds[cn] = p
 	}
 	return nil
+}
+
+func (in *Instance) Defer(ctx context.Context, cacheDir string, ttl time.Duration, refresh bool) error {
+	var inv *Inventory
+	if cacheDir != "" && !refresh {
+		inv, _ = readCache(filepath.Join(cacheDir, in.Name+".json"), in.fp, -1)
+	}
+	if inv == nil {
+		targets, err := in.buildTargets()
+		if err != nil {
+			return fmt.Errorf("instance %s: %w", in.Name, err)
+		}
+		inv = &Inventory{Instance: in.Name, Template: in.T.Name, Fingerprint: in.fp, Targets: targets}
+	}
+	in.pending = &activation{ctx: ctx, cacheDir: cacheDir, ttl: ttl, refresh: refresh}
+	return in.setInventory(inv)
+}
+
+func (in *Instance) ensure() error {
+	a := in.pending
+	if a == nil {
+		return nil
+	}
+	a.once.Do(func() {
+		if in.Activating != nil {
+			in.Activating()
+		}
+		err := in.Prepare(a.ctx)
+		if err == nil {
+			ctx, cancel := context.WithTimeout(a.ctx, 3*time.Minute)
+			err = in.Discover(ctx, a.cacheDir, a.ttl, a.refresh)
+			cancel()
+		}
+		if err == nil {
+			in.warnInventory()
+			if len(in.Reachable()) == 0 {
+				err = errors.New("aucune cible joignable")
+			}
+		}
+		f := map[string]any{}
+		if err != nil {
+			a.err = fmt.Errorf("instance %s indisponible pour ce run: %w", in.Name, err)
+			in.warn(a.err.Error())
+			f["error"] = err.Error()
+		}
+		in.audit("instance_activation", f)
+	})
+	return a.err
+}
+
+func (in *Instance) warnInventory() {
+	for _, w := range in.inv.Warnings {
+		in.warn(fmt.Sprintf("instance %s: %s", in.Name, w))
+	}
+	for _, t := range in.inv.Targets {
+		if t.Error != "" {
+			in.warn(fmt.Sprintf("instance %s: cible %s injoignable, retirée pour ce run: %s", in.Name, t.Name, t.Error))
+		}
+	}
+}
+
+func (in *Instance) warn(msg string) {
+	if in.Warn != nil {
+		in.Warn(msg)
+	}
 }
 
 func (in *Instance) Discover(ctx context.Context, cacheDir string, ttl time.Duration, refresh bool) error {
@@ -275,7 +354,7 @@ func readCache(path, fp string, ttl time.Duration) (*Inventory, bool) {
 		return nil, false
 	}
 	var inv Inventory
-	if json.Unmarshal(data, &inv) != nil || inv.Fingerprint != fp || time.Since(inv.DiscoveredAt) > ttl {
+	if json.Unmarshal(data, &inv) != nil || inv.Fingerprint != fp || (ttl >= 0 && time.Since(inv.DiscoveredAt) > ttl) {
 		return nil, false
 	}
 	return &inv, true
@@ -465,6 +544,13 @@ func (in *Instance) EnvironmentLines() []string {
 		return nil
 	}
 	lines := []string{fmt.Sprintf("- Instance %s (template %s : %s). Outils : %s", in.Name, in.T.Name, in.T.Description, strings.Join(in.ToolNames(), ", "))}
+	if in.pending != nil {
+		if inv.DiscoveredAt.IsZero() {
+			lines = append(lines, "  Instance activée seulement si une tâche appelle l'un de ses outils ; inventaire pas encore découvert, cibles issues de la configuration.")
+		} else {
+			lines = append(lines, "  Instance activée seulement si une tâche appelle l'un de ses outils ; inventaire ci-dessous issu du cache du "+inv.DiscoveredAt.Format(time.RFC3339)+", actualisé à l'activation.")
+		}
+	}
 	for _, l := range inv.Lines {
 		lines = append(lines, "  "+l)
 	}

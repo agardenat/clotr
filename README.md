@@ -53,7 +53,7 @@ Chaque `run` ouvre une session au nom aléatoire (par exemple `cosmic-walrus`) d
 
 Le planner ne planifie que ce qui manque. Le synthesizer répond à la nouvelle demande, ou produit le rapport complet mis à jour si c'est ce qui est demandé.
 
-`clotr session <nom|last> --synthesize [--turn N] [-o fichier]` régénère le rapport d'un tour à partir de son `results.json`, sans relancer les tâches (par exemple après un rapport coupé ou une synthèse en échec). Seuls les connecteurs du tour d'origine sont préparés (même filtre `-t`, modifiable avec `-t`), et leurs identifiants sont redemandés, car le contexte des templates sert à la synthèse.
+`clotr session <nom|last> --synthesize [--turn N] [-o fichier]` régénère le rapport d'un tour à partir de son `results.json`, sans relancer les tâches (par exemple après un rapport coupé ou une synthèse en échec). Seuls les connecteurs du tour d'origine sont préparés (même filtre `-t`, modifiable avec `-t`), car le contexte des templates sert à la synthèse. Aucune instance n'est activée : la synthèse n'appelle pas d'outil.
 
 Une session ouverte avec `--confidential` (ou `--sovereign require`) reste confidentielle pour tous ses tours. Un `--sovereign any` ou `prefer` y est refusé.
 
@@ -214,12 +214,17 @@ tool(
 - `inst.discover()`, `inst.call(outil, args)`, `inst.error(outil, args)`, `inst.environment()`, `inst.tools()`, `inst.requests()`, `inst.commands()`, `inst.fn(nom, *args)` ;
 - `assert.eq`, `assert.true`, `assert.contains`, `assert.not_contains`, `assert.fails`.
 
-### Démarrage d'une instance
+### Activation d'une instance
 
-1. **Identifiants** des connecteurs `http` avec `auth` : `user_env`/`password_env` si les variables sont définies, sinon saisie sur le terminal (mot de passe masqué), avant l'affichage du tableau. Sans terminal ni variables, l'instance est désactivée.
+Au démarrage d'un run, une instance est seulement déclarée : ses outils et son environnement sont transmis au planner, sans identifiants ni appel réseau. L'environnement reprend l'inventaire en cache du même template, script et paramètres, quel que soit son âge, sinon les cibles statiques de la configuration. Une instance n'est activée qu'au premier appel de l'un de ses outils par une tâche. Une demande qui ne concerne pas l'instance ne l'active donc pas, même sans `-t`.
+
+À l'activation :
+
+1. **Identifiants** des connecteurs `http` avec `auth` : `user_env`/`password_env` si les variables sont définies, sinon saisie sur le terminal (mot de passe masqué). Pendant la saisie, le tableau de progression est suspendu et la saisie se fait sur l'écran alternatif du terminal. Ctrl-C interrompt le run. Des identifiants vides, ou l'absence de terminal et de variables, rendent l'instance indisponible pour le run.
 2. **Découverte** (`discover` du script), sauf si l'inventaire en cache (`templates.cache_dir`) a moins de `templates.cache_ttl` et correspond au même template, au même script et aux mêmes paramètres. `--refresh` force la découverte. Un inventaire incomplet (cible injoignable, avertissement) n'est pas mis en cache.
-3. **Cibles injoignables** : retirées pour le run, avec un avertissement. Si aucune cible ne répond, l'instance est désactivée.
-4. **Environnement** : les cibles (statut, résumé fourni par le script), les lignes globales et les consignes du template sont transmises au planner et aux agents.
+3. **Cibles injoignables** : retirées pour le run, avec un avertissement. Si aucune cible ne répond, l'instance est indisponible pour le run.
+
+Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans nouvelle saisie ni nouvelle découverte. L'activation est tracée dans l'audit (`instance_activation`).
 
 ### Outils SSH
 
@@ -375,7 +380,7 @@ clotr run -m collector=ollama/qwen2.5-coder:7b --json "inventaire des ingress ex
 | `--sovereign any\|prefer\|require` | politique souveraine pour l'exécution |
 | `--confidential` | run confidentiel, équivalent de `--sovereign require` |
 | `--lang auto\|fr\|en` | langue de sortie (prioritaire sur `language`) |
-| `-t, --tools` | restreint les groupes d'outils (`k8s`, `fs`, `mcp`, `mcp_<serveur>`, `<instance>`) |
+| `-t, --tools` | restreint les groupes d'outils (`k8s`, `fs`, `mcp`, `mcp_<serveur>`, `<instance>`) ; sans `-t`, tous sont proposés au planner, et une instance n'est activée que si une tâche l'utilise |
 | `-o, --output` | écrit le rapport dans un fichier |
 | `--json` | sortie JSON : plan, résultats par tâche, rapport, `models_used` |
 | `-q, --quiet` | n'affiche pas la progression sur stderr |

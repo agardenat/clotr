@@ -2,6 +2,8 @@ package creds
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,7 +39,9 @@ func (c *Console) Close() {
 
 var OpenTTY = openConsole
 
-func Resolve(userEnv, passEnv, label string) (Pair, error) {
+var Suspend func() (resume func())
+
+func Resolve(ctx context.Context, userEnv, passEnv, label string) (Pair, error) {
 	p := Pair{}
 	if userEnv != "" {
 		p.User = os.Getenv(userEnv)
@@ -53,6 +57,9 @@ func Resolve(userEnv, passEnv, label string) (Pair, error) {
 	if c, ok := cache[label]; ok {
 		return c, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return Pair{}, err
+	}
 	tty, err := OpenTTY()
 	if err != nil {
 		return Pair{}, fmt.Errorf("%s: identifiants absents (variables %s / %s) et aucun terminal pour les saisir", label, orNone(userEnv), orNone(passEnv))
@@ -61,28 +68,66 @@ func Resolve(userEnv, passEnv, label string) (Pair, error) {
 	if !term.IsTerminal(tty.In.Fd()) {
 		return Pair{}, fmt.Errorf("%s: identifiants absents (variables %s / %s) et aucun terminal pour les saisir", label, orNone(userEnv), orNone(passEnv))
 	}
+	if Suspend != nil {
+		defer Suspend()()
+	}
 	if p.User == "" {
 		fmt.Fprint(tty.Out, i18n.T("prompt.user", label))
-		line, err := bufio.NewReader(tty.In).ReadString('\n')
-		if err != nil && err != io.EOF {
+		line, err := readInterruptible(ctx, tty, func() (string, error) {
+			return bufio.NewReader(tty.In).ReadString('\n')
+		})
+		if err != nil {
 			return Pair{}, err
 		}
 		p.User = strings.TrimSpace(line)
 	}
 	if p.Pass == "" {
 		fmt.Fprint(tty.Out, i18n.T("prompt.password", label, p.User))
-		b, err := term.ReadPassword(tty.In.Fd())
+		pass, err := readInterruptible(ctx, tty, func() (string, error) {
+			b, err := term.ReadPassword(tty.In.Fd())
+			return string(b), err
+		})
 		fmt.Fprintln(tty.Out)
 		if err != nil {
 			return Pair{}, err
 		}
-		p.Pass = string(b)
+		p.Pass = pass
 	}
 	if p.User == "" || p.Pass == "" {
 		return Pair{}, fmt.Errorf("%s: identifiants vides", label)
 	}
 	cache[label] = p
 	return p, nil
+}
+
+func readInterruptible(ctx context.Context, tty *Console, read func() (string, error)) (string, error) {
+	state, err := term.GetState(tty.In.Fd())
+	if err != nil {
+		return "", err
+	}
+	type result struct {
+		s   string
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		s, err := read()
+		ch <- result{s, err}
+	}()
+	select {
+	case r := <-ch:
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if r.err != nil && !errors.Is(r.err, io.EOF) {
+			return "", r.err
+		}
+		return r.s, nil
+	case <-ctx.Done():
+		_ = term.Restore(tty.In.Fd(), state)
+		fmt.Fprintln(tty.Out)
+		return "", ctx.Err()
+	}
 }
 
 func Confirm(question string) (bool, error) {
@@ -96,7 +141,7 @@ func Confirm(question string) (bool, error) {
 	}
 	fmt.Fprint(tty.Out, question)
 	line, err := bufio.NewReader(tty.In).ReadString('\n')
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
 	}
 	switch strings.ToLower(strings.TrimSpace(line)) {
