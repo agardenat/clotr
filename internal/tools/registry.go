@@ -53,6 +53,33 @@ func (r *Registry) AddGroup(prefix string) {
 	}
 }
 
+func (r *Registry) Without(prefixes ...string) *Registry {
+	hidden := func(name string) bool {
+		return slices.ContainsFunc(prefixes, func(p string) bool {
+			p = strings.TrimSuffix(p, "_")
+			return name == p || strings.HasPrefix(name, p+"_")
+		})
+	}
+	out := &Registry{tools: map[string]Tool{}, maxChars: r.maxChars, companions: map[string][]string{}}
+	for _, n := range r.order {
+		if !hidden(n) {
+			out.tools[n] = r.tools[n]
+			out.order = append(out.order, n)
+		}
+	}
+	for _, g := range r.groups {
+		if !hidden(g) {
+			out.groups = append(out.groups, g)
+		}
+	}
+	for p, names := range r.companions {
+		if !hidden(p) {
+			out.companions[p] = names
+		}
+	}
+	return out
+}
+
 func (r *Registry) GroupMembers(selected []string) []string {
 	var out []string
 	for _, prefix := range r.groups {

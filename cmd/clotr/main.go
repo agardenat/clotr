@@ -19,6 +19,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/agardenat/clotr/internal/httpx"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/llm"
+	"github.com/agardenat/clotr/internal/markdown"
 	"github.com/agardenat/clotr/internal/memory"
 	"github.com/agardenat/clotr/internal/orchestrator"
 	"github.com/agardenat/clotr/internal/progress"
@@ -69,6 +71,12 @@ type options struct {
 	web          string
 	webAllowed   bool
 	evidence     *evidence.Store
+	maxAgents    int
+	maxTasks     int
+	maxSteps     int
+	direct       string
+	chat         bool
+	raw          bool
 }
 
 type app struct {
@@ -84,6 +92,8 @@ type app struct {
 	memory      *memory.Store
 	lang        string
 	environment string
+	baseEnv     []string
+	instanceEnv map[string][]string
 	webTools    []string
 	evidence    *evidence.Store
 	closers     []func()
@@ -108,8 +118,23 @@ func main() {
 func newRoot() *cobra.Command {
 	o := &options{}
 	root := &cobra.Command{
-		Use:           "clotr",
-		Short:         "Agent d'analyse d'infrastructure en lecture seule, multi-modèles",
+		Use:   "clotr",
+		Short: "Agent d'analyse d'infrastructure en lecture seule, multi-modèles",
+		Long: `Agent d'analyse d'infrastructure en lecture seule, multi-modèles.
+
+Modes de run :
+  clotr run "<demande>"            planner, sous-agents en parallèle, vérification, synthèse
+  clotr run --direct "<demande>"   réponse directe par un seul agent, sans planner ni synthèse
+  clotr run --chat [--direct]      conversation plein écran : réponse en direct,
+                                   r répondre · c copier en Markdown · q quitter
+
+Limites pour un run (plan, run) : --max-agents N, --max-tasks N, --max-steps N
+Rapport mis en forme dans le terminal ; --raw pour le Markdown brut.
+Détail des options : clotr run --help`,
+		Example: `  clotr run "état du cluster prod"
+  clotr run --direct "version de kubelet sur les nœuds de prod ?"
+  clotr run --chat --direct
+  clotr run -s last "détaille les pods en erreur"`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -134,6 +159,9 @@ func newRoot() *cobra.Command {
 		c.Flags().StringToStringVarP(&o.models, "model", "m", nil, "forcer un modèle par rôle: role=provider/model")
 		c.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: k8s,fs,mcp,mcp_<serveur>,<instance>")
 		c.Flags().StringVar(&o.web, "web", "", "recherche web pour ce run: yes|no (défaut: web_search.policy)")
+		c.Flags().IntVar(&o.maxAgents, "max-agents", 0, "sous-agents simultanés pour ce run (prioritaire sur limits.max_agents)")
+		c.Flags().IntVar(&o.maxTasks, "max-tasks", 0, "tâches au plus dans le plan (prioritaire sur limits.max_tasks)")
+		c.Flags().IntVar(&o.maxSteps, "max-steps", 0, "plafond d'étapes par sous-agent (prioritaire sur limits.max_steps)")
 	}
 
 	plan := &cobra.Command{
@@ -149,9 +177,33 @@ func newRoot() *cobra.Command {
 	plan.Flags().BoolVar(&o.plain, "plain", false, "progression ligne par ligne au lieu du tableau dynamique")
 
 	run := &cobra.Command{
-		Use:   "run <demande>",
-		Short: "Planifie et exécute la demande, produit un rapport Markdown",
-		Args:  cobra.MinimumNArgs(1),
+		Use:   "run [demande]",
+		Short: "Exécute la demande (plan, sous-agents, synthèse, ou réponse directe), produit un rapport Markdown",
+		Long: `Exécute la demande et produit un rapport Markdown, enregistré comme un tour de session.
+
+Modes :
+  (défaut)      planner, sous-agents en parallèle, vérification des constats, synthèse
+  --direct      un seul agent répond directement, sans planner, vérification ni synthèse ;
+                --direct=<rôle> choisit le rôle (défaut : le rôle outillé le plus léger)
+  --chat        conversation plein écran : réponse affichée en direct, chaque échange est un
+                tour de la session ; la demande est facultative (saisie à l'ouverture)
+
+Touches du mode conversation :
+  r             répondre (tour suivant)
+  entrée        envoyer ; alt+entrée ou ctrl+j : nouvelle ligne ; échap : annuler la saisie
+  c             copier la dernière réponse en Markdown dans le presse-papiers
+  ↑ ↓ pgup pgdown home end   défiler
+  ctrl+c        interrompre le tour en cours (deux fois : quitter) ; hors tour : quitter
+  q, échap      quitter
+
+Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal, ou GLAMOUR_STYLE) ;
+--raw, -o, --json ou une redirection donnent le Markdown brut. La demande "-" est lue sur stdin.`,
+		Example: `  clotr run "état du cluster prod"
+  clotr run --direct "version de kubelet sur les nœuds de prod ?"
+  clotr run --max-tasks 3 --max-agents 2 "pods en CrashLoopBackOff et leur cause"
+  clotr run --chat --direct
+  clotr run -s last --chat`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmdRun(cmd.Context(), o, args, cmd.OutOrStdout())
 		},
@@ -162,6 +214,10 @@ func newRoot() *cobra.Command {
 	run.Flags().BoolVarP(&o.quiet, "quiet", "q", false, "pas de progression sur stderr")
 	run.Flags().BoolVar(&o.plain, "plain", false, "progression ligne par ligne au lieu du tableau dynamique")
 	run.Flags().StringVarP(&o.session, "session", "s", "", "affiner une session existante (nom ou last)")
+	run.Flags().StringVar(&o.direct, "direct", "", "réponse directe par un seul agent, sans planner, vérification ni synthèse (--direct=<rôle> pour choisir le rôle, défaut: le rôle outillé le plus léger)")
+	run.Flags().Lookup("direct").NoOptDefVal = directAuto
+	run.Flags().BoolVar(&o.chat, "chat", false, "mode conversation plein écran: réponse affichée en direct, r pour répondre, c pour copier en Markdown, q pour quitter")
+	run.Flags().BoolVar(&o.raw, "raw", false, "rapport en Markdown brut, sans mise en forme pour le terminal")
 
 	sessionsCmd := &cobra.Command{
 		Use:   "sessions",
@@ -188,6 +244,7 @@ func newRoot() *cobra.Command {
 	sessionCmd.Flags().StringVarP(&o.output, "output", "o", "", "écrire le rapport régénéré dans ce fichier")
 	sessionCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "avec --synthesize : connecteurs à préparer (défaut : ceux du tour)")
 	sessionCmd.Flags().StringVar(&o.evidenceID, "evidence", "", "afficher la sortie d'outil archivée d'une preuve (ex: E012, E2.005)")
+	sessionCmd.Flags().BoolVar(&o.raw, "raw", false, "rapport en Markdown brut, sans mise en forme pour le terminal")
 
 	toolsCmd := &cobra.Command{
 		Use:   "tools",
@@ -254,6 +311,18 @@ func loadConfig(o *options) (*config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, err
+	}
+	for _, l := range []struct {
+		flag string
+		v    int
+		dst  *int
+	}{{"--max-agents", o.maxAgents, &cfg.Limits.MaxAgents}, {"--max-tasks", o.maxTasks, &cfg.Limits.MaxTasks}, {"--max-steps", o.maxSteps, &cfg.Limits.MaxSteps}} {
+		if l.v < 0 {
+			return nil, fmt.Errorf("%s %d invalide (entier positif)", l.flag, l.v)
+		}
+		if l.v > 0 {
+			*l.dst = l.v
+		}
 	}
 	o.lang = cfg.Language
 	if o.langFlag != "" {
@@ -446,7 +515,11 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 			envLines = append(envLines, fmt.Sprintf("- MCP %s: %d outils (préfixe mcp_%s)", s.Name(), len(s.Tools()), s.Name()))
 		}
 	}
-	envLines = append(envLines, rt.setupInstances(ctx, o, enabled, warn)...)
+	rt.setupInstances(ctx, o, enabled, warn)
+	rt.baseEnv = envLines
+	for _, in := range rt.instances {
+		envLines = append(envLines, rt.instanceEnv[in.Name]...)
+	}
 	if rt.registry.Len() == 0 {
 		rt.close()
 		return nil, errors.New("aucun outil disponible: configurer k8s, files, mcp ou une instance de template")
@@ -469,7 +542,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	return rt, nil
 }
 
-func (rt *app) setupInstances(ctx context.Context, o *options, enabled func(string) bool, warn func(string, ...any)) []string {
+func (rt *app) setupInstances(ctx context.Context, o *options, enabled func(string) bool, warn func(string, ...any)) {
 	cfg := rt.cfg
 	var active []config.Instance
 	for _, in := range cfg.Instances {
@@ -478,17 +551,17 @@ func (rt *app) setupInstances(ctx context.Context, o *options, enabled func(stri
 		}
 	}
 	if len(active) == 0 {
-		return nil
+		return
 	}
 	set, err := template.Load(cfg.Templates.Dir)
 	if err != nil {
 		warn("templates: %v (instances désactivées)", err)
-		return nil
+		return
 	}
 	for _, w := range set.Warnings {
 		warn("%s", w)
 	}
-	var lines []string
+	rt.instanceEnv = map[string][]string{}
 	for _, ic := range active {
 		t, ok := set.Get(ic.Template)
 		if !ok {
@@ -514,15 +587,38 @@ func (rt *app) setupInstances(ctx context.Context, o *options, enabled func(stri
 		rt.registry.Add(in.Tools()...)
 		rt.registry.AddGroup(in.ToolPrefix())
 		rt.registry.AddCompanions(in.ToolPrefix(), in.Companions()...)
-		lines = append(lines, in.EnvironmentLines()...)
+		rt.instanceEnv[ic.Name] = in.EnvironmentLines()
 	}
-	return lines
 }
 
-func (rt *app) orchestrator(events progress.Sink) *orchestrator.Orchestrator {
+func (rt *app) scope(o *options, text string) (*tools.Registry, string) {
+	env := append([]string(nil), rt.baseEnv...)
+	var offered, hidden []string
+	for _, in := range rt.instances {
+		explicit := slices.ContainsFunc(o.tools, func(t string) bool {
+			return strings.TrimSuffix(strings.TrimSuffix(t, "*"), "_") == in.Name
+		})
+		if explicit || in.Activated() || in.Mentioned(text) {
+			offered = append(offered, in.Name)
+			env = append(env, rt.instanceEnv[in.Name]...)
+			continue
+		}
+		hidden = append(hidden, in.Name)
+		env = append(env, fmt.Sprintf("- Instance %s (template %s) : non proposée pour cette demande, qui ne la mentionne pas (la nommer, ou -t %s, pour l'utiliser).", in.Name, in.T.Name, in.Name))
+	}
+	if len(rt.instances) > 0 {
+		rt.audit.Log("instances_scope", map[string]any{"offered": offered, "hidden": hidden})
+	}
+	if len(hidden) == 0 {
+		return rt.registry, strings.Join(env, "\n")
+	}
+	return rt.registry.Without(hidden...), strings.Join(env, "\n")
+}
+
+func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env string) *orchestrator.Orchestrator {
 	runner := &agent.Runner{
 		Chat:            rt.pool,
-		Tools:           rt.registry,
+		Tools:           reg,
 		Audit:           rt.audit,
 		Events:          events,
 		MaxSteps:        rt.cfg.Limits.MaxSteps,
@@ -541,10 +637,10 @@ func (rt *app) orchestrator(events progress.Sink) *orchestrator.Orchestrator {
 		Cfg:         rt.cfg,
 		Router:      rt.router,
 		Runner:      runner,
-		Tools:       rt.registry,
+		Tools:       reg,
 		Audit:       rt.audit,
 		Events:      events,
-		Environment: rt.environment,
+		Environment: env,
 		Memory:      rt.memory,
 		Language:    rt.lang,
 		WebTools:    rt.webTools,
@@ -773,7 +869,8 @@ func cmdPlan(ctx context.Context, o *options, args []string, w io.Writer) error 
 	events := newProgress(o, rt.cfg.Limits.MaxSteps, "")
 	defer events.Close()
 	rt.audit.Log("plan_start", map[string]any{"request": request, "version": version})
-	orch := rt.orchestrator(events)
+	reg, env := rt.scope(o, request)
+	orch := rt.orchestrator(events, reg, env)
 	p, err := orch.Plan(ctx, request)
 	events.Close()
 	if rt.audit.Path != "" {
@@ -801,63 +898,95 @@ func cmdPlan(ctx context.Context, o *options, args []string, w io.Writer) error 
 	return nil
 }
 
-func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
-	request, err := readRequest(args)
-	if err != nil {
-		return err
+const directAuto = "auto"
+
+func (o *options) directRole() string {
+	if o.direct == directAuto {
+		return ""
 	}
+	return o.direct
+}
+
+func openRun(ctx context.Context, o *options) (*session.Session, *app, error) {
 	cfg, err := loadConfig(o)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	sess, err := openSession(cfg, o)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if err := o.decideWeb(cfg, sess.Confidential); err != nil {
-		return err
+		return nil, nil, err
 	}
-	history := sess.History(20000)
-	turn, turnDir, err := sess.NewTurn(request)
+	next := len(sess.Turns) + 1
+	o.evidence = evidence.Open("", next)
+	importPriorEvidence(sess, o.evidence, next)
+	rt, err := setup(ctx, o, false)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	turnN := turn.N
-	sess.Turns[turnN-1].Tools = o.tools
-	o.auditDir = turnDir
-	fmt.Fprintln(os.Stderr, i18n.T("session.start", sess.Name, turnN, filepath.Join(turnDir, "audit.jsonl")))
-	o.evidence = evidence.Open(filepath.Join(turnDir, "evidence"), turnN)
-	importPriorEvidence(sess, o.evidence, turnN)
-	rt, err := setup(ctx, o, true)
-	if err != nil {
-		sess.Turns[turnN-1].Status, sess.Turns[turnN-1].Error = "failed", err.Error()
-		_ = sess.Save()
-		return err
-	}
-	defer rt.close()
+	rt.closers = append(rt.closers, func() { _ = rt.audit.Close() })
 	prior, err := sess.LoadMemory()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "avertissement: mémoire de session illisible:", err)
 	}
 	rt.memory.Load(prior)
-	events := newProgress(o, rt.cfg.Limits.MaxSteps, sess.Name)
-	defer events.Close()
-	rt.audit.Log("run_start", map[string]any{"request": request, "version": version, "tools": rt.registry.Names(), "session": sess.Name, "turn": turnN, "memory_loaded": len(prior), "web": o.webAllowed})
-	orch := rt.orchestrator(events)
-	orch.History, orch.Turn = history, turnN
+	return sess, rt, nil
+}
+
+type turnOutcome struct {
+	report *orchestrator.Report
+	err    error
+	n      int
+	dir    string
+	used   []usedModel
+	costs  []budget.Line
+	info   []string
+}
+
+func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, request string, events progress.Sink, answer func(string)) turnOutcome {
+	history := sess.History(20000)
+	turn, turnDir, err := sess.NewTurn(request)
+	if err != nil {
+		return turnOutcome{err: err}
+	}
+	n := turn.N
+	sess.Turns[n-1].Tools = o.tools
+	rt.evidence.Begin(filepath.Join(turnDir, "evidence"), n)
+	if err := rt.audit.Reopen(turnDir, "audit"); err != nil {
+		fmt.Fprintln(os.Stderr, "avertissement: audit désactivé:", err)
+	}
+	rt.budget.NewRun()
+	fmt.Fprintln(os.Stderr, i18n.T("session.start", sess.Name, n, filepath.Join(turnDir, "audit.jsonl")))
+	rt.audit.Log("run_start", map[string]any{"request": request, "version": version, "tools": rt.registry.Names(), "session": sess.Name, "turn": n, "memory_loaded": len(rt.memory.All()), "web": o.webAllowed, "direct": o.direct})
+	mention := request
+	for _, t := range sess.Turns[:n-1] {
+		mention += "\n" + t.Request
+	}
+	reg, env := rt.scope(o, mention)
+	orch := rt.orchestrator(events, reg, env)
+	orch.History, orch.Turn = history, n
 	orch.AfterTask = rt.budgetRefresher(events)
+	orch.OnAnswer = answer
 	orch.EvidenceDisplay = func(p string) string {
 		if rel, err := filepath.Rel(sess.Dir(), p); err == nil {
 			return rel
 		}
 		return p
 	}
-	report, runErr := orch.Run(ctx, request)
+	var report *orchestrator.Report
+	var runErr error
+	if o.direct != "" {
+		report, runErr = orch.Direct(ctx, request, o.directRole())
+	} else {
+		report, runErr = orch.Run(ctx, request)
+	}
 	used := rt.usedModels(report)
 	costs := rt.budget.Summary()
 	rt.audit.Log("run_end", map[string]any{"error": errString(runErr), "models": used, "costs": costs, "memory": rt.memory.Stats()})
-	events.Close()
-	rt.saveTurn(sess, turnN, turnDir, report, runErr, used, costs)
+	rt.saveTurn(sess, n, turnDir, report, runErr, used, costs)
+	res := turnOutcome{report: report, err: runErr, n: n, dir: turnDir, used: used, costs: costs}
 	if len(used) > 0 {
 		var parts, foreign []string
 		for _, u := range used {
@@ -866,48 +995,131 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 				foreign = append(foreign, u.Ref)
 			}
 		}
-		fmt.Fprintln(os.Stderr, i18n.T("models.used", strings.Join(parts, ", ")))
+		res.info = append(res.info, i18n.T("models.used", strings.Join(parts, ", ")))
 		if len(foreign) > 0 {
-			fmt.Fprintln(os.Stderr, i18n.T("models.foreign", strings.Join(foreign, ", ")))
+			res.info = append(res.info, i18n.T("models.foreign", strings.Join(foreign, ", ")))
 		} else {
-			fmt.Fprintln(os.Stderr, i18n.T("models.allsov"))
+			res.info = append(res.info, i18n.T("models.allsov"))
 		}
 	}
 	for _, c := range costs {
-		fmt.Fprintln(os.Stderr, i18n.T("cost.line", c.String()))
+		res.info = append(res.info, i18n.T("cost.line", c.String()))
 	}
 	mst := rt.memory.Stats()
-	fmt.Fprintln(os.Stderr, i18n.T("memory.line", i18n.N(mst.Entries, "entry"), mst.Sovereign, mst.ExposedToForeign))
+	res.info = append(res.info, i18n.T("memory.line", i18n.N(mst.Entries, "entry"), mst.Sovereign, mst.ExposedToForeign))
 	if err := rt.evidence.Save(); err != nil {
 		fmt.Fprintln(os.Stderr, "avertissement: preuves:", err)
 	}
-	if n := rt.evidence.Len(); n > 0 {
-		fmt.Fprintln(os.Stderr, i18n.T("evidence.line", n, filepath.Join(turnDir, "evidence"), sess.Name))
+	if k := rt.evidence.Len(); k > 0 {
+		res.info = append(res.info, i18n.T("evidence.line", k, filepath.Join(turnDir, "evidence"), sess.Name))
 	}
-	fmt.Fprintln(os.Stderr, i18n.T("session.line", sess.Name, turnN, sess.Dir()))
+	res.info = append(res.info, i18n.T("session.line", sess.Name, n, sess.Dir()))
+	return res
+}
+
+func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
+	if o.chat {
+		return cmdChat(ctx, o, args)
+	}
+	request, err := readRequest(args)
+	if err != nil {
+		return err
+	}
+	sess, rt, err := openRun(ctx, o)
+	if err != nil {
+		return err
+	}
+	defer rt.close()
+	events := newProgress(o, rt.cfg.Limits.MaxSteps, sess.Name)
+	defer events.Close()
+	res := rt.runTurn(ctx, o, sess, request, events, nil)
+	events.Close()
+	for _, l := range res.info {
+		fmt.Fprintln(os.Stderr, l)
+	}
 	fmt.Fprintln(os.Stderr, i18n.T("session.refine", sess.Name))
+	report, runErr := res.report, res.err
 	if report == nil {
 		return runErr
 	}
-	var out []byte
 	if o.json {
-		out, _ = json.MarshalIndent(map[string]any{"plan": report.Plan, "results": report.Results, "report": report.Markdown, "model": report.Model, "models_used": used, "costs": costs, "memory": rt.memory.All()}, "", "  ")
-		out = append(out, '\n')
-	} else {
-		out = []byte(report.Markdown + "\n")
+		out, _ := json.MarshalIndent(map[string]any{"plan": report.Plan, "results": report.Results, "report": report.Markdown, "model": report.Model, "models_used": res.used, "costs": res.costs, "memory": rt.memory.All()}, "", "  ")
+		return writeReport(w, o.output, append(out, '\n'), runErr)
 	}
-	if report.Markdown == "" && !o.json {
+	if report.Markdown == "" {
 		return runErr
 	}
 	if o.output != "" {
-		if err := os.WriteFile(o.output, out, 0o644); err != nil {
-			return err
-		}
-		fmt.Fprintln(os.Stderr, "rapport:", o.output)
-	} else {
-		_, _ = w.Write(out)
+		return writeReport(w, o.output, []byte(report.Markdown+"\n"), runErr)
 	}
+	writeMarkdown(w, report.Markdown, o.raw)
 	return runErr
+}
+
+func writeReport(w io.Writer, path string, out []byte, runErr error) error {
+	if path == "" {
+		_, _ = w.Write(out)
+		return runErr
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "rapport:", path)
+	return runErr
+}
+
+func writeMarkdown(w io.Writer, md string, raw bool) {
+	f, ok := w.(*os.File)
+	if raw || !ok || !term.IsTerminal(f.Fd()) {
+		_, _ = io.WriteString(w, md+"\n")
+		return
+	}
+	width, _, err := term.GetSize(f.Fd())
+	if err != nil || width <= 0 {
+		width = 100
+	}
+	dark := true
+	if term.IsTerminal(os.Stdin.Fd()) {
+		dark = lipgloss.HasDarkBackground(os.Stdin, f)
+	}
+	_, _ = io.WriteString(w, markdown.Render(md, min(width, 120), dark)+"\n")
+}
+
+func cmdChat(ctx context.Context, o *options, args []string) error {
+	if o.json || o.output != "" {
+		return errors.New("--chat incompatible avec --json et --output")
+	}
+	if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stderr.Fd()) {
+		return errors.New("--chat requiert un terminal interactif")
+	}
+	initial := strings.TrimSpace(strings.Join(args, " "))
+	sess, rt, err := openRun(ctx, o)
+	if err != nil {
+		return err
+	}
+	defer rt.close()
+	err = progress.RunChat(ctx, os.Stderr, progress.ChatOptions{
+		Title:    sess.Name,
+		MaxSteps: rt.cfg.Limits.MaxSteps,
+		Initial:  initial,
+		OnStart:  func(suspend func() func()) { creds.Suspend = suspend },
+		Turn: func(ctx context.Context, request string, events progress.Sink, answer func(string)) progress.TurnResult {
+			res := rt.runTurn(ctx, o, sess, request, events, answer)
+			out := progress.TurnResult{Info: res.info, Err: res.err}
+			if res.report != nil && res.report.Markdown != "" {
+				out.Markdown = res.report.Markdown
+				out.Path = filepath.Join(res.dir, "report.md")
+				out.Info = append(out.Info, i18n.T("chat.report", out.Path))
+			}
+			return out
+		},
+	})
+	creds.Suspend = nil
+	if len(sess.Turns) > 0 {
+		fmt.Fprintln(os.Stderr, i18n.T("session.line", sess.Name, len(sess.Turns), sess.Dir()))
+		fmt.Fprintln(os.Stderr, i18n.T("session.refine", sess.Name))
+	}
+	return err
 }
 
 func (rt *app) budgetRefresher(events progress.Sink) func(context.Context) {
@@ -1072,7 +1284,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	rt.memory.Load(prior)
 	events := newProgress(o, rt.cfg.Limits.MaxSteps, sess.Name)
 	defer events.Close()
-	orch := rt.orchestrator(events)
+	orch := rt.orchestrator(events, rt.registry, rt.environment)
 	orch.Turn = n
 	if n > 1 {
 		orch.History = sess.History(20000)
@@ -1197,8 +1409,8 @@ func cmdSession(o *options, name string, w io.Writer) error {
 		return nil
 	}
 	fmt.Fprintln(os.Stderr)
-	_, err = io.WriteString(w, report+"\n")
-	return err
+	writeMarkdown(w, report, o.raw)
+	return nil
 }
 
 type usedModel struct {

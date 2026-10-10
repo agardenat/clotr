@@ -10,35 +10,34 @@ import (
 	"github.com/charmbracelet/x/term"
 )
 
-func watchResize(t *TUI, out *os.File) {
+func watchResize(p *tea.Program, stop <-chan struct{}, out *os.File) {
 	w0, h0, _ := term.GetSize(out.Fd())
 	tick := time.NewTicker(500 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		select {
-		case <-t.stop:
+		case <-stop:
 			return
 		case <-tick.C:
 			if w, h, err := term.GetSize(out.Fd()); err == nil && (w != w0 || h != h0) {
 				w0, h0 = w, h
-				t.p.Send(tea.WindowSizeMsg{Width: w, Height: h})
+				p.Send(tea.WindowSizeMsg{Width: w, Height: h})
 			}
 		}
 	}
 }
 
-func captureStderr(stderr *os.File, t *TUI) (*os.File, *os.File) {
+func captureStderr(stderr *os.File) (*os.File, *os.File, func()) {
 	if stderr != os.Stderr {
-		return stderr, nil
+		return stderr, nil, nil
 	}
 	r, w, err := os.Pipe()
 	if err != nil {
-		return stderr, nil
+		return stderr, nil, nil
 	}
 	os.Stderr = w
-	t.restore = func() {
+	return stderr, r, func() {
 		os.Stderr = stderr
 		_ = w.Close()
 	}
-	return stderr, r
 }

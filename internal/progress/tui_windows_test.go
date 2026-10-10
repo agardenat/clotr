@@ -12,9 +12,8 @@ import (
 func TestCaptureStderr(t *testing.T) {
 	orig := os.Stderr
 	defer func() { os.Stderr = orig }()
-	tui := &TUI{}
-	out, pipe := captureStderr(os.Stderr, tui)
-	if pipe == nil || tui.restore == nil || out != orig {
+	out, pipe, restore := captureStderr(os.Stderr)
+	if pipe == nil || restore == nil || out != orig {
 		t.Fatal("capture non installée")
 	}
 	fmt.Fprintln(os.Stderr, "W1008 warning from client-go")
@@ -23,7 +22,7 @@ func TestCaptureStderr(t *testing.T) {
 	if !strings.Contains(string(buf[:n]), "client-go") {
 		t.Fatalf("ligne non capturée: %q", buf[:n])
 	}
-	tui.restore()
+	restore()
 	if os.Stderr != orig {
 		t.Fatal("os.Stderr non restauré")
 	}

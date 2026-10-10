@@ -111,3 +111,21 @@ func TestRefreshFromInfo(t *testing.T) {
 		t.Fatal("écartement signalé deux fois")
 	}
 }
+
+func TestNewRun(t *testing.T) {
+	c := cfg(t, "http://x")
+	tr := NewTracker(c)
+	tr.Record("lite", llm.Cost{Reported: true, Response: 0.6, KeySpend: 10, KeyMax: 50, HasKey: true})
+	if tr.Exhausted("lite") == "" {
+		t.Fatal("max_run_cost non déclenché")
+	}
+	tr.NewRun()
+	if r := tr.Exhausted("lite"); r != "" || len(tr.Summary()) != 0 {
+		t.Fatalf("nouveau run: %q %+v", r, tr.Summary())
+	}
+	tr.Record("lite", llm.Cost{Reported: true, Response: 0.1, KeySpend: 49.5, KeyMax: 50, HasKey: true})
+	tr.NewRun()
+	if !strings.Contains(tr.Exhausted("lite"), "min_remaining") {
+		t.Fatal("min_remaining doit rester déclenché d'un run à l'autre")
+	}
+}

@@ -27,6 +27,20 @@ func Open(dir, runID string) (*Logger, error) {
 	return &Logger{f: f, enc: json.NewEncoder(f), Path: path}, nil
 }
 
+func (l *Logger) Reopen(dir, runID string) error {
+	next, err := Open(dir, runID)
+	if err != nil {
+		return err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.f != nil {
+		_ = l.f.Close()
+	}
+	l.f, l.enc, l.Path = next.f, next.enc, next.Path
+	return nil
+}
+
 func Nop() *Logger {
 	return &Logger{}
 }

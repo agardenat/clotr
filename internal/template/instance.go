@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.starlark.net/starlark"
@@ -101,6 +103,7 @@ type activation struct {
 	refresh  bool
 	once     sync.Once
 	err      error
+	ok       atomic.Bool
 }
 
 func NewInstance(name string, t *Template, given map[string]any) (*Instance, error) {
@@ -274,6 +277,8 @@ func (in *Instance) ensure() error {
 			a.err = fmt.Errorf("instance %s indisponible pour ce run: %w", in.Name, err)
 			in.warn(a.err.Error())
 			f["error"] = err.Error()
+		} else {
+			a.ok.Store(true)
 		}
 		in.audit("instance_activation", f)
 	})
@@ -330,6 +335,45 @@ func (in *Instance) Discover(ctx context.Context, cacheDir string, ttl time.Dura
 		_ = writeCache(cachePath, inv)
 	}
 	return nil
+}
+
+func (in *Instance) Activated() bool {
+	return in.pending == nil || in.pending.ok.Load()
+}
+
+func (in *Instance) Mentioned(text string) bool {
+	terms := append([]string{in.Name, in.T.Name}, in.T.Keywords...)
+	in.mu.Lock()
+	if in.inv != nil {
+		for _, t := range in.inv.Targets {
+			terms = append(terms, t.Name)
+		}
+	}
+	in.mu.Unlock()
+	for _, term := range terms {
+		if term = strings.TrimSpace(term); term == "" {
+			continue
+		}
+		if regexp.MustCompile(`(?i)(^|[^\pL\pN_])` + regexp.QuoteMeta(term) + `($|[^\pL\pN_])`).MatchString(text) {
+			return true
+		}
+	}
+	return false
+}
+
+func (in *Instance) hasCachedInventory() bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.inv != nil && !in.inv.DiscoveredAt.IsZero()
+}
+
+func (in *Instance) inventoryToolName() string {
+	for _, ts := range in.T.Tools {
+		if ts.Kind == "inventory" {
+			return in.Name + "_" + ts.ToolName()
+		}
+	}
+	return ""
 }
 
 func (in *Instance) setInventory(inv *Inventory) error {
@@ -546,9 +590,13 @@ func (in *Instance) EnvironmentLines() []string {
 	lines := []string{fmt.Sprintf("- Instance %s (template %s : %s). Outils : %s", in.Name, in.T.Name, in.T.Description, strings.Join(in.ToolNames(), ", "))}
 	if in.pending != nil {
 		if inv.DiscoveredAt.IsZero() {
-			lines = append(lines, "  Instance activée seulement si une tâche appelle l'un de ses outils ; inventaire pas encore découvert, cibles issues de la configuration.")
+			lines = append(lines, "  Instance activée seulement si une tâche appelle l'un de ses outils (identifiants demandés à l'utilisateur s'ils ne sont pas dans l'environnement, puis découverte) ; inventaire pas encore découvert, cibles issues de la configuration.")
 		} else {
-			lines = append(lines, "  Instance activée seulement si une tâche appelle l'un de ses outils ; inventaire ci-dessous issu du cache du "+inv.DiscoveredAt.Format(time.RFC3339)+", actualisé à l'activation.")
+			line := "  Instance activée seulement si une tâche appelle l'un de ses outils (identifiants demandés à l'utilisateur s'ils ne sont pas dans l'environnement, puis découverte) ; inventaire ci-dessous issu du cache du " + inv.DiscoveredAt.Format(time.RFC3339) + ", actualisé à l'activation."
+			if name := in.inventoryToolName(); name != "" {
+				line += " " + name + " lit ce cache sans activer l'instance."
+			}
+			lines = append(lines, line)
 		}
 	}
 	for _, l := range inv.Lines {
