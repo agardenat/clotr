@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-10
+
 ### Ajouté
 - `run --direct[=<rôle>]` : réponse directe par un seul agent, sans planner, vérification ni synthèse, pour une question rapide. Preuves, annexe et contrôle de progression conservés.
 - `run --chat` : mode conversation plein écran. La réponse s'affiche en direct, mise en forme ; `r` pour répondre (nouveau tour de la même session), `c` pour copier la réponse en Markdown dans le presse-papiers, `q` pour quitter. Les connecteurs sont préparés une seule fois pour la conversation.
