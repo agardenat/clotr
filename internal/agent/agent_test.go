@@ -49,7 +49,7 @@ func TestToolLoopParallel(t *testing.T) {
 	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
 		last := req.Messages[len(req.Messages)-1]
 		if last.Role == "user" {
-			return testutil.Reply("", testutil.Call("k8s_list", map[string]string{"ns": "a"}), testutil.Call("k8s_list", map[string]string{"ns": "b"}), testutil.Call("rm_rf", nil)), nil
+			return testutil.Reply("", testutil.Call("k8s_list", map[string]string{"ns": "a"}), testutil.Call("k8s_list<|channel|>commentary", map[string]string{"ns": "b"}), testutil.Call("rm_rf", nil)), nil
 		}
 		return testutil.Reply("<think>hmm</think>{\"findings\":[\"ok\"]}"), nil
 	}}
@@ -67,6 +67,9 @@ func TestToolLoopParallel(t *testing.T) {
 	tc := msgs[2].ToolCalls
 	if tc[0].ID == "" || msgs[3].ToolCallID != tc[0].ID || !strings.Contains(msgs[3].Content, `"ns":"a"`) {
 		t.Fatalf("messages outils: %+v", msgs)
+	}
+	if tc[1].Function.Name != "k8s_list" || !strings.Contains(msgs[4].Content, `"ns":"b"`) {
+		t.Fatalf("nom d'outil non nettoyé: %q → %q", tc[1].Function.Name, msgs[4].Content)
 	}
 	if !strings.Contains(msgs[5].Content, "ERREUR") {
 		t.Errorf("outil hors scope non refusé: %q", msgs[5].Content)

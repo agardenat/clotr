@@ -85,7 +85,7 @@ Pendant un `run`, chaque sortie d'outil (hors mémoire) est archivée en entier 
 clotr session <nom|last> --evidence E012
 ```
 
-Les preuves de tous les tours d'une session restent consultables : `evidence_search` les retrouve (termes sur l'outil et ses arguments, filtre optionnel sur le contenu, heure de collecte), et l'annexe d'un rapport résout aussi les identifiants des tours précédents. Pendant un run, les agents relisent une preuve avec l'outil `evidence_read` (`id`, puis `pattern` en expression régulière, ou `offset`/`lines`), sans refaire l'appel distant.
+Les preuves de tous les tours d'une session restent consultables : `evidence_search` les retrouve (termes sur l'outil et ses arguments, filtre optionnel sur le contenu, heure de collecte), et l'annexe d'un rapport résout aussi les identifiants des tours précédents. Pendant un run, les agents relisent une preuve avec l'outil `evidence_read` (`id`, puis `pattern` pour garder et `exclude` pour retirer des lignes, en expressions régulières RE2, ou `offset`/`lines`), sans refaire l'appel distant.
 
 ### Historique allégé
 

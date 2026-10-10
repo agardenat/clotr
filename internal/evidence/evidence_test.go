@@ -55,6 +55,17 @@ func TestReadTool(t *testing.T) {
 	if err != nil || !strings.Contains(out, "3: c INFO") || strings.Contains(out, "d ERROR") {
 		t.Fatalf("plage: %v\n%s", err, out)
 	}
+	out, err = tool.Call(context.Background(), json.RawMessage(`{"id":"`+id+`","exclude":"^(a|c) "}`))
+	if err != nil || !strings.Contains(out, "2 lignes sur 4") || strings.Contains(out, "INFO") {
+		t.Fatalf("exclude: %v\n%s", err, out)
+	}
+	out, err = tool.Call(context.Background(), json.RawMessage(`{"id":"`+id+`","pattern":"ERROR","exclude":"y$"}`))
+	if err != nil || !strings.Contains(out, "1 lignes sur 4") || !strings.Contains(out, "2: b ERROR x") {
+		t.Fatalf("pattern + exclude: %v\n%s", err, out)
+	}
+	if _, err := tool.Call(context.Background(), json.RawMessage(`{"id":"`+id+`","pattern":"^(?!a)"}`)); err == nil || !strings.Contains(err.Error(), "utiliser exclude") {
+		t.Fatalf("lookahead: %v", err)
+	}
 	if _, err := tool.Call(context.Background(), json.RawMessage(`{"id":"E999"}`)); err == nil {
 		t.Fatal("preuve inconnue acceptée")
 	}
