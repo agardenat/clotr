@@ -361,7 +361,7 @@ tools: [{kind: inventory}]
 		t.Fatalf("cibles: %+v", ts)
 	}
 	home, _ := os.UserHomeDir()
-	if ts[1].Attrs["login"] != "admin" || ts[2].Attrs["login"] != "other" || ts[1].Attrs["key"] != home+"/.ssh/k" || ts[1].Attrs["port"] != "443" {
+	if ts[1].Attrs["login"] != "admin" || ts[2].Attrs["login"] != "other" || ts[1].Attrs["key"] != filepath.Join(home, ".ssh", "k") || ts[1].Attrs["port"] != "443" {
 		t.Fatalf("héritage des attributs: %+v %+v", ts[1].Attrs, ts[2].Attrs)
 	}
 	if err := in.Discover(context.Background(), "", 0, true); err != nil || len(in.Inventory().Targets) != 3 {
