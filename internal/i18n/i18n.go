@@ -32,6 +32,7 @@ var msgs = map[string]msg{
 	"waiting":              {"waiting for %s", "attend %s"},
 	"fallback":             {"fallback to %s (%s)", "bascule vers %s (%s)"},
 	"fallback.after":       {"after error on %s: %s", "après erreur sur %s : %s"},
+	"fallback.exhausted":   {"%s used its whole output limit without answering", "%s a épuisé sa limite de sortie sans répondre"},
 	"limit":                {"%d-step limit reached, forced conclusion", "limite de %d étapes atteinte, conclusion forcée"},
 	"evidence.title":       {"Appendix — cited evidence", "Annexe — preuves citées"},
 	"evidence.unknown":     {"not found in this turn's archive (earlier turn or invented identifier)", "absente de l'archive de ce tour (tour précédent ou identifiant inventé)"},

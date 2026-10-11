@@ -42,13 +42,22 @@ type Cluster struct {
 type Factory func(contextName string) (*Cluster, error)
 
 type K8s struct {
-	allowed    []string
-	defaultCtx string
-	factory    Factory
-	mu         sync.Mutex
-	clusters   map[string]*Cluster
-	now        func() time.Time
+	allowed      []string
+	defaultCtx   string
+	factory      Factory
+	mu           sync.Mutex
+	clusters     map[string]*Cluster
+	probes       map[string]*probeState
+	probeTimeout time.Duration
+	now          func() time.Time
 }
+
+type probeState struct {
+	once sync.Once
+	err  error
+}
+
+const defaultProbeTimeout = 5 * time.Second
 
 func New(cfg *config.K8s) (*K8s, error) {
 	timeout := cfg.Timeout.Duration
@@ -101,51 +110,51 @@ func New(cfg *config.K8s) (*K8s, error) {
 }
 
 func NewWithFactory(allowed []string, def string, f Factory) *K8s {
-	return &K8s{allowed: allowed, defaultCtx: def, factory: f, clusters: map[string]*Cluster{}, now: time.Now}
+	return &K8s{allowed: allowed, defaultCtx: def, factory: f, clusters: map[string]*Cluster{}, probes: map[string]*probeState{}, probeTimeout: defaultProbeTimeout, now: time.Now}
 }
 
-func (k *K8s) Probe(ctx context.Context, timeout time.Duration) []string {
-	type res struct {
-		name string
-		err  error
+func (k *K8s) use(ctx context.Context, name string) (*Cluster, error) {
+	if name == "" {
+		name = k.defaultCtx
 	}
-	results := make([]res, len(k.allowed))
-	var wg sync.WaitGroup
-	for i, name := range k.allowed {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results[i] = res{name: name, err: k.probe(ctx, name, timeout)}
-		}()
-	}
-	wg.Wait()
-	var ok, failures []string
-	for _, r := range results {
-		if r.err != nil {
-			failures = append(failures, fmt.Sprintf("contexte %s injoignable, retiré pour ce run: %v", r.name, r.err))
-			continue
-		}
-		ok = append(ok, r.name)
-	}
-	k.allowed = ok
-	if len(ok) > 0 && !slices.Contains(ok, k.defaultCtx) {
-		k.defaultCtx = ok[0]
-	}
-	return failures
-}
-
-func (k *K8s) probe(ctx context.Context, name string, timeout time.Duration) error {
 	c, err := k.cluster(name)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	k.mu.Lock()
+	st, ok := k.probes[name]
+	if !ok {
+		st = &probeState{}
+		k.probes[name] = st
+	}
+	k.mu.Unlock()
+	st.once.Do(func() { st.err = k.probe(ctx, c, k.probeTimeout) })
+	if st.err != nil {
+		return nil, fmt.Errorf("contexte %s injoignable pour ce run: %w", name, st.err)
+	}
+	return c, nil
+}
+
+func (k *K8s) unreachable() []string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	var out []string
+	for _, name := range k.allowed {
+		if st, ok := k.probes[name]; ok && st.err != nil {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func (k *K8s) probe(ctx context.Context, c *Cluster, timeout time.Duration) error {
 	rc := c.Core.Discovery().RESTClient()
 	if rc == nil {
 		return nil
 	}
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	_, err = rc.Get().AbsPath("/version").Do(pctx).Raw()
+	_, err := rc.Get().AbsPath("/version").Do(pctx).Raw()
 	if pctx.Err() != nil {
 		return fmt.Errorf("pas de réponse en %s", timeout)
 	}
@@ -217,7 +226,11 @@ func (contextsTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
 func (t contextsTool) Call(context.Context, json.RawMessage) (string, error) {
-	return fmt.Sprintf("autorisés: %s\ndéfaut: %s\n", strings.Join(t.k.allowed, ", "), t.k.defaultCtx), nil
+	out := fmt.Sprintf("autorisés: %s\ndéfaut: %s\n", strings.Join(t.k.allowed, ", "), t.k.defaultCtx)
+	if down := t.k.unreachable(); len(down) > 0 {
+		out += "injoignables pour ce run: " + strings.Join(down, ", ") + "\n"
+	}
+	return out, nil
 }
 
 type apiResourcesTool struct{ k *K8s }
@@ -235,7 +248,7 @@ func (t apiResourcesTool) Call(ctx context.Context, raw json.RawMessage) (string
 	if err != nil {
 		return "", err
 	}
-	c, err := t.k.cluster(args.Context)
+	c, err := t.k.use(ctx, args.Context)
 	if err != nil {
 		return "", err
 	}
@@ -283,7 +296,7 @@ func (t listTool) Call(ctx context.Context, raw json.RawMessage) (string, error)
 	if err != nil {
 		return "", err
 	}
-	c, err := t.k.cluster(args.Context)
+	c, err := t.k.use(ctx, args.Context)
 	if err != nil {
 		return "", err
 	}
@@ -358,7 +371,7 @@ func (t getTool) Call(ctx context.Context, raw json.RawMessage) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	c, err := t.k.cluster(args.Context)
+	c, err := t.k.use(ctx, args.Context)
 	if err != nil {
 		return "", err
 	}
@@ -404,7 +417,7 @@ func (t logsTool) Call(ctx context.Context, raw json.RawMessage) (string, error)
 	if err != nil {
 		return "", err
 	}
-	c, err := t.k.cluster(args.Context)
+	c, err := t.k.use(ctx, args.Context)
 	if err != nil {
 		return "", err
 	}
@@ -449,7 +462,7 @@ func (t eventsTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 	if err != nil {
 		return "", err
 	}
-	c, err := t.k.cluster(args.Context)
+	c, err := t.k.use(ctx, args.Context)
 	if err != nil {
 		return "", err
 	}
@@ -526,7 +539,7 @@ func (t topTool) Call(ctx context.Context, raw json.RawMessage) (string, error) 
 	if args.Kind != "nodes" && args.Kind != "pods" {
 		return "", errors.New("kind doit valoir nodes ou pods")
 	}
-	c, err := t.k.cluster(args.Context)
+	c, err := t.k.use(ctx, args.Context)
 	if err != nil {
 		return "", err
 	}

@@ -4,6 +4,13 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Modifié
+- k8s : les contextes ne sont plus testés au démarrage de chaque run. Un contexte est testé au premier appel d'un outil qui le vise ; une demande sans rapport avec Kubernetes ne contacte aucun cluster et n'affiche plus d'avertissement pour un tunnel fermé.
+
+### Corrigé
+- SSH : une commande dont la session se ferme sans code de sortie (« remote command exited without exit status ») est relancée jusqu'à 3 fois, avec un délai croissant. Observé quand plusieurs commandes partent en même temps vers le même hôte : une seule aboutissait.
+- Un modèle qui épuise sa limite de sortie sans produire de contenu (tout en raisonnement) n'est plus relancé à l'identique : l'appel passe au modèle candidat suivant.
+
 ## [0.5.1] - 2026-10-11
 
 ### Modifié

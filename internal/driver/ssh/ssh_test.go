@@ -2,12 +2,17 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/agardenat/clotr/internal/testutil"
 )
@@ -127,5 +132,40 @@ func TestPoolExecAndKnownHosts(t *testing.T) {
 	defer strict.Close()
 	if _, err := strict.Exec(context.Background(), ep, "true", 10); err == nil {
 		t.Fatal("hôte inconnu accepté en strict")
+	}
+}
+
+func TestPoolRetriesMissingExitStatus(t *testing.T) {
+	saved := missingExitRetries
+	missingExitRetries = []time.Duration{time.Millisecond, time.Millisecond}
+	defer func() { missingExitRetries = saved }()
+	dir := t.TempDir()
+	client, clientPEM := testutil.NewSSHKey(t)
+	keyPath := filepath.Join(dir, "id")
+	os.WriteFile(keyPath, clientPEM, 0o600)
+	hostKey, _ := testutil.NewSSHKey(t)
+	var mu sync.Mutex
+	calls := map[string]int{}
+	srv := testutil.StartSSHServer(t, client.PublicKey(), hostKey, func(cmd string) (string, int) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls[cmd]++
+		if cmd == "always" || calls[cmd] == 1 {
+			return "", -1
+		}
+		return "ok\n", 0
+	})
+	h, p, _ := net.SplitHostPort(srv.Addr)
+	port, _ := strconv.Atoi(p)
+	pool, _ := NewPool(Options{KnownHosts: filepath.Join(dir, "kh"), HostKey: AcceptNew})
+	defer pool.Close()
+	ep := Endpoint{Host: h, Port: port, User: "admin", KeyPath: keyPath}
+	res, err := pool.Exec(context.Background(), ep, "once", 100)
+	if err != nil || res.Stdout != "ok\n" || calls["once"] != 2 {
+		t.Fatalf("relance attendue: %+v %v (%d appels)", res, err, calls["once"])
+	}
+	var me *gossh.ExitMissingError
+	if _, err := pool.Exec(context.Background(), ep, "always", 100); !errors.As(err, &me) || calls["always"] != 3 {
+		t.Fatalf("erreur après relances attendue: %v (%d appels)", err, calls["always"])
 	}
 }

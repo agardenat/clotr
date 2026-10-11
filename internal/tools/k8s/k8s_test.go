@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -178,21 +179,27 @@ func TestNoWriteVerbs(t *testing.T) {
 	}
 }
 
-func TestProbeRemovesUnreachable(t *testing.T) {
+func TestUnreachableContextIsCheckedLazily(t *testing.T) {
 	base := newK8s(t)
-	k := NewWithFactory([]string{"down", "prod"}, "down", func(name string) (*Cluster, error) {
+	var built atomic.Int32
+	k := NewWithFactory([]string{"down", "prod"}, "prod", func(name string) (*Cluster, error) {
+		built.Add(1)
 		if name == "down" {
 			return nil, fmt.Errorf("proxyconnect: connection refused")
 		}
 		return base.cluster("prod")
 	})
-	failures := k.Probe(context.Background(), time.Second)
-	ctxs, def := k.Contexts()
-	if len(failures) != 1 || !strings.Contains(failures[0], "down") || len(ctxs) != 1 || def != "prod" {
-		t.Fatalf("failures=%v ctxs=%v def=%s", failures, ctxs, def)
+	if built.Load() != 0 {
+		t.Fatal("contexte contacté avant tout appel d'outil")
 	}
-	if _, err := call(t, k, "k8s_list", `{"context":"down","resource":"pods"}`); err == nil {
-		t.Fatal("contexte retiré encore utilisable")
+	if _, err := call(t, k, "k8s_list", `{"resource":"pods"}`); err != nil {
+		t.Fatalf("contexte par défaut: %v", err)
+	}
+	if built.Load() != 1 {
+		t.Fatalf("contexte non utilisé contacté: %d", built.Load())
+	}
+	if _, err := call(t, k, "k8s_list", `{"context":"down","resource":"pods"}`); err == nil || !strings.Contains(err.Error(), "down") {
+		t.Fatalf("erreur attendue sur le contexte injoignable: %v", err)
 	}
 }
 

@@ -342,7 +342,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `audit` | `dir` (défaut `~/.local/state/clotr/audit`), utilisé par `plan`. L'audit d'un `run` est écrit dans le tour de sa session. |
 | `sessions` | `dir` (défaut `~/.local/state/clotr/sessions`) |
 | `language` | `auto` (défaut), `fr` ou `en` : langue de sortie, voir ci-dessous |
-| `k8s` | `kubeconfig`, `contexts` (défaut : current-context seul), `timeout` (défaut 30s). Au démarrage, chaque contexte est testé (`/version`, 5 s) ; un contexte injoignable (tunnel fermé, VPN…) est retiré pour le run, avec un avertissement. |
+| `k8s` | `kubeconfig`, `contexts` (défaut : current-context seul), `timeout` (défaut 30s). Un contexte n'est testé (`/version`, 5 s) qu'au premier appel d'un outil qui le vise ; injoignable (tunnel fermé, VPN…), il renvoie une erreur à chaque appel pour le reste du run, et `k8s_contexts` le signale. Une demande qui ne concerne pas Kubernetes ne contacte aucun cluster. |
 | `files` | `roots`, `max_file_bytes` |
 | `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true) |
