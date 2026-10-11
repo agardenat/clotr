@@ -90,7 +90,7 @@ func TestInstances(t *testing.T) {
 	}
 	for _, bad := range []string{
 		"instances:\n  - name: Bad\n    template: x\n",
-		"instances:\n  - name: k8s\n    template: x\n",
+		"instances:\n  - name: fs\n    template: x\n",
 		"instances:\n  - name: a\n    template: x\n  - name: a\n    template: x\n",
 		"instances:\n  - name: a\n",
 	} {

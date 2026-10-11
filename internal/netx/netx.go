@@ -41,18 +41,41 @@ func ProxyURL(raw string, port int) (*url.URL, error) {
 	return u, nil
 }
 
+type TLS struct {
+	Verify  bool
+	CAFile  string
+	CAPEM   []byte
+	CertPEM []byte
+	KeyPEM  []byte
+}
+
 func Transport(proxyURL *url.URL, verifyTLS bool, caFile string) (*http.Transport, error) {
-	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: !verifyTLS}
-	if caFile != "" {
-		pem, err := os.ReadFile(caFile)
+	return TransportTLS(proxyURL, TLS{Verify: verifyTLS, CAFile: caFile})
+}
+
+func TransportTLS(proxyURL *url.URL, o TLS) (*http.Transport, error) {
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: !o.Verify}
+	ca := o.CAPEM
+	if len(ca) == 0 && o.CAFile != "" {
+		pem, err := os.ReadFile(o.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("ca_file: %w", err)
 		}
+		ca = pem
+	}
+	if len(ca) > 0 {
 		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("ca_file: aucun certificat PEM valide")
+		if !pool.AppendCertsFromPEM(ca) {
+			return nil, fmt.Errorf("autorité de certification : aucun certificat PEM valide")
 		}
 		tlsCfg.RootCAs = pool
+	}
+	if len(o.CertPEM) > 0 || len(o.KeyPEM) > 0 {
+		cert, err := tls.X509KeyPair(o.CertPEM, o.KeyPEM)
+		if err != nil {
+			return nil, fmt.Errorf("certificat client : %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = tlsCfg

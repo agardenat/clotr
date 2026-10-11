@@ -816,7 +816,7 @@ Décompose la demande en tâches confiées à des sous-agents qui s'exécutent E
 
 Rôles disponibles:
 %s
-Outils disponibles (un groupe peut être référencé par son préfixe: k8s, cm, fs, mcp_<serveur>, <instance>):
+Outils disponibles (un groupe peut être référencé par son préfixe: fs, mcp_<serveur>, <instance>):
 %s
 Environnement:
 %s
@@ -830,7 +830,7 @@ Règles:
 - en affinage de session, ne planifier que ce qui manque pour la nouvelle demande: les faits déjà établis sont en mémoire partagée et les sorties d'outils des tours précédents restent consultables (evidence_search, evidence_read); ne replanifier une collecte déjà faite que si la donnée a pu changer depuis; si aucune collecte n'est nécessaire, une seule tâche de rôle sans outils ou analyste suffit;
 - maximiser le parallélisme: depends_on uniquement si une tâche a réellement besoin des résultats d'une autre; les cibles, hôtes et nœuds listés dans l'environnement sont déjà connus: une tâche qui les examine n'attend pas une tâche d'inventaire ou de statut;
 - choisir le rôle le plus léger suffisant (collecte factuelle -> rôle rapide, analyse/recoupement -> rôle plus puissant);
-- tools: pour une instance de template ou un groupe (k8s, cm, fs), donner le préfixe du groupe (ex: prod) plutôt qu'une sélection d'outils, pour que le sous-agent puisse suivre une piste imprévue (logs, événements, listing); ne restreindre que pour exclure un groupe sans rapport avec la tâche;
+- tools: pour une instance de template ou un groupe (fs, mcp_<serveur>), donner le préfixe du groupe (ex: prod) plutôt qu'une sélection d'outils, pour que le sous-agent puisse suivre une piste imprévue (logs, événements, listing); ne restreindre que pour exclure un groupe sans rapport avec la tâche;
 - aucune tâche ne doit modifier quoi que ce soit.
 
 %s

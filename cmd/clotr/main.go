@@ -42,7 +42,6 @@ import (
 	"github.com/agardenat/clotr/internal/template"
 	"github.com/agardenat/clotr/internal/tools"
 	"github.com/agardenat/clotr/internal/tools/files"
-	"github.com/agardenat/clotr/internal/tools/k8s"
 	"github.com/agardenat/clotr/internal/tools/mcp"
 )
 
@@ -132,7 +131,7 @@ Limites pour un run (plan, run) : --max-agents N, --max-tasks N, --max-steps N
 Rapport mis en forme dans le terminal ; --raw pour le Markdown brut.
 Détail des options : clotr run --help`,
 		Example: `  clotr run "état du cluster prod"
-  clotr run --direct "version de kubelet sur les nœuds de prod ?"
+  clotr run --direct "taille de /var/log sur les hôtes de prod ?"
   clotr run --chat --direct
   clotr run -s last "détaille les pods en erreur"`,
 		SilenceUsage:  true,
@@ -157,7 +156,7 @@ Détail des options : clotr run --help`,
 
 	addTaskFlags := func(c *cobra.Command) {
 		c.Flags().StringToStringVarP(&o.models, "model", "m", nil, "forcer un modèle par rôle: role=provider/model")
-		c.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: k8s,fs,mcp,mcp_<serveur>,<instance>")
+		c.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance>")
 		c.Flags().StringVar(&o.web, "web", "", "recherche web pour ce run: yes|no (défaut: web_search.policy)")
 		c.Flags().IntVar(&o.maxAgents, "max-agents", 0, "sous-agents simultanés pour ce run (prioritaire sur limits.max_agents)")
 		c.Flags().IntVar(&o.maxTasks, "max-tasks", 0, "tâches au plus dans le plan (prioritaire sur limits.max_tasks)")
@@ -199,7 +198,7 @@ Touches du mode conversation :
 Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal, ou GLAMOUR_STYLE) ;
 --raw, -o, --json ou une redirection donnent le Markdown brut. La demande "-" est lue sur stdin.`,
 		Example: `  clotr run "état du cluster prod"
-  clotr run --direct "version de kubelet sur les nœuds de prod ?"
+  clotr run --direct "taille de /var/log sur les hôtes de prod ?"
   clotr run --max-tasks 3 --max-agents 2 "pods en CrashLoopBackOff et leur cause"
   clotr run --chat --direct
   clotr run -s last --chat`,
@@ -254,7 +253,7 @@ Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal,
 			return cmdTools(cmd.Context(), o, cmd.OutOrStdout())
 		},
 	}
-	toolsCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: k8s,fs,mcp,mcp_<serveur>,<instance>")
+	toolsCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance>")
 
 	templatesCmd := &cobra.Command{
 		Use:   "templates [nom]",
@@ -461,16 +460,6 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	}
 	var envLines []string
 
-	if cfg.K8s != nil && enabled("k8s") {
-		k, err := k8s.New(cfg.K8s)
-		if err != nil {
-			warn("%v (outils k8s désactivés)", err)
-		} else {
-			rt.registry.Add(k.Tools()...)
-			ctxs, def := k.Contexts()
-			envLines = append(envLines, fmt.Sprintf("- Kubernetes: contextes autorisés %s (défaut: %s)", strings.Join(ctxs, ", "), def))
-		}
-	}
 	if cfg.Files != nil && enabled("fs") {
 		f, warnings, err := files.New(cfg.Files)
 		for _, w := range warnings {
@@ -514,7 +503,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	}
 	if rt.registry.Len() == 0 {
 		rt.close()
-		return nil, errors.New("aucun outil disponible: configurer k8s, files, mcp ou une instance de template")
+		return nil, errors.New("aucun outil disponible: configurer files, mcp ou une instance de template")
 	}
 	rt.evidence = o.evidence
 	rt.memory = memory.NewStore()

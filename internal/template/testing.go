@@ -309,7 +309,13 @@ func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for k := range req.Header {
 		headers[strings.ToLower(k)] = req.Header.Get(k)
 	}
-	rec := map[string]any{"method": req.Method, "url": req.URL.String(), "host": req.URL.Host, "path": req.URL.Path, "query": query, "headers": headers, "body": string(body)}
+	rec := map[string]any{"method": req.Method, "url": req.URL.String(), "host": req.URL.Host, "path": req.URL.Path, "query": query, "headers": headers, "body": string(body), "proxy": "", "tls": map[string]any{}}
+	if ri, ok := req.Context().Value(requestInfoKey{}).(requestInfo); ok {
+		rec["proxy"] = ri.proxy
+		if ri.tls != nil {
+			rec["tls"] = map[string]any{"ca": string(ri.tls.CAPEM), "cert": string(ri.tls.CertPEM), "key": string(ri.tls.KeyPEM), "insecure": !ri.tls.Verify}
+		}
+	}
 	m.ti.mu.Lock()
 	m.ti.requests = append(m.ti.requests, rec)
 	m.ti.mu.Unlock()

@@ -1,6 +1,6 @@
 # clotr
 
-Agent CLI d'analyse d'infrastructure en lecture seule (Kubernetes, fichiers de configuration, serveurs MCP et toute cible décrite par un template), exécuté sans interaction une fois lancé. Les modèles sont découverts sur un ou plusieurs endpoints OpenAI-compatibles, puis chaque sous-agent reçoit le modèle adapté à son rôle.
+Agent CLI d'analyse d'infrastructure en lecture seule (fichiers de configuration, serveurs MCP et toute cible décrite par un template), exécuté sans interaction une fois lancé. Les modèles sont découverts sur un ou plusieurs endpoints OpenAI-compatibles, puis chaque sous-agent reçoit le modèle adapté à son rôle.
 
 Binaire Go statique, sans dépendance d'exécution.
 
@@ -132,11 +132,11 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
 - `keywords` : termes qui, présents dans une demande, font proposer l'instance aux agents (en plus du nom de l'instance, du template et des cibles), voir Activation d'une instance ;
 - `params` : paramètres de l'instance, typés (`string`, `url`, `int`, `bool`, `env`, `path`, `enum`, `list` avec `item`), avec `required` et `default`. Un paramètre inconnu est rejeté ;
 - `connectors` : connexions nommées, dont les options sont rendues avec les paramètres (`{{.proxy_url}}`) :
-  - `http` : `base_url`, `methods` (défaut `[GET]`), `allow` (expressions régulières sur le chemin), `headers`, `auth` (`user_env`, `password_env`, `label` : authentification basic, saisie sur le terminal si les variables sont vides), `proxy`, `proxy_port`, `verify_tls`, `ca_file`, `timeout` (défaut 60s), `max_bytes` (défaut 32 Mio) ;
-  - `ssh` (un seul par template) : `user`, `key`, `auth` (`user_env`, `password_env`, `label` : mot de passe saisi sur le terminal seulement s'il est nécessaire, voir Outils SSH), `port`, `proxy`, `proxy_port`, `host_key`, `sudo`, `max_conns`, `known_hosts` ;
+  - `http` : `base_url`, `methods` (défaut `[GET]`), `allow` (expressions régulières sur le chemin), `headers`, `auth` (`user_env`, `password_env`, `password_vault`, `label` : authentification basic, saisie sur le terminal si les variables sont vides, voir Secrets Vault), `deny` (expressions régulières de chemins refusés, voir Garde-fous), `proxy`, `proxy_port`, `verify_tls`, `ca_file`, `timeout` (défaut 60s), `max_bytes` (défaut 32 Mio) ;
+  - `ssh` (un seul par template) : `user`, `key`, `auth` (`user_env`, `password_env`, `password_vault`, `label` : mot de passe saisi sur le terminal seulement s'il est nécessaire, voir Outils SSH), `port`, `proxy`, `proxy_port`, `host_key`, `sudo`, `max_conns`, `known_hosts` ;
 - `targets` : cibles statiques. `foreach: <paramètre list>` crée une cible par élément ; un champ vide de l'élément hérite du paramètre de même nom. Les attributs `ssh_user`, `ssh_key_path` et `ssh_port` d'une cible remplacent ceux du connecteur ssh ;
 - `script` : fichier Starlark, chemin relatif au YAML ;
-- `files`, `env` : fichiers et variables d'environnement que le script peut lire ;
+- `files`, `env` : fichiers et variables d'environnement que le script peut lire ; les chemins de `files` sont rendus avec les paramètres (`"{{.config_path}}"`) ;
 - `tools` : outils génériques du moteur (`inventory`, `ssh_list`, `ssh_read`, `ssh_tail`, `ssh_grep`, `ssh_disk`, `log_stats`), avec `name` et `description` optionnels ;
 - `companions` : outils ajoutés d'office à toute tâche qui utilise un outil de l'instance ;
 - `ssh_paths` : `allow` et `deny` (globs, `**` récursif) ;
@@ -189,11 +189,11 @@ tool(
 
 | Primitive | Rôle |
 |---|---|
-| `http.request(conn, method, path, base=, query=, json=, body=, headers=, jq=, max_bytes=)` | requête via un connecteur `http` ; renvoie `status`, `headers`, `body`, `url` et `data` (résultats de `jq`) |
+| `http.request(conn, method, path, base=, query=, json=, body=, headers=, jq=, max_bytes=, tls=, proxy=)` | requête via un connecteur `http` ; renvoie `status`, `headers`, `body`, `url` et `data` (résultats de `jq`). `base` remplace `base_url`, `proxy` le proxy du connecteur, `tls` (`ca`, `cert`, `key` en PEM, `insecure`) l'autorité de certification et ajoute un certificat client, pour cet appel |
 | `http.snippet(text, max)` | résumé d'un corps de réponse (titre si page HTML) |
 | `ssh.list`, `ssh.read`, `ssh.tail` (`filter`), `ssh.grep`, `ssh.disk`, `ssh.stat_tail`, `ssh.recent` | commandes SSH fixes sur un hôte de l'inventaire ; `ssh.format(res)` met en forme un résultat, `ssh.allowed(path)` teste `ssh_paths` |
 | `jq(expr, data)` | filtre JSON exécuté en Go ; renvoie la liste des résultats |
-| `json`, `time`, `math`, `re`, `url`, `base64` | encodage, dates et durées, calcul, expressions régulières, URL |
+| `json`, `yaml`, `time`, `math`, `re`, `url`, `base64` | encodage (`yaml.decode`, `yaml.encode`), dates et durées, calcul, expressions régulières, URL |
 | `crypto.sign(key, msg)`, `crypto.key_type(key)` | signature ed25519 (graine base64 ou PKCS#8) ou RSA SHA-256 |
 | `file.read`, `file.exists`, `env` | fichiers et variables déclarés dans `files` et `env` |
 | `parallel(fn, items, limit=4)` | exécution concurrente ; `value` ou `error` par élément |
@@ -204,7 +204,7 @@ tool(
 
 ### Garde-fous
 
-- `http` : la méthode doit figurer dans `methods`, et toute méthode autre que GET ou HEAD exige une liste `allow`. Le chemin est absolu et sans `..`. Un chemin qui contient `keytab`, `secret`, `password` ou `token` est toujours refusé. La réponse est plafonnée à `max_bytes` (512 Mio au plus). Chaque requête est tracée dans l'audit (`http_call`).
+- `http` : la méthode doit figurer dans `methods`, et toute méthode autre que GET ou HEAD exige une liste `allow`. Le chemin est absolu et sans `..`. Un chemin qui contient `keytab`, `secret`, `password` ou `token` est refusé, sauf si le connecteur déclare `deny` : ses expressions régulières remplacent alors cette liste (`deny: []` la retire, le script devient seul responsable des données sensibles). La réponse est plafonnée à `max_bytes` (512 Mio au plus). Chaque requête est tracée dans l'audit (`http_call`).
 - `ssh` : voir Outils SSH.
 - Le script n'accède au disque, au réseau et à l'environnement qu'à travers ces primitives. Il est interrompu avec le run et soumis à un plafond de pas d'exécution.
 
@@ -212,7 +212,7 @@ tool(
 
 `clotr templates test <nom> [--dir <répertoire>]` exécute les fonctions `test_*` de `<script>_test.star`, sans réseau :
 - `template.instance(params=, http=, ssh=, env=, files=, creds=, now=)` crée une instance avec un faux serveur HTTP (dict `"MÉTHODE /chemin"` → réponse, ou fonction) et un faux SSH (fonction `(hôte, commande)`) ;
-- `inst.discover()`, `inst.call(outil, args)`, `inst.error(outil, args)`, `inst.environment()`, `inst.tools()`, `inst.requests()`, `inst.commands()`, `inst.fn(nom, *args)` ;
+- `inst.discover()`, `inst.call(outil, args)`, `inst.error(outil, args)`, `inst.environment()`, `inst.tools()`, `inst.requests()` (requêtes reçues, avec `proxy` et `tls` passés à l'appel), `inst.commands()`, `inst.fn(nom, *args)` ;
 - `assert.eq`, `assert.true`, `assert.contains`, `assert.not_contains`, `assert.fails`.
 
 ### Activation d'une instance
@@ -223,11 +223,20 @@ Une instance n'est proposée aux agents (outils et environnement) que si la dema
 
 À l'activation :
 
-1. **Identifiants** des connecteurs `http` avec `auth` : `user_env`/`password_env` si les variables sont définies, sinon saisie sur le terminal (mot de passe masqué). Pendant la saisie, le tableau de progression est suspendu et la saisie se fait sur l'écran alternatif du terminal. Ctrl-C interrompt le run (en mode conversation : la conversation entière). Des identifiants vides, ou l'absence de terminal et de variables, rendent l'instance indisponible pour le run.
+1. **Identifiants** des connecteurs `http` avec `auth` : `user_env`/`password_env` si les variables sont définies, puis le secret `password_vault` pour le mot de passe, sinon saisie sur le terminal (mot de passe masqué). Pendant la saisie, le tableau de progression est suspendu et la saisie se fait sur l'écran alternatif du terminal. Ctrl-C interrompt le run (en mode conversation : la conversation entière). Des identifiants vides, ou l'absence de terminal et de variables, rendent l'instance indisponible pour le run.
 2. **Découverte** (`discover` du script), sauf si l'inventaire en cache (`templates.cache_dir`) a moins de `templates.cache_ttl` et correspond au même template, au même script et aux mêmes paramètres. `--refresh` force la découverte. Un inventaire incomplet (cible injoignable, avertissement) n'est pas mis en cache.
 3. **Cibles injoignables** : retirées pour le run, avec un avertissement. Si aucune cible ne répond, l'instance est indisponible pour le run.
 
 Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans nouvelle saisie ni nouvelle découverte. L'activation est tracée dans l'audit (`instance_activation`).
+
+### Secrets Vault
+
+`password_vault` (connecteurs `http` et `ssh`, option `auth`) désigne un secret Vault sous la forme `chemin[#champ]`, comme `vault kv get -field=<champ> <chemin>` ; le champ par défaut est `password`. clotr utilise la configuration du poste, sans appeler le binaire `vault` :
+
+- adresse : `VAULT_ADDR` (variable exportée ; une fonction ou un alias du shell n'est pas visible) ;
+- jeton : `VAULT_TOKEN`, sinon `~/.vault-token` écrit par `vault login` (un `token_helper` n'est pas pris en charge) ; `VAULT_NAMESPACE` si défini ;
+- moteur KV v1 ou v2, détecté comme le fait `vault kv get` (`sys/internal/ui/mounts`) ;
+- lecture seulement quand le mot de passe est nécessaire, une fois par utilisateur. Vide, l'option est ignorée. Un secret illisible (variable absente, jeton expiré, accès refusé, champ absent) est signalé sur le terminal et le mot de passe est saisi ; un mot de passe Vault refusé par SSH ou sudo est oublié et le suivant est saisi.
 
 ### Outils SSH
 
@@ -235,7 +244,7 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 - `host` doit appartenir à l'inventaire de l'instance (FQDN, nom court ou IP), ou être une IP comprise dans les `networks` d'une cible. Une IP de plage présente dans la demande fait proposer l'instance ;
 - `path` doit être absolu, sans `..`, couvert par `ssh_paths.allow` et par aucun `ssh_paths.deny` (keytabs, jceks, jks, clés, `*password*`…). En récursif, les motifs `deny` sont aussi passés en `--exclude` ;
 - `sudo -n` est ajouté si `sudo: true`. Si sudo exige un mot de passe et que le connecteur déclare `auth`, la commande est relancée avec `sudo -S` sous `sh -c` : le mot de passe passe par l'entrée standard, jamais dans la ligne de commande, et l'hôte reste en mode mot de passe pour le run. Un mot de passe refusé est oublié et redemandé à l'appel suivant ;
-- authentification : la clé `key` d'abord, puis le mot de passe si la clé est absente ou refusée et que `auth` est déclaré (méthodes `password` et `keyboard-interactive`). Le mot de passe vient de `password_env` ou est saisi sur le terminal, une fois par utilisateur ; sans `user`, l'utilisateur est aussi demandé ;
+- authentification : la clé `key` d'abord, puis le mot de passe si la clé est absente ou refusée et que `auth` est déclaré (méthodes `password` et `keyboard-interactive`). Le mot de passe vient de `password_env`, sinon du secret `password_vault`, sinon il est saisi sur le terminal, une fois par utilisateur ; sans `user`, l'utilisateur est aussi demandé ;
 - les valeurs de type `password=…`, `token: …` et `<name>…password…</name><value>…</value>` sont masquées dans les sorties ;
 - connexions via le proxy SOCKS5 de l'instance, clé privée sans passphrase, `max_conns` sessions simultanées par instance. Aucun fichier `ssh_config` n'est lu ;
 - `known_hosts` propre à clotr (`~/.local/state/clotr/known_hosts`) : `accept-new` (défaut) enregistre une clé inconnue et refuse une clé changée, `strict` refuse les hôtes inconnus, `insecure` ne vérifie pas ;
@@ -260,12 +269,11 @@ Le CLI n'expose aucun outil d'écriture et n'exécute aucune commande locale. Le
 
 | Groupe | Outils | Mécanisme |
 |---|---|---|
-| `k8s` | `k8s_contexts`, `k8s_api_resources`, `k8s_list`, `k8s_get`, `k8s_logs`, `k8s_events`, `k8s_top` | client-go, uniquement des appels get/list/logs. Contextes limités à `k8s.contexts`. `managedFields` et `last-applied` retirés, valeurs des Secrets masquées. `k8s_list` accepte `fields` (chemins pointés extraits pour chaque objet, tous namespaces en un appel) et son résumé inclut la stratégie de mise à jour. |
 | `fs` | `fs_list`, `fs_read`, `fs_grep` | chemins résolus (`EvalSymlinks`) et confinés à `files.roots`. Fichiers binaires et fichiers au-delà de `max_file_bytes` refusés. |
 | `mcp_<serveur>` | outils du serveur | seuls sont exposés les outils annotés `readOnlyHint: true` ou listés dans `allow`. `deny` est prioritaire. |
 | `<instance>_*` | outils du template | voir Templates : requêtes HTTP limitées par les garde-fous des connecteurs, SSH limité à des commandes fixes, aux hôtes de l'inventaire et aux chemins autorisés. |
 
-Les sorties d'outils sont tronquées à `limits.tool_output_max_chars`. Les droits effectifs dépendent des comptes utilisés (kubeconfig, comptes des connecteurs des templates), qui doivent être en lecture seule.
+Les sorties d'outils sont tronquées à `limits.tool_output_max_chars`. Les droits effectifs dépendent des comptes utilisés (connecteurs des templates, serveurs MCP), qui doivent être en lecture seule.
 
 ## Installation
 
@@ -343,7 +351,6 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `audit` | `dir` (défaut `~/.local/state/clotr/audit`), utilisé par `plan`. L'audit d'un `run` est écrit dans le tour de sa session. |
 | `sessions` | `dir` (défaut `~/.local/state/clotr/sessions`) |
 | `language` | `auto` (défaut), `fr` ou `en` : langue de sortie, voir ci-dessous |
-| `k8s` | `kubeconfig`, `contexts` (défaut : current-context seul), `timeout` (défaut 30s). Un contexte n'est testé (`/version`, 5 s) qu'au premier appel d'un outil qui le vise ; injoignable (tunnel fermé, VPN…), il renvoie une erreur à chaque appel pour le reste du run, et `k8s_contexts` le signale. Une demande qui ne concerne pas Kubernetes ne contacte aucun cluster. |
 | `files` | `roots`, `max_file_bytes` |
 | `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true) |
@@ -371,7 +378,7 @@ clotr plan "état de santé du cluster prod : pods en erreur, events warning ré
 ```
 
 ```sh
-clotr run "audit des limites de ressources des déploiements" -t k8s,fs -o rapport.md
+clotr run "audit des limites de ressources des déploiements" -t prod,fs -o rapport.md
 ```
 
 ```sh
@@ -379,7 +386,7 @@ clotr run -m collector=ollama/qwen2.5-coder:7b --json "inventaire des ingress ex
 ```
 
 ```sh
-clotr run --direct "quelle version de kubelet sur les nœuds de prod ?"
+clotr run --direct "taille de /var/log sur les hôtes de prod ?"
 ```
 
 ```sh
@@ -394,7 +401,7 @@ clotr run --chat --direct
 | `--sovereign any\|prefer\|require` | politique souveraine pour l'exécution |
 | `--confidential` | run confidentiel, équivalent de `--sovereign require` |
 | `--lang auto\|fr\|en` | langue de sortie (prioritaire sur `language`) |
-| `-t, --tools` | restreint les groupes d'outils (`k8s`, `fs`, `mcp`, `mcp_<serveur>`, `<instance>`) ; sans `-t`, tous sont proposés au planner, et une instance n'est activée que si une tâche l'utilise |
+| `-t, --tools` | restreint les groupes d'outils (`fs`, `mcp`, `mcp_<serveur>`, `<instance>`) ; sans `-t`, tous sont proposés au planner, et une instance n'est activée que si une tâche l'utilise |
 | `-o, --output` | écrit le rapport dans un fichier |
 | `--json` | sortie JSON : plan, résultats par tâche, rapport, `models_used` |
 | `-q, --quiet` | n'affiche pas la progression sur stderr |
@@ -418,7 +425,7 @@ Si stderr est un terminal, `plan` et `run` affichent un tableau dynamique, rafra
   - colonne steps : `step N` en cours, `N steps` une fois terminé, `max!` si la limite `max_steps` a forcé la conclusion ;
   - texte de l'étape en cours : objectif, `thinking…`, `tool <nom> <arguments>`, `fallback to …`, `waiting for …`, puis résumé (`N findings, M tool calls`) et coût une fois la tâche terminée.
 
-Les libellés suivent la langue d'interface (voir Langue de sortie). Tant que le tableau est affiché, tout ce qui est écrit sur stderr par une bibliothèque (par exemple les avertissements de l'API server via client-go) est capturé et réaffiché au-dessus du tableau, pour ne pas le décaler.
+Les libellés suivent la langue d'interface (voir Langue de sortie). Tant que le tableau est affiché, tout ce qui est écrit sur stderr par une bibliothèque est capturé et réaffiché au-dessus du tableau, pour ne pas le décaler.
 
 Le tableau final reste affiché au-dessus du bilan, et le rapport est écrit sur stdout. Hors terminal (redirection, CI) ou avec `--plain`, la progression est écrite ligne par ligne. `-q` la supprime.
 
@@ -432,7 +439,7 @@ Si stdout est un terminal, `run` et `session` affichent le rapport mis en forme 
 
 ### Conversation
 
-`run --chat [demande]` ouvre un écran plein terminal (écran alternatif) sur une session, nouvelle ou reprise avec `-s`. Chaque échange est un tour de la session : mêmes outils, preuves, mémoire et enregistrement qu'un `run`. Les connecteurs (k8s, MCP, instances) sont préparés une fois pour toute la conversation, et les identifiants saisis restent en mémoire jusqu'à la fin.
+`run --chat [demande]` ouvre un écran plein terminal (écran alternatif) sur une session, nouvelle ou reprise avec `-s`. Chaque échange est un tour de la session : mêmes outils, preuves, mémoire et enregistrement qu'un `run`. Les connecteurs (MCP, instances) sont préparés une fois pour toute la conversation, et les identifiants saisis restent en mémoire jusqu'à la fin.
 
 Pendant un tour, le tableau de progression s'affiche sous la demande, puis la réponse s'écrit en direct (texte du synthesizer, ou de l'agent avec `--direct`), mise en forme comme ci-dessus. Les lignes écrites sur stderr (avertissements, activation d'une instance) s'affichent sous le tableau, et le bilan du tour (modèles, coût, preuves, chemin du `report.md`) sous la réponse. `max_run_cost` s'applique à chaque tour.
 
@@ -515,10 +522,11 @@ internal/orchestrator/  planner, DAG concurrent, synthèse, réponse directe
 internal/memory/        mémoire partagée
 internal/session/       sessions et tours
 internal/budget/        budget et coûts par provider
-internal/tools/         registre et outils k8s, files, mcp
+internal/tools/         registre et outils files, mcp
 internal/template/      moteur de templates : chargement, paramètres, hôte Starlark, primitives, outils génériques, tests
 internal/driver/ssh/    SSH en lecture seule : commandes fixes, chemins autorisés, known_hosts
-internal/creds/         identifiants : variables d'environnement ou saisie
+internal/creds/         identifiants : variables d'environnement, Vault ou saisie
+internal/vault/         lecture d'un secret Vault (KV v1/v2) avec la configuration du poste
 internal/audit/         journal JSONL
 internal/progress/      progression stderr, écran conversation
 internal/markdown/      rendu Markdown pour le terminal
@@ -531,6 +539,5 @@ packaging/homebrew/     modèle de la formule Homebrew
 - Aucune donnée n'est anonymisée avant envoi vers un modèle non souverain (`Boundary` = `Passthrough`). `--confidential` limite le run aux modèles souverains.
 - La mémoire partagée suit la session : elle n'est pas partagée entre sessions.
 - Les tâches du plan ne sont pas relancées après un échec ; seul le modèle bascule au sein d'une tâche.
-- `k8s_top` nécessite metrics-server.
-- k8s et fs sont intégrés au binaire et ne sont pas des templates.
+- fs est intégré au binaire et n'est pas un template.
 - SSH : clés avec passphrase et agent SSH non supportés.

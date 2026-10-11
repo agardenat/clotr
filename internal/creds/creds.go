@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/vault"
 )
 
 type Pair struct {
@@ -21,9 +22,12 @@ type Pair struct {
 }
 
 var (
-	mu    sync.Mutex
-	cache = map[string]Pair{}
+	mu        sync.Mutex
+	cache     = map[string]Pair{}
+	skipVault = map[string]bool{}
 )
+
+var ReadVault = vault.Secret
 
 type Console struct {
 	In  *os.File
@@ -41,18 +45,19 @@ var OpenTTY = openConsole
 
 var Suspend func() (resume func())
 
-func Resolve(ctx context.Context, userEnv, passEnv, label string) (Pair, error) {
-	return resolve(ctx, "", userEnv, passEnv, label)
+func Resolve(ctx context.Context, userEnv, passEnv, passVault, label string) (Pair, error) {
+	return resolve(ctx, "", userEnv, passEnv, passVault, label)
 }
 
-func ResolveUser(ctx context.Context, user, passEnv, label string) (Pair, error) {
-	return resolve(ctx, user, "", passEnv, label)
+func ResolveUser(ctx context.Context, user, passEnv, passVault, label string) (Pair, error) {
+	return resolve(ctx, user, "", passEnv, passVault, label)
 }
 
 func Forget(label, user string) {
 	mu.Lock()
 	defer mu.Unlock()
 	delete(cache, userKey(label, user))
+	skipVault[label] = true
 	if c, ok := cache[label]; ok && c.User == user {
 		delete(cache, label)
 	}
@@ -62,7 +67,7 @@ func userKey(label, user string) string {
 	return label + "\x00" + user
 }
 
-func resolve(ctx context.Context, user, userEnv, passEnv, label string) (Pair, error) {
+func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label string) (Pair, error) {
 	p := Pair{User: user}
 	if p.User == "" && userEnv != "" {
 		p.User = os.Getenv(userEnv)
@@ -85,16 +90,35 @@ func resolve(ctx context.Context, user, userEnv, passEnv, label string) (Pair, e
 	if err := ctx.Err(); err != nil {
 		return Pair{}, err
 	}
+	var vaultErr error
+	if p.Pass == "" && passVault != "" && !skipVault[label] {
+		p.Pass, vaultErr = ReadVault(ctx, passVault)
+		if err := ctx.Err(); err != nil {
+			return Pair{}, err
+		}
+		if vaultErr == nil && p.User != "" {
+			cache[key] = p
+			cache[userKey(label, p.User)] = p
+			return p, nil
+		}
+	}
+	missing := fmt.Sprintf("%s: identifiants absents (variables %s / %s) et aucun terminal pour les saisir", label, orNone(userEnv), orNone(passEnv))
+	if vaultErr != nil {
+		missing += fmt.Sprintf(" ; Vault %s : %v", passVault, vaultErr)
+	}
 	tty, err := OpenTTY()
 	if err != nil {
-		return Pair{}, fmt.Errorf("%s: identifiants absents (variables %s / %s) et aucun terminal pour les saisir", label, orNone(userEnv), orNone(passEnv))
+		return Pair{}, errors.New(missing)
 	}
 	defer tty.Close()
 	if !term.IsTerminal(tty.In.Fd()) {
-		return Pair{}, fmt.Errorf("%s: identifiants absents (variables %s / %s) et aucun terminal pour les saisir", label, orNone(userEnv), orNone(passEnv))
+		return Pair{}, errors.New(missing)
 	}
 	if Suspend != nil {
 		defer Suspend()()
+	}
+	if vaultErr != nil {
+		fmt.Fprint(tty.Out, i18n.T("prompt.vault_failed", label, passVault, vaultErr))
 	}
 	if p.User == "" {
 		fmt.Fprint(tty.Out, i18n.T("prompt.user", label))

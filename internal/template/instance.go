@@ -104,6 +104,8 @@ type Instance struct {
 	readFile  func(string) ([]byte, error)
 	now       func() time.Time
 	transport http.RoundTripper
+	clients   map[string]*http.Client
+	files     []string
 	creds     map[string]creds.Pair
 	pending   *activation
 }
@@ -124,6 +126,15 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 		return nil, fmt.Errorf("instance %s: %w", name, err)
 	}
 	in := &Instance{Name: name, T: t, params: params, conns: map[string]options{}, https: map[string]*httpConn{}, memo: map[string]*memoEntry{}, creds: map[string]creds.Pair{}, getenv: os.Getenv, readFile: os.ReadFile, now: time.Now}
+	for i, f := range t.Files {
+		r, err := Render(f, params)
+		if err != nil {
+			return nil, fmt.Errorf("instance %s: files[%d]: %w", name, i, err)
+		}
+		if r = strings.TrimSpace(r); r != "" {
+			in.files = append(in.files, r)
+		}
+	}
 	for _, cn := range sortedKeys(t.Connectors) {
 		c := t.Connectors[cn]
 		r, err := renderAny(map[string]any(c.Options), params)
@@ -238,7 +249,7 @@ func (in *Instance) Prepare(ctx context.Context) error {
 		if _, ok := in.creds[cn]; ok {
 			continue
 		}
-		p, err := creds.Resolve(ctx, hc.auth.userEnv, hc.auth.passEnv, in.Name+" ("+hc.auth.label+")")
+		p, err := creds.Resolve(ctx, hc.auth.userEnv, hc.auth.passEnv, hc.auth.passVault, in.Name+" ("+hc.auth.label+")")
 		if err != nil {
 			return err
 		}
@@ -528,17 +539,18 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 }
 
 type sshLogin struct {
-	in      *Instance
-	label   string
-	user    string
-	passEnv string
+	in        *Instance
+	label     string
+	user      string
+	passEnv   string
+	passVault string
 }
 
 func (l *sshLogin) password(ctx context.Context) (string, error) {
 	if p, ok := l.in.creds[l.in.sshName]; ok {
 		return p.Pass, nil
 	}
-	p, err := creds.ResolveUser(ctx, l.user, l.passEnv, l.label)
+	p, err := creds.ResolveUser(ctx, l.user, l.passEnv, l.passVault, l.label)
 	return p.Pass, err
 }
 
@@ -567,11 +579,11 @@ func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.En
 	if len(a) == 0 {
 		return ep, nil, nil
 	}
-	l := &sshLogin{in: in, label: in.Name + " (" + defaultStr(a.str("label"), "SSH") + ")", user: ep.User, passEnv: a.str("password_env")}
+	l := &sshLogin{in: in, label: in.Name + " (" + defaultStr(a.str("label"), "SSH") + ")", user: ep.User, passEnv: a.str("password_env"), passVault: a.str("password_vault")}
 	if l.user == "" {
 		p, ok := in.creds[in.sshName]
 		if !ok {
-			if p, err = creds.Resolve(ctx, a.str("user_env"), l.passEnv, l.label); err != nil {
+			if p, err = creds.Resolve(ctx, a.str("user_env"), l.passEnv, l.passVault, l.label); err != nil {
 				return ssh.Endpoint{}, nil, err
 			}
 		}
