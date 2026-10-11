@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-11
+
 ### Ajouté
 - Templates : une cible renvoyée par `discover` peut déclarer `networks` (plages CIDR). Les outils SSH acceptent alors toute IP de ces plages, même absente de l'inventaire ; une IP de plage citée dans la demande fait proposer l'instance.
 - Connecteur `ssh` : option `auth` (`user_env`, `password_env`, `label`). Le mot de passe sert à se connecter quand la clé est absente ou refusée, et à `sudo` quand `sudo -n` exige un mot de passe (commande relancée avec `sudo -S`, mot de passe sur l'entrée standard). Il n'est demandé que s'il est nécessaire.
