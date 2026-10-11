@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/agardenat/clotr/internal/creds"
+	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/testutil"
 	"github.com/agardenat/clotr/internal/tools"
 )
@@ -549,5 +550,158 @@ tools:
 	}
 	if in.Activated() {
 		t.Fatal("instance différée vue comme activée")
+	}
+}
+
+type recordSSH struct {
+	mu    sync.Mutex
+	calls []string
+	reply func(cmd, stdin string) ssh.Result
+}
+
+func (r *recordSSH) ExecInput(_ context.Context, e ssh.Endpoint, cmd, stdin string, _ int) (ssh.Result, error) {
+	r.mu.Lock()
+	r.calls = append(r.calls, e.User+"@"+e.Host+" "+cmd)
+	r.mu.Unlock()
+	return r.reply(cmd, stdin), nil
+}
+
+func (r *recordSSH) Close() {}
+
+func TestNetworksAndSudoPassword(t *testing.T) {
+	tpl := writeTemplate(t, `name: hosts
+script: x.star
+connectors:
+  ssh:
+    driver: ssh
+    user: ops
+    sudo: true
+    auth: {password_env: X_UNSET_PW}
+tools:
+  - kind: ssh_tail
+ssh_paths: {allow: [/var/log/**]}
+`, `
+def discover(ctx):
+    return {"targets": [
+        {"name": "lan", "kind": "hosts", "hosts": [{"name": "web1.example.test", "ip": "10.9.0.5"}], "networks": ["10.9.0.0/24"]},
+        {"name": "dmz", "kind": "hosts", "networks": ["10.8.0.0/16", "10.9.0.128/25"]},
+    ]}
+`)
+	in, err := NewInstance("lab", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Discover(context.Background(), "", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if !in.Mentioned("sur 10.8.3.4, pourquoi ?") || in.Mentioned("sur 10.7.0.1") {
+		t.Fatal("mention par IP de plage")
+	}
+	if tg, h, err := in.findHost("", "10.8.3.4"); err != nil || tg.Name != "dmz" || h.IP != "10.8.3.4" {
+		t.Fatalf("IP de plage: %v %v %v", tg, h, err)
+	}
+	if tg, _, err := in.findHost("", "10.9.0.5"); err != nil || tg.Name != "lan" {
+		t.Fatalf("hôte d'inventaire prioritaire: %v %v", tg, err)
+	}
+	if _, _, err := in.findHost("", "10.9.0.200"); err == nil || !strings.Contains(err.Error(), "plusieurs cibles") {
+		t.Fatalf("chevauchement non signalé: %v", err)
+	}
+	if tg, _, err := in.findHost("lan", "10.9.0.200"); err != nil || tg.Name != "lan" {
+		t.Fatalf("cible explicite: %v %v", tg, err)
+	}
+	if _, _, err := in.findHost("", "10.7.0.1"); err == nil || !strings.Contains(err.Error(), "hors des plages") {
+		t.Fatalf("IP hors plage: %v", err)
+	}
+	if lines := strings.Join(in.EnvironmentLines(), "\n"); !strings.Contains(lines, "plages 10.8.0.0/16, 10.9.0.128/25") {
+		t.Fatalf("plages absentes de l'environnement:\n%s", lines)
+	}
+
+	rec := &recordSSH{reply: func(cmd, stdin string) ssh.Result {
+		switch {
+		case strings.HasPrefix(cmd, "sudo -n "):
+			return ssh.Result{Stdout: "sudo: a password is required\n"}
+		case stdin == "pw\n":
+			return ssh.Result{Stdout: "ligne\n"}
+		default:
+			return ssh.Result{Stderr: "Sorry, try again.\nsudo: 1 incorrect password attempt\n", Exit: 1}
+		}
+	}}
+	in.pool = rec
+	in.creds[in.sshName] = creds.Pair{Pass: "pw"}
+	var tail tools.Tool
+	for _, tl := range in.Tools() {
+		if tl.Name() == "lab_ssh_tail" {
+			tail = tl
+		}
+	}
+	for range 2 {
+		out, err := tail.Call(context.Background(), []byte(`{"host":"10.8.3.4","path":"/var/log/a.log","lines":5}`))
+		if err != nil || !strings.Contains(out, "ligne") {
+			t.Fatalf("sudo avec mot de passe: %q %v", out, err)
+		}
+	}
+	if len(rec.calls) != 3 || !strings.HasPrefix(rec.calls[0], "ops@10.8.3.4 sudo -n tail") || !strings.Contains(rec.calls[1], "sudo -S -p '' -- sh -c") || rec.calls[1] != rec.calls[2] {
+		t.Fatalf("appels: %q", rec.calls)
+	}
+	in.creds[in.sshName] = creds.Pair{Pass: "faux"}
+	if _, err := tail.Call(context.Background(), []byte(`{"host":"10.8.3.4","path":"/var/log/a.log"}`)); err == nil || !strings.Contains(err.Error(), "refusé par sudo") {
+		t.Fatalf("mot de passe sudo refusé: %v", err)
+	}
+}
+
+func TestDiscoverRejectsInvalidNetwork(t *testing.T) {
+	tpl := writeTemplate(t, "name: x\nscript: x.star\ntools:\n  - kind: inventory\n", `
+def discover(ctx):
+    return {"targets": [{"name": "a", "kind": "hosts", "networks": ["10.0.0.0/33"]}]}
+`)
+	in, err := NewInstance("lab", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Discover(context.Background(), "", 0, true); err == nil || !strings.Contains(err.Error(), "plage CIDR") {
+		t.Fatalf("plage invalide acceptée: %v", err)
+	}
+}
+
+func TestDeferOfflineDiscover(t *testing.T) {
+	static := writeTemplate(t, "name: x\nscript: x.star\ntools:\n  - kind: inventory\n", `
+def discover(ctx):
+    print("ne doit pas s'afficher")
+    return {"targets": [{"name": "lan", "kind": "hosts", "networks": ["10.9.0.0/24"]}]}
+`)
+	in, err := NewInstance("lab", static, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Print = func(msg string) { t.Errorf("print hors ligne: %s", msg) }
+	if err := in.Defer(context.Background(), "", time.Hour, false); err != nil {
+		t.Fatal(err)
+	}
+	if !in.Mentioned("pourquoi 10.9.0.4 ?") || in.Activated() || !in.Inventory().DiscoveredAt.IsZero() {
+		t.Fatalf("découverte hors ligne: mention=%v activée=%v", in.Mentioned("pourquoi 10.9.0.4 ?"), in.Activated())
+	}
+
+	network := writeTemplate(t, `name: y
+script: x.star
+connectors:
+  api: {driver: http, base_url: "http://127.0.0.1:1"}
+targets:
+  - {kind: cluster, name: prod}
+tools:
+  - kind: inventory
+`, `
+def discover(ctx):
+    r = catch(http.request, "api", "GET", "/x")
+    return {"targets": [{"name": "prod", "kind": "cluster", "error": r.error or ""}]}
+`)
+	in2, err := NewInstance("lab", network, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in2.Defer(context.Background(), "", time.Hour, false); err != nil {
+		t.Fatal(err)
+	}
+	if tg := in2.Inventory().Targets; len(tg) != 1 || tg[0].Error != "" {
+		t.Fatalf("découverte réseau acceptée hors ligne: %+v", tg[0])
 	}
 }

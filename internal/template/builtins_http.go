@@ -69,11 +69,13 @@ func checkHTTPOptions(o options) error {
 			return fmt.Errorf("methods: %s exige une liste allow explicite de chemins autorisés", m)
 		}
 	}
-	if a := o.sub("auth"); len(a) > 0 {
-		for k := range a {
-			if !slices.Contains([]string{"user_env", "password_env", "label"}, k) {
-				return fmt.Errorf("auth.%s inconnue (user_env, password_env, label)", k)
-			}
+	return checkAuthOptions(o)
+}
+
+func checkAuthOptions(o options) error {
+	for k := range o.sub("auth") {
+		if !slices.Contains([]string{"user_env", "password_env", "label"}, k) {
+			return fmt.Errorf("auth.%s inconnue (user_env, password_env, label)", k)
 		}
 	}
 	return nil
@@ -223,6 +225,9 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 	}
 	if thread.Local(localLoading) != nil {
 		return nil, fmt.Errorf("http.request: interdit au chargement du script")
+	}
+	if err := denyOffline(threadCtx(thread)); err != nil {
+		return nil, err
 	}
 	hc, ok := in.https[conn]
 	if !ok {

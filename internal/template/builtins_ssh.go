@@ -2,6 +2,7 @@ package template
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -14,27 +15,51 @@ import (
 	"github.com/agardenat/clotr/internal/driver/ssh"
 )
 
-func (in *Instance) remote(ctx context.Context, tool string, t *Target, h *Host, cmd string, maxBytes int) (ssh.Result, error) {
+type command func(ssh.Builder) string
+
+func (in *Instance) remote(ctx context.Context, tool string, t *Target, h *Host, build command, maxBytes int) (ssh.Result, error) {
 	pool, err := in.sshPool()
 	if err != nil {
 		return ssh.Result{}, err
 	}
-	ep, err := in.sshEndpoint(t, h)
+	ep, login, err := in.sshEndpoint(ctx, t, h)
 	if err != nil {
 		return ssh.Result{}, err
 	}
-	start := time.Now()
-	res, err := pool.Exec(ctx, ep, cmd, maxBytes)
-	f := map[string]any{"tool": tool, "target": t.Name, "host": ep.Host, "user": ep.User, "command": cmd, "duration_ms": time.Since(start).Milliseconds(), "exit": res.Exit, "bytes": len(res.Stdout)}
-	if err != nil {
-		f["error"] = err.Error()
+	if !in.sudo {
+		return in.exec(ctx, pool, tool, t, ep, login, build(ssh.Builder{}), "", maxBytes)
 	}
-	in.audit("remote_exec", f)
+	if !in.sudoNeedsPassword(ep) {
+		res, err := in.exec(ctx, pool, tool, t, ep, login, build(ssh.Builder{Sudo: true}), "", maxBytes)
+		if err != nil || login == nil || !ssh.SudoNeedsPassword(res) {
+			return res, err
+		}
+		in.setSudoNeedsPassword(ep)
+	}
+	pw, err := login.password(ctx)
+	if err != nil {
+		return ssh.Result{}, err
+	}
+	res, err := in.exec(ctx, pool, tool, t, ep, login, ssh.SudoWithPassword(build(ssh.Builder{})), pw+"\n", maxBytes)
+	if err == nil && res.Exit != 0 && ssh.SudoPasswordRejected(res.Stderr) {
+		login.forget()
+		return ssh.Result{}, fmt.Errorf("mot de passe de %s refusé par sudo sur %s", ep.User, ep.Host)
+	}
 	return res, err
 }
 
-func (in *Instance) builder() ssh.Builder {
-	return ssh.Builder{Sudo: in.sudo}
+func (in *Instance) exec(ctx context.Context, pool sshExecutor, tool string, t *Target, ep ssh.Endpoint, login *sshLogin, cmd, stdin string, maxBytes int) (ssh.Result, error) {
+	start := time.Now()
+	res, err := pool.ExecInput(ctx, ep, cmd, stdin, maxBytes)
+	f := map[string]any{"tool": tool, "target": t.Name, "host": ep.Host, "user": ep.User, "command": cmd, "duration_ms": time.Since(start).Milliseconds(), "exit": res.Exit, "bytes": len(res.Stdout)}
+	if err != nil {
+		f["error"] = err.Error()
+		if login != nil && errors.Is(err, ssh.ErrAuth) {
+			login.forget()
+		}
+	}
+	in.audit("remote_exec", f)
+	return res, err
 }
 
 func format(res ssh.Result, okExits ...int) (string, error) {
@@ -74,7 +99,7 @@ func (in *Instance) sshModule() *starlarkstruct.Module {
 	return &starlarkstruct.Module{Name: "ssh", Members: m}
 }
 
-func (in *Instance) sshRun(thread *starlark.Thread, target, host, cmd string, maxBytes int) (starlark.Value, error) {
+func (in *Instance) sshRun(thread *starlark.Thread, target, host string, cmd command, maxBytes int) (starlark.Value, error) {
 	t, h, err := in.sshPrepare(thread, target, host)
 	if err != nil {
 		return nil, err
@@ -89,6 +114,9 @@ func (in *Instance) sshRun(thread *starlark.Thread, target, host, cmd string, ma
 func (in *Instance) sshPrepare(thread *starlark.Thread, target, host string) (*Target, *Host, error) {
 	if thread.Local(localLoading) != nil {
 		return nil, nil, fmt.Errorf("ssh: interdit au chargement du script")
+	}
+	if err := denyOffline(threadCtx(thread)); err != nil {
+		return nil, nil, err
 	}
 	if in.sshName == "" {
 		return nil, nil, fmt.Errorf("aucun connecteur ssh dans le template %s", in.T.Name)
@@ -117,7 +145,9 @@ func (in *Instance) sshList(thread *starlark.Thread, b *starlark.Builtin, args s
 	if err != nil {
 		return nil, err
 	}
-	return in.sshRun(thread, target, host, in.builder().List(cp, clamp(depth, 1, 1, 4), clamp(limit, 500, 1, 5000), sortBy), maxRead)
+	return in.sshRun(thread, target, host, func(b ssh.Builder) string {
+		return b.List(cp, clamp(depth, 1, 1, 4), clamp(limit, 500, 1, 5000), sortBy)
+	}, maxRead)
 }
 
 func (in *Instance) sshRead(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -130,7 +160,7 @@ func (in *Instance) sshRead(thread *starlark.Thread, b *starlark.Builtin, args s
 	if err != nil {
 		return nil, err
 	}
-	return in.sshRun(thread, target, host, in.builder().Read(cp, max(from, 0), max(to, 0), maxRead), maxRead+1024)
+	return in.sshRun(thread, target, host, func(b ssh.Builder) string { return b.Read(cp, max(from, 0), max(to, 0), maxRead) }, maxRead+1024)
 }
 
 func (in *Instance) sshTail(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -146,9 +176,9 @@ func (in *Instance) sshTail(thread *starlark.Thread, b *starlark.Builtin, args s
 	if err != nil {
 		return nil, err
 	}
-	cmd := in.builder().Tail(cp, clamp(lines, 200, 1, maxLines))
+	cmd := func(b ssh.Builder) string { return b.Tail(cp, clamp(lines, 200, 1, maxLines)) }
 	if filter != "" {
-		cmd = in.builder().TailFiltered(cp, filter, clamp(lines, 200, 1, maxLines))
+		cmd = func(b ssh.Builder) string { return b.TailFiltered(cp, filter, clamp(lines, 200, 1, maxLines)) }
 	}
 	return in.sshRun(thread, target, host, cmd, maxRead*4)
 }
@@ -168,9 +198,13 @@ func (in *Instance) sshGrep(thread *starlark.Thread, b *starlark.Builtin, args s
 		return nil, err
 	}
 	if count {
-		return in.sshRun(thread, target, host, in.builder().GrepCount(cp, pattern, ignoreCase, recursive, in.rules.ExcludeGlobs(), maxRead), maxRead+1024)
+		return in.sshRun(thread, target, host, func(b ssh.Builder) string {
+			return b.GrepCount(cp, pattern, ignoreCase, recursive, in.rules.ExcludeGlobs(), maxRead)
+		}, maxRead+1024)
 	}
-	return in.sshRun(thread, target, host, in.builder().Grep(cp, pattern, ignoreCase, recursive, clamp(maxMatches, 50, 1, 500), in.rules.ExcludeGlobs(), maxRead), maxRead+1024)
+	return in.sshRun(thread, target, host, func(b ssh.Builder) string {
+		return b.Grep(cp, pattern, ignoreCase, recursive, clamp(maxMatches, 50, 1, 500), in.rules.ExcludeGlobs(), maxRead)
+	}, maxRead+1024)
 }
 
 func (in *Instance) sshDisk(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -183,7 +217,7 @@ func (in *Instance) sshDisk(thread *starlark.Thread, b *starlark.Builtin, args s
 	if err != nil {
 		return nil, err
 	}
-	return in.sshRun(thread, target, host, in.builder().Disk(cp, clamp(depth, 2, 1, 4), 40), maxRead)
+	return in.sshRun(thread, target, host, func(b ssh.Builder) string { return b.Disk(cp, clamp(depth, 2, 1, 4), 40) }, maxRead)
 }
 
 func (in *Instance) sshStatTail(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -201,7 +235,7 @@ func (in *Instance) sshStatTail(thread *starlark.Thread, b *starlark.Builtin, ar
 	if err != nil {
 		return nil, err
 	}
-	res, err := in.remote(threadCtx(thread), threadTool(thread), t, h, in.builder().StatTail(cp, sample), sample+4096)
+	res, err := in.remote(threadCtx(thread), threadTool(thread), t, h, func(b ssh.Builder) string { return b.StatTail(cp, sample) }, sample+4096)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +276,7 @@ func (in *Instance) sshRecent(thread *starlark.Thread, b *starlark.Builtin, args
 	if err != nil {
 		return nil, err
 	}
-	res, err := in.remote(threadCtx(thread), threadTool(thread), t, h, in.builder().Recent(ds, max(minutes, 1), clamp(limit, 2, 1, 20)), maxRead)
+	res, err := in.remote(threadCtx(thread), threadTool(thread), t, h, func(b ssh.Builder) string { return b.Recent(ds, max(minutes, 1), clamp(limit, 2, 1, 20)) }, maxRead)
 	if err != nil {
 		return nil, err
 	}

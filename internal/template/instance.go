@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,14 +39,24 @@ type Inventory struct {
 }
 
 type Target struct {
-	Name    string            `json:"name"`
-	Kind    string            `json:"kind"`
-	Status  string            `json:"status,omitempty"`
-	Error   string            `json:"error,omitempty"`
-	Summary string            `json:"summary,omitempty"`
-	Attrs   map[string]string `json:"attrs,omitempty"`
-	Hosts   []*Host           `json:"hosts,omitempty"`
-	Data    any               `json:"data,omitempty"`
+	Name     string            `json:"name"`
+	Kind     string            `json:"kind"`
+	Status   string            `json:"status,omitempty"`
+	Error    string            `json:"error,omitempty"`
+	Summary  string            `json:"summary,omitempty"`
+	Attrs    map[string]string `json:"attrs,omitempty"`
+	Hosts    []*Host           `json:"hosts,omitempty"`
+	Networks []string          `json:"networks,omitempty"`
+	Data     any               `json:"data,omitempty"`
+}
+
+func (t *Target) inNetworks(ip net.IP) bool {
+	for _, n := range t.Networks {
+		if _, ipn, err := net.ParseCIDR(n); err == nil && ipn.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 type Host struct {
@@ -58,7 +69,7 @@ type Host struct {
 }
 
 type sshExecutor interface {
-	Exec(ctx context.Context, e ssh.Endpoint, cmd string, maxBytes int) (ssh.Result, error)
+	ExecInput(ctx context.Context, e ssh.Endpoint, cmd, stdin string, maxBytes int) (ssh.Result, error)
 	Close()
 }
 
@@ -83,6 +94,7 @@ type Instance struct {
 	pool      sshExecutor
 	rules     *ssh.Rules
 	sudo      bool
+	sudoPass  map[string]bool
 	script    *script
 	memo      map[string]*memoEntry
 	loaded    map[string]*loadEntry
@@ -246,6 +258,15 @@ func (in *Instance) Defer(ctx context.Context, cacheDir string, ttl time.Duratio
 			return fmt.Errorf("instance %s: %w", in.Name, err)
 		}
 		inv = &Inventory{Instance: in.Name, Template: in.T.Name, Fingerprint: in.fp, Targets: targets}
+		if in.script != nil && in.script.discover != nil {
+			off := &Inventory{Instance: in.Name, Template: in.T.Name, Fingerprint: in.fp, Targets: targets}
+			run := &offlineRun{}
+			octx, cancel := context.WithTimeout(context.WithValue(ctx, offlineKey{}, run), 10*time.Second)
+			if in.runDiscover(octx, off) == nil && !run.network.Load() {
+				inv = off
+			}
+			cancel()
+		}
 	}
 	in.pending = &activation{ctx: ctx, cacheDir: cacheDir, ttl: ttl, refresh: refresh}
 	return in.setInventory(inv)
@@ -343,13 +364,25 @@ func (in *Instance) Activated() bool {
 
 func (in *Instance) Mentioned(text string) bool {
 	terms := append([]string{in.Name, in.T.Name}, in.T.Keywords...)
+	var networks []*Target
 	in.mu.Lock()
 	if in.inv != nil {
 		for _, t := range in.inv.Targets {
 			terms = append(terms, t.Name)
+			if len(t.Networks) > 0 {
+				networks = append(networks, t)
+			}
 		}
 	}
 	in.mu.Unlock()
+	for _, lit := range ipv4Re.FindAllString(text, -1) {
+		ip := net.ParseIP(lit)
+		for _, t := range networks {
+			if ip != nil && t.inNetworks(ip) {
+				return true
+			}
+		}
+	}
 	for _, term := range terms {
 		if term = strings.TrimSpace(term); term == "" {
 			continue
@@ -494,7 +527,26 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 	return p, nil
 }
 
-func (in *Instance) sshEndpoint(t *Target, h *Host) (ssh.Endpoint, error) {
+type sshLogin struct {
+	in      *Instance
+	label   string
+	user    string
+	passEnv string
+}
+
+func (l *sshLogin) password(ctx context.Context) (string, error) {
+	if p, ok := l.in.creds[l.in.sshName]; ok {
+		return p.Pass, nil
+	}
+	p, err := creds.ResolveUser(ctx, l.user, l.passEnv, l.label)
+	return p.Pass, err
+}
+
+func (l *sshLogin) forget() {
+	creds.Forget(l.label, l.user)
+}
+
+func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.Endpoint, *sshLogin, error) {
 	o := in.conns[in.sshName]
 	pick := func(attr, opt string) string {
 		if v := t.Attrs[attr]; v != "" {
@@ -504,13 +556,44 @@ func (in *Instance) sshEndpoint(t *Target, h *Host) (ssh.Endpoint, error) {
 	}
 	port, err := strconv.Atoi(defaultStr(pick("ssh_port", "port"), "22"))
 	if err != nil {
-		return ssh.Endpoint{}, fmt.Errorf("port SSH invalide")
+		return ssh.Endpoint{}, nil, fmt.Errorf("port SSH invalide")
 	}
 	host := h.Name
 	if host == "" {
 		host = h.IP
 	}
-	return ssh.Endpoint{Host: host, Port: port, User: pick("ssh_user", "user"), KeyPath: config.ExpandHome(pick("ssh_key_path", "key"))}, nil
+	ep := ssh.Endpoint{Host: host, Port: port, User: pick("ssh_user", "user"), KeyPath: config.ExpandHome(pick("ssh_key_path", "key"))}
+	a := o.sub("auth")
+	if len(a) == 0 {
+		return ep, nil, nil
+	}
+	l := &sshLogin{in: in, label: in.Name + " (" + defaultStr(a.str("label"), "SSH") + ")", user: ep.User, passEnv: a.str("password_env")}
+	if l.user == "" {
+		p, ok := in.creds[in.sshName]
+		if !ok {
+			if p, err = creds.Resolve(ctx, a.str("user_env"), l.passEnv, l.label); err != nil {
+				return ssh.Endpoint{}, nil, err
+			}
+		}
+		ep.User, l.user = p.User, p.User
+	}
+	ep.Password = l.password
+	return ep, l, nil
+}
+
+func (in *Instance) sudoNeedsPassword(ep ssh.Endpoint) bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.sudoPass[ep.User+"@"+net.JoinHostPort(ep.Host, strconv.Itoa(ep.Port))]
+}
+
+func (in *Instance) setSudoNeedsPassword(ep ssh.Endpoint) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if in.sudoPass == nil {
+		in.sudoPass = map[string]bool{}
+	}
+	in.sudoPass[ep.User+"@"+net.JoinHostPort(ep.Host, strconv.Itoa(ep.Port))] = true
 }
 
 func (in *Instance) findHost(target, host string) (*Target, *Host, error) {
@@ -558,6 +641,24 @@ func (in *Instance) findHost(target, host string) (*Target, *Host, error) {
 			names = append(names, a.h.Name)
 		}
 		return nil, nil, fmt.Errorf("hôte %q ambigu : %s (préciser target ou le nom complet)", host, strings.Join(names, ", "))
+	}
+	var networks, inRange []string
+	var rangeTarget *Target
+	ip := net.ParseIP(host)
+	for _, t := range cands {
+		networks = append(networks, t.Networks...)
+		if ip != nil && t.inNetworks(ip) {
+			rangeTarget = t
+			inRange = append(inRange, t.Name)
+		}
+	}
+	switch {
+	case len(inRange) == 1:
+		return rangeTarget, &Host{Name: ip.String(), IP: ip.String()}, nil
+	case len(inRange) > 1:
+		return nil, nil, fmt.Errorf("IP %s dans les plages de plusieurs cibles : %s (préciser target)", host, strings.Join(inRange, ", "))
+	case len(networks) > 0:
+		return nil, nil, fmt.Errorf("hôte %q absent de l'inventaire de %s et hors des plages %s (voir %s_inventory ; hors inventaire, donner l'IP)", host, in.Name, strings.Join(networks, ", "), in.Name)
 	}
 	return nil, nil, fmt.Errorf("hôte %q absent de l'inventaire de %s (voir %s_inventory)", host, in.Name, in.Name)
 }
@@ -615,6 +716,9 @@ func (in *Instance) EnvironmentLines() []string {
 		default:
 			lines = append(lines, head)
 		}
+		if len(t.Networks) > 0 {
+			lines = append(lines, "    plages "+strings.Join(t.Networks, ", ")+" : toute IP de ces plages est accessible par les outils SSH, même hors inventaire (passer l'IP en host)")
+		}
 	}
 	if h := strings.TrimSpace(in.T.Hints); h != "" {
 		for _, l := range strings.Split(h, "\n") {
@@ -625,6 +729,8 @@ func (in *Instance) EnvironmentLines() []string {
 }
 
 const CommonHint = "Règle commune à tous les templates : rester factuel et ne jamais supposer le comportement, les valeurs par défaut ou la signification des messages des produits de cette plateforme ; en cas de doute, chercher dans la documentation officielle de l'éditeur (recherche web si elle est disponible), sinon le noter comme non vérifié."
+
+var ipv4Re = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
 
 func oneLine(s string, max int) string {
 	s = strings.Join(strings.Fields(s), " ")

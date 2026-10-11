@@ -145,6 +145,13 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 		}
 		in.creds[cn] = p
 	}
+	if in.sshName != "" && len(in.conns[in.sshName].sub("auth")) > 0 {
+		p := creds.Pair{User: "user", Pass: "pass"}
+		if v, ok := given2[in.sshName]; ok && len(v) == 2 {
+			p = creds.Pair{User: v[0], Pass: v[1]}
+		}
+		in.creds[in.sshName] = p
+	}
 	return ti, nil
 }
 
@@ -404,9 +411,9 @@ type mockSSH struct {
 
 func (m *mockSSH) Close() {}
 
-func (m *mockSSH) Exec(_ context.Context, e ssh.Endpoint, cmd string, maxBytes int) (ssh.Result, error) {
+func (m *mockSSH) ExecInput(_ context.Context, e ssh.Endpoint, cmd, stdin string, maxBytes int) (ssh.Result, error) {
 	m.ti.mu.Lock()
-	m.ti.commands = append(m.ti.commands, map[string]any{"host": e.Host, "user": e.User, "command": cmd})
+	m.ti.commands = append(m.ti.commands, map[string]any{"host": e.Host, "user": e.User, "command": cmd, "stdin": stdin != ""})
 	m.ti.mu.Unlock()
 	fn, ok := m.mock.(starlark.Callable)
 	if !ok {

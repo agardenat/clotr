@@ -10,6 +10,7 @@ import (
 
 	"go.starlark.net/starlark"
 
+	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/tools"
 )
 
@@ -152,16 +153,17 @@ func inventoryTool(in *Instance, name, desc string) tools.Tool {
 			inv := in.inv
 			if a.Target == "" && a.Host == "" {
 				type sum struct {
-					Name    string `json:"name"`
-					Kind    string `json:"kind"`
-					Status  string `json:"status,omitempty"`
-					Error   string `json:"error,omitempty"`
-					Summary string `json:"summary,omitempty"`
-					Hosts   int    `json:"hosts"`
+					Name     string   `json:"name"`
+					Kind     string   `json:"kind"`
+					Status   string   `json:"status,omitempty"`
+					Error    string   `json:"error,omitempty"`
+					Summary  string   `json:"summary,omitempty"`
+					Hosts    int      `json:"hosts"`
+					Networks []string `json:"networks,omitempty"`
 				}
 				var out []sum
 				for _, t := range inv.Targets {
-					out = append(out, sum{t.Name, t.Kind, t.Status, t.Error, t.Summary, len(t.Hosts)})
+					out = append(out, sum{t.Name, t.Kind, t.Status, t.Error, t.Summary, len(t.Hosts), t.Networks})
 				}
 				b, _ := json.Marshal(map[string]any{"discovered_at": inv.DiscoveredAt, "lines": inv.Lines, "targets": out, "warnings": inv.Warnings})
 				return string(b), nil
@@ -212,7 +214,7 @@ func clamp(v, def, lo, hi int) int {
 	return max(lo, min(v, hi))
 }
 
-const hostProps = `"target":{"type":"string","description":"cible (optionnel si l'hôte est unique)"},"host":{"type":"string","description":"FQDN, nom court ou IP d'un hôte de l'inventaire"}`
+const hostProps = `"target":{"type":"string","description":"cible (optionnel si l'hôte est unique)"},"host":{"type":"string","description":"FQDN, nom court ou IP d'un hôte de l'inventaire, ou IP d'une plage de la cible"}`
 
 func (in *Instance) pathsDesc() string {
 	return fmt.Sprintf("Chemins autorisés : %s ; refusés : %s.", strings.Join(in.T.SSHPaths.Allow, ", "), strings.Join(in.T.SSHPaths.Deny, ", "))
@@ -239,7 +241,7 @@ func sshListTool(in *Instance, name, desc string) tools.Tool {
 			if err != nil {
 				return "", err
 			}
-			res, err := in.remote(ctx, name, t, h, in.builder().List(p, clamp(a.Depth, 1, 1, 4), 500, a.Sort), maxRead)
+			res, err := in.remote(ctx, name, t, h, func(b ssh.Builder) string { return b.List(p, clamp(a.Depth, 1, 1, 4), 500, a.Sort) }, maxRead)
 			if err != nil {
 				return "", err
 			}
@@ -272,7 +274,7 @@ func sshReadTool(in *Instance, name, desc string) tools.Tool {
 			if err != nil {
 				return "", err
 			}
-			res, err := in.remote(ctx, name, t, h, in.builder().Read(p, max(a.FromLine, 0), max(a.ToLine, 0), maxRead), maxRead+1024)
+			res, err := in.remote(ctx, name, t, h, func(b ssh.Builder) string { return b.Read(p, max(a.FromLine, 0), max(a.ToLine, 0), maxRead) }, maxRead+1024)
 			if err != nil {
 				return "", err
 			}
@@ -302,7 +304,7 @@ func sshTailTool(in *Instance, name, desc string) tools.Tool {
 			if err != nil {
 				return "", err
 			}
-			res, err := in.remote(ctx, name, t, h, in.builder().Tail(p, clamp(a.Lines, 200, 1, maxLines)), maxRead*4)
+			res, err := in.remote(ctx, name, t, h, func(b ssh.Builder) string { return b.Tail(p, clamp(a.Lines, 200, 1, maxLines)) }, maxRead*4)
 			if err != nil {
 				return "", err
 			}
@@ -341,9 +343,13 @@ func sshGrepTool(in *Instance, name, desc string) tools.Tool {
 			if err != nil {
 				return "", err
 			}
-			cmd := in.builder().Grep(p, a.Pattern, a.IgnoreCase, a.Recursive, clamp(a.MaxMatches, 50, 1, 500), in.rules.ExcludeGlobs(), maxRead)
+			cmd := func(b ssh.Builder) string {
+				return b.Grep(p, a.Pattern, a.IgnoreCase, a.Recursive, clamp(a.MaxMatches, 50, 1, 500), in.rules.ExcludeGlobs(), maxRead)
+			}
 			if a.Count {
-				cmd = in.builder().GrepCount(p, a.Pattern, a.IgnoreCase, a.Recursive, in.rules.ExcludeGlobs(), maxRead)
+				cmd = func(b ssh.Builder) string {
+					return b.GrepCount(p, a.Pattern, a.IgnoreCase, a.Recursive, in.rules.ExcludeGlobs(), maxRead)
+				}
 			}
 			res, err := in.remote(ctx, name, t, h, cmd, maxRead+1024)
 			if err != nil {
@@ -381,7 +387,7 @@ func sshDiskTool(in *Instance, name, desc string) tools.Tool {
 			if err != nil {
 				return "", err
 			}
-			res, err := in.remote(ctx, name, t, h, in.builder().Disk(p, clamp(a.Depth, 2, 1, 4), 40), maxRead)
+			res, err := in.remote(ctx, name, t, h, func(b ssh.Builder) string { return b.Disk(p, clamp(a.Depth, 2, 1, 4), 40) }, maxRead)
 			if err != nil {
 				return "", err
 			}
@@ -415,7 +421,7 @@ func logStatsTool(in *Instance, name, desc string) tools.Tool {
 				return "", err
 			}
 			sample := clamp(a.SampleMB<<20, statsDefault, 1<<20, statsMax)
-			res, err := in.remote(ctx, name, t, h, in.builder().StatTail(p, sample), sample+4096)
+			res, err := in.remote(ctx, name, t, h, func(b ssh.Builder) string { return b.StatTail(p, sample) }, sample+4096)
 			if err != nil {
 				return "", err
 			}

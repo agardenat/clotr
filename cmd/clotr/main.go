@@ -583,11 +583,11 @@ func (rt *app) setupInstances(ctx context.Context, o *options, enabled func(stri
 	}
 }
 
-func (rt *app) scope(o *options, text string) (*tools.Registry, string) {
+func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 	env := append([]string(nil), rt.baseEnv...)
 	var offered, hidden []string
 	for _, in := range rt.instances {
-		explicit := slices.ContainsFunc(o.tools, func(t string) bool {
+		explicit := slices.ContainsFunc(forced, func(t string) bool {
 			return strings.TrimSuffix(strings.TrimSuffix(t, "*"), "_") == in.Name
 		})
 		if explicit || in.Activated() || in.Mentioned(text) {
@@ -861,7 +861,7 @@ func cmdPlan(ctx context.Context, o *options, args []string, w io.Writer) error 
 	events := newProgress(o, rt.cfg.Limits.MaxSteps, "")
 	defer events.Close()
 	rt.audit.Log("plan_start", map[string]any{"request": request, "version": version})
-	reg, env := rt.scope(o, request)
+	reg, env := rt.scope(o.tools, request)
 	orch := rt.orchestrator(events, reg, env)
 	p, err := orch.Plan(ctx, request)
 	events.Close()
@@ -953,10 +953,12 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	fmt.Fprintln(os.Stderr, i18n.T("session.start", sess.Name, n, filepath.Join(turnDir, "audit.jsonl")))
 	rt.audit.Log("run_start", map[string]any{"request": request, "version": version, "tools": rt.registry.Names(), "session": sess.Name, "turn": n, "memory_loaded": len(rt.memory.All()), "web": o.webAllowed, "direct": o.direct})
 	mention := request
+	forced := slices.Clone(o.tools)
 	for _, t := range sess.Turns[:n-1] {
 		mention += "\n" + t.Request
+		forced = append(forced, t.Tools...)
 	}
-	reg, env := rt.scope(o, mention)
+	reg, env := rt.scope(forced, mention)
 	orch := rt.orchestrator(events, reg, env)
 	orch.History, orch.Turn = history, n
 	orch.AfterTask = rt.budgetRefresher(events)

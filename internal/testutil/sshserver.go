@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/pem"
+	"io"
 	"net"
 	"os"
 	"sync"
@@ -20,14 +21,34 @@ type SSHServer struct {
 	HostKey  gossh.Signer
 }
 
+type SSHServerConfig struct {
+	ClientKey gossh.PublicKey
+	Password  string
+	HostKey   gossh.Signer
+	Reply     func(cmd, stdin string) (string, int)
+}
+
 func StartSSHServer(t testing.TB, clientKey gossh.PublicKey, hostKey gossh.Signer, reply func(cmd string) (string, int)) *SSHServer {
+	return StartSSHServerConfig(t, SSHServerConfig{ClientKey: clientKey, HostKey: hostKey, Reply: func(cmd, _ string) (string, int) { return reply(cmd) }})
+}
+
+func StartSSHServerConfig(t testing.TB, c SSHServerConfig) *SSHServer {
+	hostKey, reply := c.HostKey, c.Reply
 	cfg := &gossh.ServerConfig{
 		PublicKeyCallback: func(_ gossh.ConnMetadata, k gossh.PublicKey) (*gossh.Permissions, error) {
-			if string(k.Marshal()) == string(clientKey.Marshal()) {
+			if c.ClientKey != nil && string(k.Marshal()) == string(c.ClientKey.Marshal()) {
 				return nil, nil
 			}
 			return nil, os.ErrPermission
 		},
+	}
+	if c.Password != "" {
+		cfg.PasswordCallback = func(_ gossh.ConnMetadata, pw []byte) (*gossh.Permissions, error) {
+			if string(pw) == c.Password {
+				return nil, nil
+			}
+			return nil, os.ErrPermission
+		}
 	}
 	cfg.AddHostKey(hostKey)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -65,7 +86,8 @@ func StartSSHServer(t testing.TB, clientKey gossh.PublicKey, hostKey gossh.Signe
 							s.Commands = append(s.Commands, cmd)
 							s.mu.Unlock()
 							r.Reply(true, nil)
-							out, code := reply(cmd)
+							stdin, _ := io.ReadAll(ch)
+							out, code := reply(cmd, string(stdin))
 							ch.Write([]byte(out))
 							if code < 0 {
 								ch.Close()
