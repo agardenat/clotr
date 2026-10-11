@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +24,10 @@ import (
 	"github.com/agardenat/clotr/internal/tools"
 )
 
-var thinkBlock = regexp.MustCompile(`(?s)<think>.*?</think>`)
+var (
+	thinkBlock = regexp.MustCompile(`(?s)<think>.*?</think>`)
+	leakedCall = regexp.MustCompile(`to=functions\.([A-Za-z0-9_.\-]+)`)
+)
 
 const (
 	concludeMsg      = "Limite d'étapes atteinte. Conclus maintenant avec les éléments déjà collectés, au format demandé, sans appeler d'outil. Indique dans gaps ce qui reste à faire."
@@ -178,6 +182,12 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 		}
 		msg := resp.Choices[0].Message
 		msg.Role = "assistant"
+		if !final && len(msg.ToolCalls) == 0 {
+			if calls := leakedToolCalls(msg.Content, defs); len(calls) > 0 {
+				r.Audit.Log("leaked_tool_calls", map[string]any{"task": spec.TaskID, "step": step, "model": s.out.Model, "count": len(calls), "content": truncate(msg.Content, 500)})
+				msg.ToolCalls, msg.Content = calls, ""
+			}
+		}
 		if final || len(msg.ToolCalls) == 0 {
 			full := msg.Content
 			for i := 0; i < maxResumes && resp.Choices[0].FinishReason == "length"; i++ {
@@ -527,4 +537,25 @@ func cleanToolName(name string) string {
 		name = name[:i]
 	}
 	return strings.TrimSpace(name)
+}
+
+func leakedToolCalls(content string, defs []llm.ToolDef) []llm.ToolCall {
+	var out []llm.ToolCall
+	for _, m := range leakedCall.FindAllStringSubmatchIndex(content, -1) {
+		name := cleanToolName(content[m[2]:m[3]])
+		if !slices.ContainsFunc(defs, func(d llm.ToolDef) bool { return d.Function.Name == name }) {
+			continue
+		}
+		rest := content[m[1]:]
+		i := strings.IndexByte(rest, '{')
+		if i < 0 || strings.Contains(rest[:i], "to=functions.") {
+			continue
+		}
+		var args json.RawMessage
+		if err := json.NewDecoder(strings.NewReader(rest[i:])).Decode(&args); err != nil {
+			continue
+		}
+		out = append(out, llm.ToolCall{Type: "function", Function: llm.FunctionCall{Name: name, Arguments: string(args)}})
+	}
+	return out
 }

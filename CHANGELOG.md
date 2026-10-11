@@ -4,6 +4,16 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Templates : condition `when` sur les outils de `tools`, rendue avec les paramètres de l'instance (`when: "{{.ssh}}"`) ; l'outil n'est créé que si elle vaut vrai. Une valeur non booléenne rend l'instance invalide. Un template qui l'utilise exige cette version.
+
+### Modifié
+- Réponse des sous-agents : un constat qui ne cite dans son propre texte aucune preuve existante est renvoyé à l'agent (au plus deux reprises) pour qu'il ajoute l'identifiant de la preuve ou le passe en point non vérifié. Auparavant il était seulement marqué « [NON PROUVÉ] », même quand la preuve figurait dans la liste `evidence` de la réponse.
+- Agents : un appel d'outil écrit dans le texte de la réponse au format harmony (`to=functions.<outil>{…}`, modèles gpt-oss) au lieu d'un appel structuré est exécuté comme un appel d'outil, s'il désigne un outil de la tâche. La réponse finale d'un sous-agent doit contenir `findings`, `evidence` ou `gaps` : sinon elle est renvoyée à l'agent au lieu d'être acceptée comme sortie non structurée.
+- Planner : les clusters et services listés dans l'environnement ne justifient plus une tâche d'inventaire préalable ni un `depends_on` vers elle (« pour chaque cluster », « pour chaque service ») ; chaque tâche lit l'inventaire elle-même. Les dépendances entre deux tâches du même rôle (une collecte qui attend une autre collecte) sont retirées du plan par clotr et tracées dans l'audit (`plan_deps_dropped`) : seules restent celles d'une analyse vers ses collectes. Aucune tâche n'est supprimée ; l'objectif d'une tâche dont une dépendance est retirée indique que ces résultats ne lui sont pas transmis et qu'elle doit établir elle-même ce dont elle a besoin.
+- Synthèse : mise en page imposée hors forme demandée : sections séparées, conclusion en puces ouvertes par une phrase clé en gras, constats numérotés en continu avec un titre en gras (sans code C1/M2) puis une puce par fait, tableaux pour les valeurs comparables et les calculs, renvois aux constats par numéro, recommandations numérotées avec cause, action, risque et vérification.
+- Rendu du rapport dans le terminal : la suite d'une puce ou d'un élément numéroté est indentée sous son texte, les lignes ne sont plus coupées sur la ponctuation (identifiants de preuve et noms entiers), espaces insécables devant la ponctuation française (« », :, ;, ?, !) hors code. Les tableaux gardent la largeur du terminal.
+
 ## [0.8.0] - 2026-10-11
 
 ### Ajouté

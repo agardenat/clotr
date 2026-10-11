@@ -77,6 +77,7 @@ type Instance struct {
 	Name   string
 	T      *Template
 	params map[string]any
+	tools  []ToolSpec
 	conns  map[string]options
 	fp     string
 
@@ -152,6 +153,15 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 			in.https[cn] = hc
 		case "ssh":
 			in.sshName = cn
+		}
+	}
+	for i, ts := range t.Tools {
+		on, err := toolEnabled(ts, params)
+		if err != nil {
+			return nil, fmt.Errorf("instance %s: tools[%d].when: %w", name, i, err)
+		}
+		if on {
+			in.tools = append(in.tools, ts)
 		}
 	}
 	if in.sshName != "" {
@@ -412,7 +422,7 @@ func (in *Instance) hasCachedInventory() bool {
 }
 
 func (in *Instance) inventoryToolName() string {
-	for _, ts := range in.T.Tools {
+	for _, ts := range in.tools {
 		if ts.Kind == "inventory" {
 			return in.Name + "_" + ts.ToolName()
 		}
@@ -757,4 +767,23 @@ func defaultStr(s, def string) string {
 		return def
 	}
 	return s
+}
+
+func toolEnabled(ts ToolSpec, params map[string]any) (bool, error) {
+	if ts.When == "" {
+		return true, nil
+	}
+	r, err := Render(ts.When, params)
+	if err != nil {
+		return false, err
+	}
+	r = strings.TrimSpace(r)
+	if r == "" {
+		return false, nil
+	}
+	b, err := strconv.ParseBool(r)
+	if err != nil {
+		return false, fmt.Errorf("booléen attendu, %q", r)
+	}
+	return b, nil
 }

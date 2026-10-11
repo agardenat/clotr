@@ -33,3 +33,25 @@ func TestRender(t *testing.T) {
 		t.Errorf("GLAMOUR_STYLE ignoré")
 	}
 }
+
+func TestWrapListItems(t *testing.T) {
+	t.Setenv("GLAMOUR_STYLE", "")
+	md := "## Constats\n\n- Agent : « heartbeat delayed: 62s since last » à 08:47:38Z, deux occurrences seulement dans tout le fichier [E2.047]\n\n| a | b |\n|---|---|\n| x | y |\n\nFin."
+	plain := ansi.Strip(Render(md, 50, true))
+	lines := strings.Split(plain, "\n")
+	bullet := -1
+	for i, l := range lines {
+		if ansi.StringWidth(l) > 46 {
+			t.Errorf("ligne plus large que 46 colonnes: %q", l)
+		}
+		if strings.Contains(l, "• Agent") {
+			bullet = i
+		}
+	}
+	if bullet < 0 || !strings.HasPrefix(lines[bullet+1], strings.Repeat(" ", strings.Index(lines[bullet], "•")+2)) {
+		t.Fatalf("suite de puce non indentée:\n%s", plain)
+	}
+	if !strings.Contains(plain, "[E2.047]") || strings.Contains(plain, "\n »") || !strings.Contains(plain, "│") {
+		t.Fatalf("citation coupée, guillemet isolé ou tableau absent:\n%s", plain)
+	}
+}

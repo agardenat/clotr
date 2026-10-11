@@ -53,7 +53,7 @@ func (in *Instance) Tools() []tools.Tool {
 	for range out {
 		cached = append(cached, false)
 	}
-	for _, ts := range in.T.Tools {
+	for _, ts := range in.tools {
 		out = append(out, kinds[ts.Kind].build(in, in.Name+"_"+ts.ToolName(), ts.Description))
 		cached = append(cached, ts.Kind == "inventory")
 	}
