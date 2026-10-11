@@ -314,8 +314,8 @@ func sshTailTool(in *Instance, name, desc string) tools.Tool {
 func sshGrepTool(in *Instance, name, desc string) tools.Tool {
 	return fnTool{
 		name:   name,
-		desc:   withDesc(desc, "Recherche une expression régulière étendue (grep -E) dans un fichier ou, avec recursive, un répertoire, sur un hôte en SSH (lecture seule). Les fichiers binaires et les fichiers refusés sont ignorés.\n"+in.pathsDesc()),
-		schema: `{"type":"object","properties":{` + hostProps + `,"path":{"type":"string","description":"fichier ou répertoire absolu"},"pattern":{"type":"string","description":"expression régulière étendue"},"ignore_case":{"type":"boolean"},"recursive":{"type":"boolean"},"max_matches":{"type":"integer","description":"correspondances max par fichier (défaut 50, max 500)"}},"required":["host","path","pattern"]}`,
+		desc:   withDesc(desc, "Recherche une expression régulière étendue (grep -E) dans un fichier ou, avec recursive, un répertoire, sur un hôte en SSH (lecture seule). Les fichiers binaires et les fichiers refusés sont ignorés. Pour un total exact (nombre d'occurrences d'un message sur tout un fichier), utiliser count au lieu de compter des lignes plafonnées par max_matches.\n"+in.pathsDesc()),
+		schema: `{"type":"object","properties":{` + hostProps + `,"path":{"type":"string","description":"fichier ou répertoire absolu"},"pattern":{"type":"string","description":"expression régulière étendue"},"ignore_case":{"type":"boolean"},"recursive":{"type":"boolean"},"max_matches":{"type":"integer","description":"correspondances max par fichier (défaut 50, max 500)"},"count":{"type":"boolean","description":"renvoie seulement le nombre exact de lignes correspondantes de chaque fichier, lu en entier (sans plafond ni troncature), au lieu des lignes"}},"required":["host","path","pattern"]}`,
 		call: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			a, err := tools.Decode[struct {
 				Target     string `json:"target"`
@@ -325,6 +325,7 @@ func sshGrepTool(in *Instance, name, desc string) tools.Tool {
 				IgnoreCase bool   `json:"ignore_case"`
 				Recursive  bool   `json:"recursive"`
 				MaxMatches int    `json:"max_matches"`
+				Count      bool   `json:"count"`
 			}](raw)
 			if err != nil {
 				return "", err
@@ -340,9 +341,16 @@ func sshGrepTool(in *Instance, name, desc string) tools.Tool {
 			if err != nil {
 				return "", err
 			}
-			res, err := in.remote(ctx, name, t, h, in.builder().Grep(p, a.Pattern, a.IgnoreCase, a.Recursive, clamp(a.MaxMatches, 50, 1, 500), in.rules.ExcludeGlobs(), maxRead), maxRead+1024)
+			cmd := in.builder().Grep(p, a.Pattern, a.IgnoreCase, a.Recursive, clamp(a.MaxMatches, 50, 1, 500), in.rules.ExcludeGlobs(), maxRead)
+			if a.Count {
+				cmd = in.builder().GrepCount(p, a.Pattern, a.IgnoreCase, a.Recursive, in.rules.ExcludeGlobs(), maxRead)
+			}
+			res, err := in.remote(ctx, name, t, h, cmd, maxRead+1024)
 			if err != nil {
 				return "", err
+			}
+			if a.Count && strings.TrimSpace(res.Stdout) == "" && res.Exit <= 1 {
+				return "0", nil
 			}
 			if res.Exit == 1 && strings.TrimSpace(res.Stdout) == "" {
 				return "aucune correspondance", nil

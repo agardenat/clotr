@@ -231,7 +231,7 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 
 ### Outils SSH
 
-- Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `df -hP`, `du -xh`. Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
+- Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `grep -c -E -I` (comptage), `df -hP`, `du -xh`. Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
 - `host` doit appartenir à l'inventaire de l'instance (FQDN, nom court ou IP) ;
 - `path` doit être absolu, sans `..`, couvert par `ssh_paths.allow` et par aucun `ssh_paths.deny` (keytabs, jceks, jks, clés, `*password*`…). En récursif, les motifs `deny` sont aussi passés en `--exclude` ;
 - `sudo -n` est ajouté si `sudo: true` : le compte SSH doit disposer de sudo sans mot de passe ;
@@ -248,6 +248,8 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 - les messages les plus répétés, après normalisation des nombres, IP, UUID et identifiants hexadécimaux.
 
 Les hôtes SSH peuvent être désignés par leur nom complet, leur IP, leur nom court ou la fin de leur nom court (`node0`) ; un nom ambigu est refusé avec la liste des candidats.
+
+`<instance>_ssh_grep` avec `count` renvoie le nombre exact de lignes correspondantes de chaque fichier, lu en entier, sans le plafond de `max_matches` (en récursif, seuls les fichiers avec au moins une correspondance sont listés). `ssh.grep(…, count=True)` fait de même dans un script.
 
 `<instance>_ssh_disk` donne `df`, les sous-répertoires les plus gros (`du`) et le nombre de fichiers d'un répertoire.
 

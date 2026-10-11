@@ -34,6 +34,7 @@ tools:
   - kind: inventory
   - kind: ssh_list
   - kind: ssh_tail
+  - kind: ssh_grep
   - kind: log_stats
 companions: [inventory, node_status]
 ssh_paths:

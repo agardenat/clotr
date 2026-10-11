@@ -167,6 +167,22 @@ func (b Builder) Grep(p, pattern string, ignoreCase, recursive bool, maxCount in
 	return fmt.Sprintf("%sgrep %s -e %s -- %s | head -c %d", b.prefix(), strings.Join(opts, " "), Quote(pattern), Quote(p), maxBytes)
 }
 
+func (b Builder) GrepCount(p, pattern string, ignoreCase, recursive bool, excludes []string, maxBytes int) string {
+	opts := []string{"-c", "-E", "-I"}
+	if ignoreCase {
+		opts = append(opts, "-i")
+	}
+	nonZero := ""
+	if recursive {
+		opts = append(opts, "-r")
+		for _, e := range excludes {
+			opts = append(opts, "--exclude="+Quote(e))
+		}
+		nonZero = " | grep -v ':0$'"
+	}
+	return fmt.Sprintf("%sgrep %s -e %s -- %s%s | head -c %d", b.prefix(), strings.Join(opts, " "), Quote(pattern), Quote(p), nonZero, maxBytes)
+}
+
 func (b Builder) Recent(dirs []string, minutes, limit int) string {
 	q := make([]string, len(dirs))
 	for i, d := range dirs {

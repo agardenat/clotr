@@ -18,6 +18,10 @@ ROUTES = {
 }
 
 def ssh_mock(host, cmd):
+    if "grep -c" in cmd:
+        if "absent" in cmd:
+            return {"exit": 1}
+        return "/var/log/demo/app.log:1234\n" if " -r " in cmd else "1234\n"
     if "find" in cmd:
         return "1760000000.5 1234 /var/log/demo/app.log\n"
     if "tail" in cmd:
@@ -84,8 +88,12 @@ def test_ssh():
     assert.contains(inst.error("ssh_tail", {"host": "node0", "path": "/etc/shadow"}), "")
     assert.true(inst.error("ssh_tail", {"host": "node0", "path": "/etc/shadow"}) != "")
     assert.contains(inst.error("ssh_tail", {"host": "zz", "path": "/var/log/x"}), "absent de l'inventaire")
+    assert.eq(inst.call("ssh_grep", {"host": "node0", "path": "/var/log/demo/app.log", "pattern": "ERROR", "count": True}).strip(), "1234")
+    assert.eq(inst.call("ssh_grep", {"host": "node0", "path": "/var/log/demo/app.log", "pattern": "absent", "count": True}), "0")
+    assert.contains(inst.call("ssh_grep", {"host": "node0", "path": "/var/log/demo", "pattern": "ERROR", "count": True, "recursive": True}), "app.log:1234")
     cmds = [c["command"] for c in inst.commands()]
     assert.true(all([c.startswith("sudo -n ") for c in cmds]))
+    assert.true(any(["| grep -v ':0$' |" in c for c in cmds]))
 
 def test_missing_credentials_file():
     inst = new(files = {})

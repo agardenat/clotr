@@ -4,6 +4,12 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- `ssh_grep` : option `count` qui renvoie le nombre exact de lignes correspondantes de chaque fichier, lu en entier (`grep -c`), au lieu de lignes plafonnées par `max_matches`. Disponible aussi dans les scripts (`ssh.grep(…, count=True)`).
+
+### Corrigé
+- `run` (hors `--chat`) n'efface plus le contenu du terminal au démarrage du tableau de progression. Les lignes affichées avant le premier rendu du tableau (session, avertissements) étaient insérées en haut de l'écran, et le tableau effaçait tout ce qui suivait ; elles sont désormais imprimées après ce premier rendu.
+
 ## [0.4.0] - 2026-10-10
 
 ### Ajouté

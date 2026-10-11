@@ -94,3 +94,22 @@ func TestBoardFrench(t *testing.T) {
 		t.Errorf("terminé: %s", l)
 	}
 }
+
+func TestBoardHoldsLinesUntilFirstFrame(t *testing.T) {
+	b := newBoard(10)
+	if _, cmd := b.Update(logMsg("session: x")); cmd != nil {
+		t.Fatal("ligne imprimée avant le premier rendu")
+	}
+	if _, cmd := b.Update(eventMsg(Event{Task: "budget", Model: "p/m", Detail: "d"})); cmd != nil {
+		t.Fatal("avertissement imprimé avant le premier rendu")
+	}
+	if len(b.pending) != 2 {
+		t.Fatalf("pending = %d, attendu 2", len(b.pending))
+	}
+	if _, cmd := b.Update(tickMsg(time.Now())); cmd == nil || !b.ready || b.pending != nil {
+		t.Fatal("lignes en attente non imprimées au premier tick")
+	}
+	if _, cmd := b.Update(logMsg("après")); cmd == nil {
+		t.Fatal("ligne non imprimée après le premier rendu")
+	}
+}

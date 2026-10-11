@@ -60,6 +60,8 @@ type board struct {
 	frame     int
 	toolCalls int
 	finished  bool
+	ready     bool
+	pending   []string
 	now       func() time.Time
 }
 
@@ -80,6 +82,10 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if b.finished {
 			return b, nil
 		}
+		if !b.ready {
+			b.ready = true
+			return b, tea.Batch(b.flushPending(), tick())
+		}
 		return b, tick()
 	case tea.WindowSizeMsg:
 		if m.Width > 0 {
@@ -87,16 +93,36 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case eventMsg:
 		if m.Task == "budget" {
-			return b, tea.Println(stWarn.Render(ansi.Truncate(i18n.T("budget.prefix", m.Model, m.Detail), max(b.width-1, 20), "…")))
+			return b, b.println(stWarn.Render(ansi.Truncate(i18n.T("budget.prefix", m.Model, m.Detail), max(b.width-1, 20), "…")))
 		}
 		b.apply(Event(m))
 	case logMsg:
-		return b, tea.Println(ansi.Truncate(string(m), max(b.width-1, 20), "…"))
+		return b, b.println(ansi.Truncate(string(m), max(b.width-1, 20), "…"))
 	case finishMsg:
 		b.finished = true
+		if p := b.flushPending(); p != nil {
+			return b, tea.Sequence(p, tea.Quit)
+		}
 		return b, tea.Quit
 	}
 	return b, nil
+}
+
+func (b *board) println(line string) tea.Cmd {
+	if !b.ready {
+		b.pending = append(b.pending, line)
+		return nil
+	}
+	return tea.Println(line)
+}
+
+func (b *board) flushPending() tea.Cmd {
+	if len(b.pending) == 0 {
+		return nil
+	}
+	lines := strings.Join(b.pending, "\n")
+	b.pending = nil
+	return tea.Println(lines)
 }
 
 func (b *board) get(id string) *row {
