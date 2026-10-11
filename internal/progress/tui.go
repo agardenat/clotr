@@ -320,7 +320,11 @@ func (b *board) render() string {
 	for _, r := range b.rows {
 		lines = append(lines, b.line(r))
 	}
-	return strings.Join(lines, "\n") + "\n"
+	out := strings.Join(lines, "\n")
+	if b.finished {
+		out += "\n"
+	}
+	return out
 }
 
 func (b *board) header() string {

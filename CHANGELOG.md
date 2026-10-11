@@ -4,6 +4,12 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Modifié
+- Planner : les cibles, hôtes et nœuds déjà listés dans l'environnement ne justifient plus une dépendance ; une tâche qui les examine démarre en parallèle de la tâche d'inventaire ou de statut.
+
+### Corrigé
+- Tableau de progression en bas du terminal : les lignes imprimées au-dessus (session, avertissements) décalaient le tableau d'une ligne (en-tête perdu, ligne dupliquée, texte écrasé). Le tableau ne se termine plus par une ligne vide pendant le run.
+
 ## [0.5.0] - 2026-10-11
 
 ### Ajouté

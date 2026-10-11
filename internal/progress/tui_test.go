@@ -113,3 +113,15 @@ func TestBoardHoldsLinesUntilFirstFrame(t *testing.T) {
 		t.Fatal("ligne non imprimée après le premier rendu")
 	}
 }
+
+func TestBoardTrailingLineOnlyWhenFinished(t *testing.T) {
+	b := newBoard(10)
+	b.apply(Event{Task: "planner", Kind: "start", Model: "p/m"})
+	if strings.HasSuffix(b.render(), "\n") {
+		t.Fatal("ligne vide en bas du tableau pendant le run")
+	}
+	b.finished = true
+	if !strings.HasSuffix(b.render(), "\n") {
+		t.Fatal("ligne finale absente : la sortie suivante écraserait la dernière ligne")
+	}
+}
