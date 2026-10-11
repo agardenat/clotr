@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-11
+
 ### Ajouté
 - Templates : condition `when` sur les outils de `tools`, rendue avec les paramètres de l'instance (`when: "{{.ssh}}"`) ; l'outil n'est créé que si elle vaut vrai. Une valeur non booléenne rend l'instance invalide. Un template qui l'utilise exige cette version.
 
