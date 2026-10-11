@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-11
+
 ### Ajouté
 - `ssh_grep` : option `count` qui renvoie le nombre exact de lignes correspondantes de chaque fichier, lu en entier (`grep -c`), au lieu de lignes plafonnées par `max_matches`. Disponible aussi dans les scripts (`ssh.grep(…, count=True)`).
 
