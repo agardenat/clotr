@@ -55,7 +55,6 @@ type Config struct {
 	Limits    Limits          `yaml:"limits"`
 	Catalog   CatalogConf     `yaml:"catalog"`
 	Audit     AuditConf       `yaml:"audit"`
-	K8s       *K8s            `yaml:"k8s"`
 	Files     *Files          `yaml:"files"`
 	MCP       []MCPServer     `yaml:"mcp"`
 	Templates TemplatesConf   `yaml:"templates"`
@@ -98,7 +97,7 @@ func (i Instance) IsEnabled() bool {
 
 var instanceName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
-var reservedPrefixes = []string{"k8s", "fs", "mcp", "memory", "evidence"}
+var reservedPrefixes = []string{"fs", "mcp", "memory", "evidence"}
 
 type SessionsConf struct {
 	Dir string `yaml:"dir"`
@@ -216,12 +215,6 @@ type CatalogConf struct {
 
 type AuditConf struct {
 	Dir string `yaml:"dir"`
-}
-
-type K8s struct {
-	Kubeconfig string   `yaml:"kubeconfig"`
-	Contexts   []string `yaml:"contexts"`
-	Timeout    Duration `yaml:"timeout"`
 }
 
 type Files struct {
@@ -364,12 +357,6 @@ func (c *Config) applyDefaults() {
 		c.Sessions.Dir = filepath.Join(StateDir(), "clotr", "sessions")
 	}
 	c.Sessions.Dir = ExpandHome(c.Sessions.Dir)
-	if c.K8s != nil {
-		c.K8s.Kubeconfig = ExpandHome(c.K8s.Kubeconfig)
-		if c.K8s.Timeout.Duration <= 0 {
-			c.K8s.Timeout.Duration = 30 * time.Second
-		}
-	}
 	for i := range c.MCP {
 		m := &c.MCP[i]
 		if m.Transport == "" {

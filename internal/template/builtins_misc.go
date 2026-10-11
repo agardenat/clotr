@@ -211,7 +211,7 @@ func builtinB64Decode(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tup
 
 func (in *Instance) fileAllowed(p string) (string, error) {
 	want := config.ExpandHome(p)
-	for _, f := range in.T.Files {
+	for _, f := range in.files {
 		if config.ExpandHome(f) == want {
 			return want, nil
 		}

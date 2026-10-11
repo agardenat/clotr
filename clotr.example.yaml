@@ -73,10 +73,6 @@ limits:
 catalog:
   cache_ttl: 1h
 
-k8s:
-  kubeconfig: ~/.kube/config
-  contexts: [prod, recette]
-
 files:
   roots: [/etc/app/conf, /opt/app/conf]
 

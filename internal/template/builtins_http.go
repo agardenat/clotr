@@ -2,6 +2,9 @@ package template
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +13,7 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +33,7 @@ const (
 var sensitivePath = regexp.MustCompile(`(?i)keytab|secret|password|token`)
 
 type httpAuth struct {
-	userEnv, passEnv, label string
+	userEnv, passEnv, passVault, label string
 }
 
 type httpConn struct {
@@ -41,11 +45,13 @@ type httpConn struct {
 	maxBytes int
 	timeout  time.Duration
 	auth     *httpAuth
+	deny     []*regexp.Regexp
+	ownDeny  bool
 	opts     options
 	client   *http.Client
 }
 
-var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "proxy", "proxy_port", "verify_tls", "ca_file"}
+var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "deny", "proxy", "proxy_port", "verify_tls", "ca_file"}
 
 func checkHTTPOptions(o options) error {
 	for k := range o {
@@ -59,9 +65,11 @@ func checkHTTPOptions(o options) error {
 			return fmt.Errorf("methods: %q invalide (majuscules attendues)", m)
 		}
 	}
-	for _, a := range o.list("allow") {
-		if _, err := regexp.Compile(a); err != nil {
-			return fmt.Errorf("allow: %w", err)
+	for _, k := range []string{"allow", "deny"} {
+		for _, a := range o.list(k) {
+			if _, err := regexp.Compile(a); err != nil {
+				return fmt.Errorf("%s: %w", k, err)
+			}
 		}
 	}
 	for _, m := range methods {
@@ -74,8 +82,8 @@ func checkHTTPOptions(o options) error {
 
 func checkAuthOptions(o options) error {
 	for k := range o.sub("auth") {
-		if !slices.Contains([]string{"user_env", "password_env", "label"}, k) {
-			return fmt.Errorf("auth.%s inconnue (user_env, password_env, label)", k)
+		if !slices.Contains([]string{"user_env", "password_env", "password_vault", "label"}, k) {
+			return fmt.Errorf("auth.%s inconnue (user_env, password_env, password_vault, label)", k)
 		}
 	}
 	return nil
@@ -93,6 +101,14 @@ func newHTTPConn(name string, o options) (*httpConn, error) {
 		}
 		hc.allow = append(hc.allow, re)
 	}
+	_, hc.ownDeny = o["deny"]
+	for _, d := range o.list("deny") {
+		re, err := regexp.Compile(d)
+		if err != nil {
+			return nil, err
+		}
+		hc.deny = append(hc.deny, re)
+	}
 	for k, v := range o.sub("headers") {
 		hc.headers[k] = fmt.Sprint(v)
 	}
@@ -105,7 +121,7 @@ func newHTTPConn(name string, o options) (*httpConn, error) {
 		return nil, fmt.Errorf("timeout: %w", err)
 	}
 	if a := o.sub("auth"); len(a) > 0 {
-		hc.auth = &httpAuth{userEnv: a.str("user_env"), passEnv: a.str("password_env"), label: defaultStr(a.str("label"), name)}
+		hc.auth = &httpAuth{userEnv: a.str("user_env"), passEnv: a.str("password_env"), passVault: a.str("password_vault"), label: defaultStr(a.str("label"), name)}
 	}
 	return hc, nil
 }
@@ -140,6 +156,95 @@ func (in *Instance) httpClient(hc *httpConn) (*http.Client, error) {
 	return hc.client, nil
 }
 
+type requestInfoKey struct{}
+
+type requestInfo struct {
+	proxy string
+	tls   *netx.TLS
+}
+
+func requestTLS(v starlark.Value) (*netx.TLS, error) {
+	d, err := optDict("tls", v)
+	if err != nil || d == nil {
+		return nil, err
+	}
+	t := &netx.TLS{Verify: true}
+	for _, it := range d.Items() {
+		k, _ := starlark.AsString(it[0])
+		if k == "insecure" {
+			b, ok := it[1].(starlark.Bool)
+			if !ok {
+				return nil, fmt.Errorf("tls.insecure: booléen attendu")
+			}
+			t.Verify = !bool(b)
+			continue
+		}
+		s, ok := asText(it[1])
+		if !ok {
+			return nil, fmt.Errorf("tls.%s: texte PEM attendu, %s reçu", k, it[1].Type())
+		}
+		switch k {
+		case "ca":
+			t.CAPEM = []byte(s)
+		case "cert":
+			t.CertPEM = []byte(s)
+		case "key":
+			t.KeyPEM = []byte(s)
+		default:
+			return nil, fmt.Errorf("tls.%s inconnue (ca, cert, key, insecure)", k)
+		}
+	}
+	return t, nil
+}
+
+func (in *Instance) httpClientFor(hc *httpConn, t *netx.TLS, proxy string) (*http.Client, error) {
+	if t == nil && proxy == "" {
+		return in.httpClient(hc)
+	}
+	if t == nil {
+		t = &netx.TLS{Verify: true}
+	}
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if in.transport != nil {
+		return &http.Client{Transport: in.transport, Timeout: hc.timeout}, nil
+	}
+	h := sha256.New()
+	for _, part := range [][]byte{[]byte(hc.name), []byte(proxy), []byte(strconv.FormatBool(t.Verify)), t.CAPEM, t.CertPEM, t.KeyPEM} {
+		h.Write(part)
+		h.Write([]byte{0})
+	}
+	key := hex.EncodeToString(h.Sum(nil))
+	if c, ok := in.clients[key]; ok {
+		return c, nil
+	}
+	port, err := hc.opts.int("proxy_port", 0)
+	if err != nil {
+		return nil, err
+	}
+	px, err := netx.ProxyURL(defaultStr(proxy, hc.opts.str("proxy")), port)
+	if err != nil {
+		return nil, err
+	}
+	verify, err := hc.opts.bool("verify_tls", true)
+	if err != nil {
+		return nil, err
+	}
+	o := *t
+	o.Verify = verify && t.Verify
+	o.CAFile = config.ExpandHome(hc.opts.str("ca_file"))
+	tr, err := netx.TransportTLS(px, o)
+	if err != nil {
+		return nil, err
+	}
+	if in.clients == nil {
+		in.clients = map[string]*http.Client{}
+	}
+	c := &http.Client{Transport: tr, Timeout: hc.timeout}
+	in.clients[key] = c
+	return c, nil
+}
+
 func checkRequestPath(hc *httpConn, method, p string) (string, error) {
 	if !slices.Contains(hc.methods, method) {
 		return "", fmt.Errorf("méthode %s refusée par le connecteur %s (autorisées : %s)", method, hc.name, strings.Join(hc.methods, ", "))
@@ -156,8 +261,13 @@ func checkRequestPath(hc *httpConn, method, p string) (string, error) {
 	if strings.HasSuffix(p, "/") && clean != "/" {
 		clean += "/"
 	}
-	if sensitivePath.MatchString(clean) {
+	if !hc.ownDeny && sensitivePath.MatchString(clean) {
 		return "", fmt.Errorf("chemin %q refusé : contient un mot-clé sensible (keytab, secret, password, token)", clean)
+	}
+	for _, re := range hc.deny {
+		if re.MatchString(clean) {
+			return "", fmt.Errorf("chemin %q refusé par la liste deny du connecteur %s", clean, hc.name)
+		}
 	}
 	if len(hc.allow) > 0 {
 		ok := false
@@ -195,8 +305,16 @@ func builtinSnippet(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple
 
 func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var conn, method, p string
-	var baseV, queryV, jsonBody, bodyV, headersV, jqV, maxV starlark.Value
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "conn", &conn, "method", &method, "path", &p, "base?", &baseV, "query?", &queryV, "json?", &jsonBody, "body?", &bodyV, "headers?", &headersV, "jq?", &jqV, "max_bytes?", &maxV); err != nil {
+	var baseV, queryV, jsonBody, bodyV, headersV, jqV, maxV, tlsV, proxyV starlark.Value
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "conn", &conn, "method", &method, "path", &p, "base?", &baseV, "query?", &queryV, "json?", &jsonBody, "body?", &bodyV, "headers?", &headersV, "jq?", &jqV, "max_bytes?", &maxV, "tls?", &tlsV, "proxy?", &proxyV); err != nil {
+		return nil, err
+	}
+	reqTLS, err := requestTLS(tlsV)
+	if err != nil {
+		return nil, err
+	}
+	proxyOverride, err := optString("proxy", proxyV)
+	if err != nil {
 		return nil, err
 	}
 	base, err := optString("base", baseV)
@@ -279,6 +397,9 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 		limit = min(maxBytes, hardMaxBytes)
 	}
 	ctx := threadCtx(thread)
+	if in.transport != nil {
+		ctx = context.WithValue(ctx, requestInfoKey{}, requestInfo{proxy: proxyOverride, tls: reqTLS})
+	}
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), reader)
 	if err != nil {
 		return nil, err
@@ -304,7 +425,7 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 		}
 		req.SetBasicAuth(c.User, c.Pass)
 	}
-	client, err := in.httpClient(hc)
+	client, err := in.httpClientFor(hc, reqTLS, proxyOverride)
 	if err != nil {
 		return nil, err
 	}
