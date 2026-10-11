@@ -63,6 +63,7 @@ func TestRead(t *testing.T) {
 func TestFromEnv(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("VAULT_ADDR", "")
 	t.Setenv("VAULT_TOKEN", "")
 	if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "VAULT_ADDR") {
