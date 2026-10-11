@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -210,4 +211,56 @@ func Load(dir string) ([]Item, error) {
 	}
 	var list []Item
 	return list, json.Unmarshal(data, &list)
+}
+
+func Path(sessDir, id string) string {
+	turn := 1
+	if rest, ok := strings.CutPrefix(id, "E"); ok {
+		if n, _, found := strings.Cut(rest, "."); found {
+			if v, err := strconv.Atoi(n); err == nil {
+				turn = v
+			}
+		}
+	}
+	return filepath.Join(sessDir, "turns", fmt.Sprintf("%03d", turn), "evidence", id+".txt")
+}
+
+func StripAnnex(report, title string) (string, bool) {
+	if i := strings.LastIndex(report, "\n\n---\n\n## "+title+"\n"); i >= 0 {
+		return report[:i], true
+	}
+	return report, false
+}
+
+func WithContent(body, sessDir, title, missing string) string {
+	ids := Cited(body)
+	if len(ids) == 0 {
+		return body
+	}
+	var b strings.Builder
+	b.WriteString(body)
+	fmt.Fprintf(&b, "\n\n---\n\n## %s\n", title)
+	for _, id := range ids {
+		data, err := os.ReadFile(Path(sessDir, id))
+		if err != nil {
+			fmt.Fprintf(&b, "\n- **%s** : %s\n", id, missing)
+			continue
+		}
+		fence := strings.Repeat("`", max(3, longestRun(string(data), '`')+1))
+		fmt.Fprintf(&b, "\n### %s\n\n%s\n%s\n%s\n", id, fence, strings.TrimRight(string(data), "\n"), fence)
+	}
+	return b.String()
+}
+
+func longestRun(s string, c rune) int {
+	best, cur := 0, 0
+	for _, r := range s {
+		if r == c {
+			cur++
+			best = max(best, cur)
+		} else {
+			cur = 0
+		}
+	}
+	return best
 }

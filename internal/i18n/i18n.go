@@ -35,6 +35,8 @@ var msgs = map[string]msg{
 	"fallback.exhausted":   {"%s used its whole output limit without answering", "%s a épuisé sa limite de sortie sans répondre"},
 	"limit":                {"%d-step limit reached, forced conclusion", "limite de %d étapes atteinte, conclusion forcée"},
 	"evidence.title":       {"Appendix — cited evidence", "Annexe — preuves citées"},
+	"evidence.full":        {"Appendix — cited evidence (full outputs)", "Annexe — preuves citées (sorties complètes)"},
+	"evidence.missing":     {"not found in the session archive (invented identifier?)", "absente de l'archive de la session (identifiant inventé ?)"},
 	"evidence.unknown":     {"not found in this turn's archive (earlier turn or invented identifier)", "absente de l'archive de ce tour (tour précédent ou identifiant inventé)"},
 	"evidence.line":        {"evidence: %d tool outputs archived in %s (clotr session %s --evidence <id>)", "preuves : %d sorties d'outils archivées dans %s (clotr session %s --evidence <id>)"},
 	"stopped.steps":        {"step limit", "limite d'étapes"},
@@ -68,6 +70,7 @@ var msgs = map[string]msg{
 	"web.denied":           {"refused", "refusée"},
 	"web.notty":            {"no terminal to ask", "aucun terminal pour demander"},
 	"web.flag":             {"--web no", "--web no"},
+	"web.exclude":          {"excluded by -x", "exclu par -x"},
 	"web.policy":           {"web_search.policy: deny", "web_search.policy : deny"},
 	"fallback.round":       {"all models failed temporarily, new round in %s", "tous les modèles en échec temporaire, nouveau tour dans %s"},
 	"raw.output":           {"unstructured output", "sortie non structurée"},
@@ -142,6 +145,14 @@ func pick(m msg) string {
 		return m.fr
 	}
 	return m.en
+}
+
+func All(key string) []string {
+	m, ok := msgs[key]
+	if !ok {
+		return nil
+	}
+	return []string{m.en, m.fr}
 }
 
 func T(key string, args ...any) string {
