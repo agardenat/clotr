@@ -289,7 +289,7 @@ func (in *Instance) ToolNames() []string {
 			names = append(names, in.Name+"_"+st.name)
 		}
 	}
-	for _, ts := range in.T.Tools {
+	for _, ts := range in.tools {
 		names = append(names, in.Name+"_"+ts.ToolName())
 	}
 	return names

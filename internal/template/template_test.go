@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,6 +102,30 @@ func TestValidation(t *testing.T) {
 	tpl, _ = Parse([]byte(base), filepath.Join(dir, "x.yaml"))
 	if _, err := NewInstance("i", tpl, nil); err == nil || !strings.Contains(err.Error(), "aucun outil") {
 		t.Fatalf("sans outil: %v", err)
+	}
+}
+
+func TestToolWhen(t *testing.T) {
+	y := "name: x\ntargets: [{kind: a}]\nparams: {ssh: {type: bool, default: true}, mode: {type: string, default: \"\"}}\nconnectors: {s: {driver: ssh}}\nssh_paths: {allow: [/x]}\ntools: [{kind: inventory}, {kind: ssh_list, when: \"{{.ssh}}\"}, {kind: ssh_read, when: \"{{.mode}}\"}]\n"
+	tpl, err := Parse([]byte(y), filepath.Join(t.TempDir(), "x.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := func(given map[string]any) []string {
+		in, err := NewInstance("i", tpl, given)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return in.ToolNames()
+	}
+	if got := names(nil); !slices.Equal(got, []string{"i_inventory", "i_ssh_list"}) {
+		t.Errorf("défaut: %v", got)
+	}
+	if got := names(map[string]any{"ssh": false, "mode": "true"}); !slices.Equal(got, []string{"i_inventory", "i_ssh_read"}) {
+		t.Errorf("ssh false: %v", got)
+	}
+	if _, err := NewInstance("i", tpl, map[string]any{"mode": "oui"}); err == nil || !strings.Contains(err.Error(), "tools[2].when") {
+		t.Errorf("when invalide: %v", err)
 	}
 }
 

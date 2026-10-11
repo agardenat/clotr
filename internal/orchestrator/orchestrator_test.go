@@ -401,8 +401,20 @@ func TestCheckVerdicts(t *testing.T) {
 	if p := checkVerdicts(`{"verdicts":[{"n":1,"verdict":"confirmé" "raison":"x"}]}`, 1); !strings.Contains(p, "JSON valide") {
 		t.Fatalf("JSON invalide non signalé: %s", p)
 	}
-	if checkWorkerJSON(`{"findings":["a"]`) != "" || checkWorkerJSON("pas de json") == "" {
+	if p := checkWorker(nil)(`<|channel|>commentary to=functions.prod_get{"path": "/clusters"}<|call|>`); !strings.Contains(p, "ni findings") {
+		t.Fatalf("appel d'outil en texte accepté: %q", p)
+	}
+	if checkWorker(nil)(`{"findings":["a"]`) != "" || checkWorker(nil)("pas de json") == "" {
 		t.Fatal("contrôle JSON des sous-agents")
+	}
+	ev := evidence.Open(t.TempDir(), 2)
+	id := ev.Add("t1", "prod_metrics", `{}`, "load_1 0.1", nil)
+	check := checkWorker(ev)
+	if p := check(`{"findings":["[INFO] charge faible"],"evidence":["[` + id + `] load"]}`); !strings.Contains(p, "1. [INFO] charge faible") {
+		t.Fatalf("constat sans citation accepté: %q", p)
+	}
+	if p := check(`{"findings":["[INFO] charge faible [` + id + `]"],"evidence":[]}`); p != "" {
+		t.Fatalf("constat cité refusé: %q", p)
 	}
 }
 
@@ -446,5 +458,17 @@ func TestDirect(t *testing.T) {
 	}
 	if _, err := o.DirectRole("planner"); err == nil {
 		t.Fatal("planner accepté comme rôle direct")
+	}
+}
+
+func TestPruneSameRoleDeps(t *testing.T) {
+	p := &Plan{Tasks: []Task{
+		{ID: "t1", Role: "collector"},
+		{ID: "t2", Role: "collector", DependsOn: []string{"t1"}},
+		{ID: "t3", Role: "analyst", DependsOn: []string{"t1", "t2"}},
+	}}
+	dropped := pruneSameRoleDeps(p)
+	if len(dropped) != 1 || dropped["t2"][0] != "t1" || len(p.Tasks[1].DependsOn) != 0 || len(p.Tasks[2].DependsOn) != 2 || !strings.Contains(p.Tasks[1].Goal, "Les résultats de t1 ne te sont pas transmis") || strings.Contains(p.Tasks[2].Goal, "transmis") {
+		t.Fatalf("%v %+v", dropped, p.Tasks)
 	}
 }

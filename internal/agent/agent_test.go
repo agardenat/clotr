@@ -526,3 +526,18 @@ func TestLiveText(t *testing.T) {
 		t.Fatalf("texte affiché: %q (réponse %q)", shown, out.Content)
 	}
 }
+
+func TestLeakedToolCalls(t *testing.T) {
+	defs := []llm.ToolDef{{Type: "function", Function: llm.FunctionDef{Name: "prod_get"}}}
+	content := "<|start|>assistant<|channel|>commentary to=functions.prod_get{\n  \"target\": \"cm\",\n  \"query\": {\"view\": \"full\"}\n}<|call|>"
+	calls := leakedToolCalls(content, defs)
+	if len(calls) != 1 || calls[0].Function.Name != "prod_get" || !strings.Contains(calls[0].Function.Arguments, `"view": "full"`) {
+		t.Fatalf("%+v", calls)
+	}
+	if got := leakedToolCalls("commentary to=functions.inconnu{\"a\":1}<|call|>", defs); len(got) != 0 {
+		t.Fatalf("outil inconnu converti: %+v", got)
+	}
+	if got := leakedToolCalls(`{"findings":["to=functions.prod_get est cité"]}`, defs); len(got) != 0 {
+		t.Fatalf("texte de constat converti: %+v", got)
+	}
+}

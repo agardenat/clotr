@@ -55,6 +55,7 @@ type ToolSpec struct {
 	Kind        string `yaml:"kind"`
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
+	When        string `yaml:"when"`
 }
 
 var (

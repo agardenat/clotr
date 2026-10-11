@@ -193,16 +193,38 @@ func flagNoteOnlyLines(md string, ev *evidence.Store, notes map[string]string) (
 	return strings.Join(lines, "\n"), n
 }
 
-func checkWorkerJSON(content string) string {
-	var parsed struct {
-		Findings []string `json:"findings"`
-		Evidence []string `json:"evidence"`
-		Gaps     []string `json:"gaps"`
+func checkWorker(ev *evidence.Store) func(string) string {
+	return func(content string) string {
+		var parsed struct {
+			Findings []string `json:"findings"`
+			Evidence []string `json:"evidence"`
+			Gaps     []string `json:"gaps"`
+		}
+		if err := ExtractJSON(content, &parsed); err != nil {
+			return fmt.Sprintf("Ta réponse n'est pas un objet JSON valide (%v). Renvoie uniquement l'objet JSON complet {\"findings\":[…],\"evidence\":[…],\"gaps\":[…]}, sans texte autour, en échappant les guillemets et les antislashs dans les chaînes.", err)
+		}
+		var keys map[string]json.RawMessage
+		if ExtractJSON(content, &keys) != nil || (keys["findings"] == nil && keys["evidence"] == nil && keys["gaps"] == nil) {
+			return "Ta réponse n'est pas la réponse finale attendue : elle ne contient ni findings, ni evidence, ni gaps (un appel d'outil écrit en texte n'est pas exécuté). Appelle les outils par le mécanisme d'appel d'outils si tu dois encore collecter, sinon renvoie l'objet JSON complet {\"findings\":[…],\"evidence\":[…],\"gaps\":[…]}."
+		}
+		if ev == nil {
+			return ""
+		}
+		var bad []string
+		for i, f := range parsed.Findings {
+			if !strings.HasPrefix(f, UnprovenTag) && !ev.Proven(f) {
+				line := []rune(strings.Join(strings.Fields(f), " "))
+				if len(line) > 160 {
+					line = append(line[:160], '…')
+				}
+				bad = append(bad, fmt.Sprintf("%d. %s", i+1, string(line)))
+			}
+		}
+		if len(bad) == 0 {
+			return ""
+		}
+		return "Ces constats ne citent aucune preuve existante dans leur propre texte (une citation placée seulement dans evidence ne compte pas) :\n" + strings.Join(bad, "\n") + "\nRenvoie l'objet JSON complet en ajoutant dans chacun de ces constats l'identifiant de la preuve qui l'établit, tel qu'il figure dans les résultats d'outils (ex. [E012] ou [E2.012]) ; un constat qu'aucune preuve n'établit va dans gaps."
 	}
-	if err := ExtractJSON(content, &parsed); err != nil {
-		return fmt.Sprintf("Ta réponse n'est pas un objet JSON valide (%v). Renvoie uniquement l'objet JSON complet {\"findings\":[…],\"evidence\":[…],\"gaps\":[…]}, sans texte autour, en échappant les guillemets et les antislashs dans les chaînes.", err)
-	}
-	return ""
 }
 
 func markUnproven(ev *evidence.Store, findings []string) int {
@@ -307,6 +329,9 @@ func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) 
 		} else if err := o.Validate(&plan); err != nil {
 			lastErr = err
 		} else {
+			if dropped := pruneSameRoleDeps(&plan); len(dropped) > 0 {
+				o.Audit.Log("plan_deps_dropped", map[string]any{"dependencies": dropped})
+			}
 			plan.Model = out.Model
 			items := make([]progress.PlanItem, 0, len(plan.Tasks))
 			for _, t := range plan.Tasks {
@@ -388,6 +413,30 @@ func (o *Orchestrator) Validate(p *Plan) error {
 		}
 	}
 	return checkCycles(p.Tasks)
+}
+
+func pruneSameRoleDeps(p *Plan) map[string][]string {
+	roles := map[string]string{}
+	for _, t := range p.Tasks {
+		roles[t.ID] = t.Role
+	}
+	dropped := map[string][]string{}
+	for i := range p.Tasks {
+		t := &p.Tasks[i]
+		var kept []string
+		for _, d := range t.DependsOn {
+			if roles[d] == t.Role {
+				dropped[t.ID] = append(dropped[t.ID], d)
+				continue
+			}
+			kept = append(kept, d)
+		}
+		t.DependsOn = kept
+		if len(dropped[t.ID]) > 0 {
+			t.Goal += fmt.Sprintf("\n(Les résultats de %s ne te sont pas transmis : cette tâche s'exécute en même temps qu'elles. Établis toi-même ce dont tu as besoin avec l'environnement, l'inventaire et tes outils.)", strings.Join(dropped[t.ID], ", "))
+		}
+	}
+	return dropped
 }
 
 func checkCycles(tasks []Task) error {
@@ -530,7 +579,7 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 		Tools:      t.Tools,
 		Candidates: cands,
 		Deadline:   deadline,
-		Check:      checkWorkerJSON,
+		Check:      checkWorker(o.Runner.Evidence),
 	})
 	if out != nil {
 		res.Model, res.Steps, res.ToolCalls, res.Cost, res.Limited, res.Limit = out.Model, out.Steps, out.ToolCalls, out.Cost, out.Limited, out.Limit
@@ -828,7 +877,7 @@ Règles:
 - pour un problème ou un incident, la demande vise une solution de fond: prévoir des tâches qui cherchent la cause racine et le correctif durable (configuration effective et valeurs par défaut, dimensionnement, documentation de l'éditeur, cause en amont), pas seulement l'état actuel; ne pas replanifier ce que la demande présente comme déjà connu ou déjà fait;
 - l'environnement ci-dessus est déjà connu: ne pas créer de tâche pour le redécouvrir (lister les contextes, vérifier l'accès);
 - en affinage de session, ne planifier que ce qui manque pour la nouvelle demande: les faits déjà établis sont en mémoire partagée et les sorties d'outils des tours précédents restent consultables (evidence_search, evidence_read); ne replanifier une collecte déjà faite que si la donnée a pu changer depuis; si aucune collecte n'est nécessaire, une seule tâche de rôle sans outils ou analyste suffit;
-- maximiser le parallélisme: depends_on uniquement si une tâche a réellement besoin des résultats d'une autre; les cibles, hôtes et nœuds listés dans l'environnement sont déjà connus: une tâche qui les examine n'attend pas une tâche d'inventaire ou de statut;
+- maximiser le parallélisme: depends_on uniquement si une tâche a réellement besoin des résultats d'une autre; les cibles, hôtes, nœuds, clusters et services listés dans l'environnement sont déjà connus: une tâche qui les examine (y compris « pour chaque cluster » ou « pour chaque service ») n'attend pas une tâche d'inventaire ou de statut, chaque tâche peut lire l'inventaire elle-même; ne pas créer de tâche dont le seul rôle est de redécouvrir cet inventaire; une dépendance ne relie que des rôles différents (une analyse attend des collectes) : clotr retire celles entre tâches du même rôle, une collecte qui a besoin d'un résultat le cherche elle-même;
 - choisir le rôle le plus léger suffisant (collecte factuelle -> rôle rapide, analyse/recoupement -> rôle plus puissant);
 - tools: pour une instance de template ou un groupe (fs, mcp_<serveur>), donner le préfixe du groupe (ex: prod) plutôt qu'une sélection d'outils, pour que le sous-agent puisse suivre une piste imprévue (logs, événements, listing); ne restreindre que pour exclure un groupe sans rapport avec la tâche;
 - aucune tâche ne doit modifier quoi que ce soit.
@@ -915,6 +964,14 @@ Sinon, format Markdown:
 6. Recommandations (actions proposées, jamais exécutées), en deux parties :
    a. Correctif durable : ce qui supprime la cause ou empêche la récidive (configuration, dimensionnement, architecture, correction en amont). Pour chaque mesure : la cause traitée, la preuve [Exxx] ou la documentation qui la justifie, le risque et l'impact, et comment vérifier son effet.
    b. Mesures immédiates : palliatifs en attendant le correctif, brièvement
+Mise en page (sauf forme imposée par la demande) :
+- Sections en titres « ## 1. Conclusion » … « ## 6. Recommandations », séparées par une ligne « --- ».
+- Conclusion : 3 à 5 puces ; chacune commence par la phrase clé en gras (« **La cause racine est …** ») puis l'explication avec ses preuves.
+- Constats : sous-titres « ### CRITIQUE », « ### MAJEUR », « ### MINEUR », « ### INFO » (omis s'ils sont vides). Chaque constat est numéroté en continu à travers les sévérités et titré en gras sur sa propre ligne (« **3. Service api : processus arrêté sur node3, pas de redémarrage automatique** »), jamais avec un code (C1, M2, m3), puis des puces d'une à trois lignes, un fait par puce, preuves [Exxx] en fin de puce, la valeur ou le fait décisif en gras. Pas de paragraphe sous un titre de constat.
+- Un tableau pour des valeurs homogènes à comparer ou un calcul (valeurs par rôle ou par hôte, chronologie, projection), avec des cellules courtes.
+- Détail par périmètre : un sous-titre « ### » par périmètre, des puces brèves qui renvoient aux constats par leur numéro (« voir constat 3 ») sans les recopier.
+- Points non vérifiés et limites : une puce par point, le sujet en gras puis l'explication.
+- Recommandations : liste numérotée, titre de la mesure en gras, puis des puces « Cause traitée », « Action », « Risque », « Vérification ».
 Règles de cohérence :
 - Une cause n'est présentée comme établie, dans la conclusion comme dans les constats, que si un constat la prouve (message d'erreur, configuration, chronologie). Si un constat la contredit ou si elle n'est qu'une hypothèse, écris « hypothèse » et place-la dans les points non vérifiés ; la conclusion ne dit rien que le reste du rapport contredit.
 - Tout calcul (projection, taux, ratio, délai avant saturation) est refait à partir des valeurs citées, avec l'opération et l'hypothèse explicites (ex : 14 Go libres / 5,3 Go par jour ≈ 2,6 jours si la croissance reste linéaire). Ne reprends pas un résultat calculé par un sous-agent sans le vérifier.
