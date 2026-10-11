@@ -378,6 +378,29 @@ func TestResumeTruncatedAnswer(t *testing.T) {
 	}
 }
 
+func TestSwitchModelWhenOutputExhausted(t *testing.T) {
+	var models []string
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		models = append(models, req.Model)
+		if req.Model == "thinker" {
+			resp := testutil.Reply("<think>long raisonnement</think>")
+			resp.Choices[0].FinishReason = "length"
+			return resp, nil
+		}
+		return testutil.Reply("# Rapport"), nil
+	}}
+	var cur, peak int32
+	r := runner(chat, registry(&cur, &peak))
+	cands := []catalog.ModelInfo{{Provider: "p", ID: "thinker", MaxOutput: 16384}, {Provider: "p", ID: "writer", MaxOutput: 16384}}
+	out, err := r.Run(context.Background(), Spec{TaskID: "synthesizer", System: "s", User: "u", Candidates: cands})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Content != "# Rapport" || strings.Join(models, ",") != "thinker,writer" || out.Model != "p/writer" {
+		t.Fatalf("bascule: %q, modèles %v, %s", out.Content, models, out.Model)
+	}
+}
+
 func TestHistoryCompactionAndNotes(t *testing.T) {
 	reg := tools.NewRegistry(100000)
 	reg.Add(testutil.FakeTool{ToolName: "big", Fn: func(context.Context, json.RawMessage) (string, error) {

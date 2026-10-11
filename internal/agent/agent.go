@@ -173,6 +173,9 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 		if err != nil {
 			return s.out, err
 		}
+		if resp, err = s.switchIfOutputExhausted(ctx, step, req, resp); err != nil {
+			return s.out, err
+		}
 		msg := resp.Choices[0].Message
 		msg.Role = "assistant"
 		if final || len(msg.ToolCalls) == 0 {
@@ -285,6 +288,26 @@ func (r *Runner) notes(task string) string {
 		return "\nTes notes enregistrées en mémoire pendant cette tâche :\n" + n
 	}
 	return ""
+}
+
+func outputExhausted(resp *llm.Response) bool {
+	c := resp.Choices[0]
+	return c.FinishReason == "length" && len(c.Message.ToolCalls) == 0 && strings.TrimSpace(thinkBlock.ReplaceAllString(c.Message.Content, "")) == ""
+}
+
+func (s *session) switchIfOutputExhausted(ctx context.Context, step int, req llm.Request, resp *llm.Response) (*llm.Response, error) {
+	cands := s.spec.Candidates
+	for tries := 1; outputExhausted(resp) && tries < len(cands); tries++ {
+		from := cands[s.cur].Ref()
+		s.cur = (s.cur + 1) % len(cands)
+		s.r.Audit.Log("output_exhausted", map[string]any{"task": s.spec.TaskID, "step": step, "model": from, "next": cands[s.cur].Ref()})
+		s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[s.cur].Ref(), Detail: i18n.T("fallback.exhausted", from)})
+		var err error
+		if resp, err = s.chat(ctx, step, req); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
 }
 
 func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Response, error) {

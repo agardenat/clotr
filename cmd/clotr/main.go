@@ -463,14 +463,6 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 
 	if cfg.K8s != nil && enabled("k8s") {
 		k, err := k8s.New(cfg.K8s)
-		if err == nil {
-			for _, f := range k.Probe(ctx, 5*time.Second) {
-				warn("k8s: %s", f)
-			}
-			if ctxs, _ := k.Contexts(); len(ctxs) == 0 {
-				err = errors.New("k8s: aucun contexte joignable")
-			}
-		}
 		if err != nil {
 			warn("%v (outils k8s désactivés)", err)
 		} else {

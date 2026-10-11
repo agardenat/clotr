@@ -229,8 +229,22 @@ func (p *Pool) Exec(ctx context.Context, e Endpoint, cmd string, maxBytes int) (
 		p.drop(e)
 		res, err = p.exec(ctx, e, cmd, maxBytes)
 	}
+	for _, wait := range missingExitRetries {
+		var me *gossh.ExitMissingError
+		if !errors.As(err, &me) {
+			break
+		}
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		}
+		res, err = p.exec(ctx, e, cmd, maxBytes)
+	}
 	return res, err
 }
+
+var missingExitRetries = []time.Duration{300 * time.Millisecond, time.Second, 3 * time.Second}
 
 func (p *Pool) exec(ctx context.Context, e Endpoint, cmd string, maxBytes int) (Result, error) {
 	c, err := p.client(ctx, e)

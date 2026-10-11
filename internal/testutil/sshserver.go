@@ -67,6 +67,10 @@ func StartSSHServer(t testing.TB, clientKey gossh.PublicKey, hostKey gossh.Signe
 							r.Reply(true, nil)
 							out, code := reply(cmd)
 							ch.Write([]byte(out))
+							if code < 0 {
+								ch.Close()
+								continue
+							}
 							status := make([]byte, 4)
 							binary.BigEndian.PutUint32(status, uint32(code))
 							ch.SendRequest("exit-status", false, status)
