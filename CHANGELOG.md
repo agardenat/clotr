@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-11
+
 ### Modifié
 - Planner : les cibles, hôtes et nœuds déjà listés dans l'environnement ne justifient plus une dépendance ; une tâche qui les examine démarre en parallèle de la tâche d'inventaire ou de statut.
 
