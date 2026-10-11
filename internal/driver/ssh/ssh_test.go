@@ -52,6 +52,8 @@ func TestQuoteAndBuilders(t *testing.T) {
 		b.Read("/etc/app/conf/a", 0, 0, 100):                                           `sudo -n head -c 100 -- '/etc/app/conf/a'`,
 		b.Read("/etc/app/conf/a", 10, 20, 100):                                         `sudo -n sed -n '10,20p' -- '/etc/app/conf/a' | head -c 100`,
 		b.Grep("/var/log", "ERROR|$(reboot)", true, true, 5, []string{"*.keytab"}, 10): `sudo -n grep -n -E -I -m 5 -i -r --exclude='*.keytab' -e 'ERROR|$(reboot)' -- '/var/log' | head -c 10`,
+		b.GrepCount("/var/log/a.log", "PREAUTH", false, false, nil, 10):                `sudo -n grep -c -E -I -e 'PREAUTH' -- '/var/log/a.log' | head -c 10`,
+		b.GrepCount("/var/log", "x'y", true, true, []string{"*.keytab"}, 10):           `sudo -n grep -c -E -I -i -r --exclude='*.keytab' -e 'x'"'"'y' -- '/var/log' | grep -v ':0$' | head -c 10`,
 		Builder{}.Tail("/var/log/x", 1):                                                `tail -n 1 -- '/var/log/x'`,
 	}
 	for got, want := range cases {

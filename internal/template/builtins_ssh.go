@@ -155,9 +155,9 @@ func (in *Instance) sshTail(thread *starlark.Thread, b *starlark.Builtin, args s
 
 func (in *Instance) sshGrep(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var host, p, pattern, target string
-	var ignoreCase, recursive bool
+	var ignoreCase, recursive, count bool
 	maxMatches := 50
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "host", &host, "path", &p, "pattern", &pattern, "target?", &target, "ignore_case?", &ignoreCase, "recursive?", &recursive, "max_matches?", &maxMatches); err != nil {
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "host", &host, "path", &p, "pattern", &pattern, "target?", &target, "ignore_case?", &ignoreCase, "recursive?", &recursive, "max_matches?", &maxMatches, "count?", &count); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(pattern) == "" || strings.ContainsAny(pattern, "\n\r\x00") {
@@ -166,6 +166,9 @@ func (in *Instance) sshGrep(thread *starlark.Thread, b *starlark.Builtin, args s
 	cp, err := in.checkPath(p)
 	if err != nil {
 		return nil, err
+	}
+	if count {
+		return in.sshRun(thread, target, host, in.builder().GrepCount(cp, pattern, ignoreCase, recursive, in.rules.ExcludeGlobs(), maxRead), maxRead+1024)
 	}
 	return in.sshRun(thread, target, host, in.builder().Grep(cp, pattern, ignoreCase, recursive, clamp(maxMatches, 50, 1, 500), in.rules.ExcludeGlobs(), maxRead), maxRead+1024)
 }
