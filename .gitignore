@@ -4,3 +4,4 @@ templates/
 /etat-*.md
 dist/
 .git.old/
+rapports/
