@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-11
+
 ### Modifié
 - k8s : les contextes ne sont plus testés au démarrage de chaque run. Un contexte est testé au premier appel d'un outil qui le vise ; une demande sans rapport avec Kubernetes ne contacte aucun cluster et n'affiche plus d'avertissement pour un tunnel fermé.
 
