@@ -122,3 +122,31 @@ func TestBeginNextTurn(t *testing.T) {
 		t.Fatal("preuve du tour 1 absente de l'annexe")
 	}
 }
+
+func TestWithContent(t *testing.T) {
+	sess := t.TempDir()
+	s1 := Open(filepath.Join(sess, "turns", "001", "evidence"), 1)
+	a := s1.Add("t1", "prod_ssh_cat", `{"path":"/etc/x"}`, "clé = ```valeur```\nfin", nil)
+	s2 := Open(filepath.Join(sess, "turns", "002", "evidence"), 2)
+	b := s2.Add("t2", "prod_api_get", `{}`, "ok", nil)
+	s2.Add("t3", "prod_api_get", `{}`, "non cité", nil)
+	body := "Constat [" + a + "] et [" + b + "], [E9.999]."
+	report := body + s2.Annex(body, "Annexe courte", "inconnue", filepath.Base)
+	stripped, ok := StripAnnex(report, "Annexe courte")
+	if !ok || stripped != body {
+		t.Fatalf("annexe courte non retirée:\n%s", stripped)
+	}
+	out := WithContent(stripped, sess, "Annexe complète", "absente")
+	if strings.Contains(out, "Annexe courte") || !strings.HasPrefix(out, body+"\n\n---\n\n## Annexe complète\n") {
+		t.Fatalf("annexe courte non remplacée:\n%s", out)
+	}
+	if !strings.Contains(out, "### "+a+"\n\n````\n# "+a+"\n") || !strings.Contains(out, "clé = ```valeur```\nfin\n````\n") {
+		t.Fatalf("preuve du tour 1:\n%s", out)
+	}
+	if !strings.Contains(out, "### "+b+"\n\n```\n") || strings.Contains(out, "non cité") || !strings.Contains(out, "**E9.999** : absente") {
+		t.Fatalf("preuves:\n%s", out)
+	}
+	if WithContent("rien de cité", sess, "A", "x") != "rien de cité" {
+		t.Fatal("rapport sans preuve modifié")
+	}
+}

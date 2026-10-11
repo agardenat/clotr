@@ -4,6 +4,14 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- `-x, --exclude` (`plan`, `run`, `tools`, `session --synthesize`) : exclut des groupes d'outils (mêmes préfixes que `-t`), prioritaire sur `-t` et `enabled`. L'exclusion est enregistrée avec le tour et reprise par `--synthesize`. Exclure le serveur de recherche web équivaut à `--web no`.
+- `--with-evidence` (`run`, `session`, `session --synthesize`) : l'annexe des preuves citées contient la sortie complète de chaque preuve. Produite à l'affichage depuis l'archive de la session (le `report.md` n'est pas modifié), elle peut être demandée après coup. Rapport en Markdown brut. `session -o` écrit aussi le rapport d'un tour existant.
+
+### Modifié
+- `-t` et `-x` refusent un nom qui ne correspond à aucun groupe d'outils, et indiquent `mcp_<nom>` quand le nom est celui d'un serveur MCP (auparavant : « aucun outil disponible »).
+- `-t mcp_<serveur>` et `-t <instance>` activent le serveur ou l'instance cité même s'il est `enabled: false` : `enabled: false` signifie désormais « coupé sauf demande explicite ». `-t mcp` et l'absence de `-t` respectent toujours `enabled`.
+
 ## [0.7.0] - 2026-10-11
 
 ### Ajouté

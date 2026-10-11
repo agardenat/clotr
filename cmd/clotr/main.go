@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -52,6 +51,7 @@ type options struct {
 	refresh      bool
 	models       map[string]string
 	tools        []string
+	exclude      []string
 	output       string
 	json         bool
 	quiet        bool
@@ -75,6 +75,7 @@ type options struct {
 	maxSteps     int
 	direct       string
 	chat         bool
+	withEvidence bool
 	raw          bool
 }
 
@@ -156,7 +157,8 @@ Détail des options : clotr run --help`,
 
 	addTaskFlags := func(c *cobra.Command) {
 		c.Flags().StringToStringVarP(&o.models, "model", "m", nil, "forcer un modèle par rôle: role=provider/model")
-		c.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance>")
+		c.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance> (un serveur ou une instance cité par son nom est activé même avec enabled: false)")
+		c.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, "exclure des outils par préfixe (mêmes préfixes que -t, prioritaire sur -t et enabled)")
 		c.Flags().StringVar(&o.web, "web", "", "recherche web pour ce run: yes|no (défaut: web_search.policy)")
 		c.Flags().IntVar(&o.maxAgents, "max-agents", 0, "sous-agents simultanés pour ce run (prioritaire sur limits.max_agents)")
 		c.Flags().IntVar(&o.maxTasks, "max-tasks", 0, "tâches au plus dans le plan (prioritaire sur limits.max_tasks)")
@@ -217,6 +219,7 @@ Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal,
 	run.Flags().Lookup("direct").NoOptDefVal = directAuto
 	run.Flags().BoolVar(&o.chat, "chat", false, "mode conversation plein écran: réponse affichée en direct, r pour répondre, c pour copier en Markdown, q pour quitter")
 	run.Flags().BoolVar(&o.raw, "raw", false, "rapport en Markdown brut, sans mise en forme pour le terminal")
+	run.Flags().BoolVar(&o.withEvidence, "with-evidence", false, "annexer au rapport la sortie complète de chaque preuve citée (Markdown brut)")
 
 	sessionsCmd := &cobra.Command{
 		Use:   "sessions",
@@ -240,10 +243,12 @@ Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal,
 	sessionCmd.Flags().IntVar(&o.turn, "turn", 0, "rapport d'un tour précis")
 	sessionCmd.Flags().BoolVar(&o.showPath, "path", false, "afficher seulement le répertoire de la session")
 	sessionCmd.Flags().BoolVar(&o.synthesize, "synthesize", false, "régénérer le rapport d'un tour à partir de ses résultats enregistrés, sans relancer les tâches")
-	sessionCmd.Flags().StringVarP(&o.output, "output", "o", "", "écrire le rapport régénéré dans ce fichier")
+	sessionCmd.Flags().StringVarP(&o.output, "output", "o", "", "écrire le rapport dans ce fichier")
 	sessionCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "avec --synthesize : connecteurs à préparer (défaut : ceux du tour)")
+	sessionCmd.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, "avec --synthesize : connecteurs à exclure (défaut : ceux du tour)")
 	sessionCmd.Flags().StringVar(&o.evidenceID, "evidence", "", "afficher la sortie d'outil archivée d'une preuve (ex: E012, E2.005)")
 	sessionCmd.Flags().BoolVar(&o.raw, "raw", false, "rapport en Markdown brut, sans mise en forme pour le terminal")
+	sessionCmd.Flags().BoolVar(&o.withEvidence, "with-evidence", false, "annexer au rapport la sortie complète de chaque preuve citée (Markdown brut)")
 
 	toolsCmd := &cobra.Command{
 		Use:   "tools",
@@ -253,7 +258,8 @@ Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal,
 			return cmdTools(cmd.Context(), o, cmd.OutOrStdout())
 		},
 	}
-	toolsCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance>")
+	toolsCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance> (un serveur ou une instance cité par son nom est activé même avec enabled: false)")
+	toolsCmd.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, "exclure des outils par préfixe (mêmes préfixes que -t, prioritaire sur -t et enabled)")
 
 	templatesCmd := &cobra.Command{
 		Use:   "templates [nom]",
@@ -374,6 +380,12 @@ func resolveWeb(cfg *config.Config, o *options, confidential bool) (bool, string
 		}
 		return false, i18n.T("web.confidential"), nil
 	}
+	if matchGroup(o.exclude, "mcp_"+cfg.WebSearch.MCP) {
+		if o.web == "yes" {
+			return false, "", fmt.Errorf("--web yes refusé: serveur %s exclu par -x", cfg.WebSearch.MCP)
+		}
+		return false, i18n.T("web.exclude"), nil
+	}
 	switch {
 	case o.web == "yes":
 		return true, cfg.WebSearch.MCP, nil
@@ -411,6 +423,60 @@ func (o *options) decideWeb(cfg *config.Config, confidential bool) error {
 	return nil
 }
 
+type toolFilter struct {
+	only, exclude []string
+}
+
+func toolGroup(t string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(t, "*"), "_")
+}
+
+func matchGroup(list []string, prefix string) bool {
+	for _, t := range list {
+		t = toolGroup(t)
+		if t == prefix || strings.HasPrefix(prefix, t+"_") {
+			return true
+		}
+	}
+	return false
+}
+
+func (f toolFilter) enabled(prefix string) bool {
+	if matchGroup(f.exclude, prefix) {
+		return false
+	}
+	return len(f.only) == 0 || matchGroup(f.only, prefix)
+}
+
+func (f toolFilter) active(prefix string, on bool) bool {
+	if !f.enabled(prefix) {
+		return false
+	}
+	return on || slices.ContainsFunc(f.only, func(t string) bool { return toolGroup(t) == prefix })
+}
+
+func checkToolGroups(cfg *config.Config, lists ...[]string) error {
+	groups := []string{"fs", "memory", "evidence"}
+	for _, m := range cfg.MCP {
+		groups = append(groups, "mcp_"+m.Name)
+	}
+	for _, in := range cfg.Instances {
+		groups = append(groups, in.Name)
+	}
+	for _, list := range lists {
+		for _, t := range list {
+			if slices.ContainsFunc(groups, func(g string) bool { return matchGroup([]string{t}, g) }) {
+				continue
+			}
+			if slices.Contains(groups, "mcp_"+toolGroup(t)) {
+				return fmt.Errorf("-t/-x %s: aucun groupe d'outils de ce nom (serveur MCP: mcp_%s)", t, toolGroup(t))
+			}
+			return fmt.Errorf("-t/-x %s: aucun groupe d'outils de ce nom (fs, mcp, mcp_<serveur>, <instance>)", t)
+		}
+	}
+	return nil
+}
+
 func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	rt, err := loadBase(ctx, o)
 	if err != nil {
@@ -430,17 +496,9 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		fmt.Fprintln(os.Stderr, "avertissement: budget:", w)
 	}
 	rt.registry = tools.NewRegistry(cfg.Limits.ToolOutputMaxChars)
-	enabled := func(prefix string) bool {
-		if len(o.tools) == 0 {
-			return true
-		}
-		for _, t := range o.tools {
-			t = strings.TrimSuffix(strings.TrimSuffix(t, "*"), "_")
-			if t == prefix || strings.HasPrefix(prefix, t+"_") {
-				return true
-			}
-		}
-		return false
+	filter := toolFilter{only: o.tools, exclude: o.exclude}
+	if err := checkToolGroups(cfg, o.tools, o.exclude); err != nil {
+		return nil, err
 	}
 	warn := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "avertissement: "+format+"\n", args...)
@@ -460,7 +518,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	}
 	var envLines []string
 
-	if cfg.Files != nil && enabled("fs") {
+	if cfg.Files != nil && filter.enabled("fs") {
 		f, warnings, err := files.New(cfg.Files)
 		for _, w := range warnings {
 			warn("%s", w)
@@ -475,12 +533,12 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	var mcpCfgs []config.MCPServer
 	for _, m := range cfg.MCP {
 		if m.Name == cfg.WebSearch.MCP {
-			if o.webAllowed && m.IsEnabled() {
+			if o.webAllowed && m.IsEnabled() && !matchGroup(o.exclude, "mcp_"+m.Name) {
 				mcpCfgs = append(mcpCfgs, m)
 			}
 			continue
 		}
-		if m.IsEnabled() && enabled("mcp_"+m.Name) {
+		if filter.active("mcp_"+m.Name, m.IsEnabled()) {
 			mcpCfgs = append(mcpCfgs, m)
 		}
 	}
@@ -496,7 +554,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 			envLines = append(envLines, fmt.Sprintf("- MCP %s: %d outils (préfixe mcp_%s)", s.Name(), len(s.Tools()), s.Name()))
 		}
 	}
-	rt.setupInstances(ctx, o, enabled, warn)
+	rt.setupInstances(ctx, o, filter, warn)
 	rt.baseEnv = envLines
 	for _, in := range rt.instances {
 		envLines = append(envLines, rt.instanceEnv[in.Name]...)
@@ -523,11 +581,11 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	return rt, nil
 }
 
-func (rt *app) setupInstances(ctx context.Context, o *options, enabled func(string) bool, warn func(string, ...any)) {
+func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter, warn func(string, ...any)) {
 	cfg := rt.cfg
 	var active []config.Instance
 	for _, in := range cfg.Instances {
-		if in.IsEnabled() && enabled(in.Name) {
+		if filter.active(in.Name, in.IsEnabled()) {
 			active = append(active, in)
 		}
 	}
@@ -577,7 +635,7 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 	var offered, hidden []string
 	for _, in := range rt.instances {
 		explicit := slices.ContainsFunc(forced, func(t string) bool {
-			return strings.TrimSuffix(strings.TrimSuffix(t, "*"), "_") == in.Name
+			return toolGroup(t) == in.Name
 		})
 		if explicit || in.Activated() || in.Mentioned(text) {
 			offered = append(offered, in.Name)
@@ -934,6 +992,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	}
 	n := turn.N
 	sess.Turns[n-1].Tools = o.tools
+	sess.Turns[n-1].Exclude = o.exclude
 	rt.evidence.Begin(filepath.Join(turnDir, "evidence"), n)
 	if err := rt.audit.Reopen(turnDir, "audit"); err != nil {
 		fmt.Fprintln(os.Stderr, "avertissement: audit désactivé:", err)
@@ -1025,18 +1084,32 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if report == nil {
 		return runErr
 	}
+	md := o.fullReport(report.Markdown, sess.Dir())
 	if o.json {
-		out, _ := json.MarshalIndent(map[string]any{"plan": report.Plan, "results": report.Results, "report": report.Markdown, "model": report.Model, "models_used": res.used, "costs": res.costs, "memory": rt.memory.All()}, "", "  ")
+		out, _ := json.MarshalIndent(map[string]any{"plan": report.Plan, "results": report.Results, "report": md, "model": report.Model, "models_used": res.used, "costs": res.costs, "memory": rt.memory.All()}, "", "  ")
 		return writeReport(w, o.output, append(out, '\n'), runErr)
 	}
-	if report.Markdown == "" {
+	if md == "" {
 		return runErr
 	}
 	if o.output != "" {
-		return writeReport(w, o.output, []byte(report.Markdown+"\n"), runErr)
+		return writeReport(w, o.output, []byte(md+"\n"), runErr)
 	}
-	writeMarkdown(w, report.Markdown, o.raw)
+	writeMarkdown(w, md, o.raw || o.withEvidence)
 	return runErr
+}
+
+func (o *options) fullReport(md, sessDir string) string {
+	if !o.withEvidence || md == "" {
+		return md
+	}
+	titles, full, missing := i18n.All("evidence.title"), i18n.All("evidence.full"), i18n.All("evidence.missing")
+	for i, t := range titles {
+		if body, ok := evidence.StripAnnex(md, t); ok {
+			return evidence.WithContent(body, sessDir, full[i], missing[i])
+		}
+	}
+	return evidence.WithContent(md, sessDir, i18n.T("evidence.full"), i18n.T("evidence.missing"))
 }
 
 func writeReport(w io.Writer, path string, out []byte, runErr error) error {
@@ -1069,8 +1142,8 @@ func writeMarkdown(w io.Writer, md string, raw bool) {
 }
 
 func cmdChat(ctx context.Context, o *options, args []string) error {
-	if o.json || o.output != "" {
-		return errors.New("--chat incompatible avec --json et --output")
+	if o.json || o.output != "" || o.withEvidence {
+		return errors.New("--chat incompatible avec --json, --output et --with-evidence")
 	}
 	if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stderr.Fd()) {
 		return errors.New("--chat requiert un terminal interactif")
@@ -1251,10 +1324,17 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	if len(o.tools) == 0 {
 		o.tools = sess.Turns[n-1].Tools
 	}
+	if len(o.exclude) == 0 {
+		o.exclude = sess.Turns[n-1].Exclude
+	}
 	if len(o.tools) == 0 {
 		o.tools = toolFilterFromAudit(filepath.Join(dir, "audit.jsonl"))
 	}
-	fmt.Fprintln(os.Stderr, i18n.T("session.resynth", sess.Name, n, strings.Join(o.tools, ",")))
+	connectors := strings.Join(o.tools, ",")
+	if len(o.exclude) > 0 {
+		connectors += " -x " + strings.Join(o.exclude, ",")
+	}
+	fmt.Fprintln(os.Stderr, i18n.T("session.resynth", sess.Name, n, connectors))
 	rt, err := setup(ctx, o, true)
 	if err != nil {
 		return err
@@ -1297,6 +1377,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	for _, c := range rt.budget.Summary() {
 		fmt.Fprintln(os.Stderr, i18n.T("cost.line", c.String()))
 	}
+	md = o.fullReport(md, sess.Dir())
 	if o.output != "" {
 		if err := os.WriteFile(o.output, []byte(md+"\n"), 0o644); err != nil {
 			return err
@@ -1391,8 +1472,12 @@ func cmdSession(o *options, name string, w io.Writer) error {
 		fmt.Fprintln(os.Stderr, i18n.T("session.noreport"))
 		return nil
 	}
+	report = o.fullReport(report, s.Dir())
+	if o.output != "" {
+		return writeReport(w, o.output, []byte(report+"\n"), nil)
+	}
 	fmt.Fprintln(os.Stderr)
-	writeMarkdown(w, report, o.raw)
+	writeMarkdown(w, report, o.raw || o.withEvidence)
 	return nil
 }
 
@@ -1465,15 +1550,7 @@ func errString(err error) string {
 }
 
 func showEvidence(sessDir, id string, w io.Writer) error {
-	turn := 1
-	if rest, ok := strings.CutPrefix(id, "E"); ok {
-		if n, _, found := strings.Cut(rest, "."); found {
-			if v, err := strconv.Atoi(n); err == nil {
-				turn = v
-			}
-		}
-	}
-	path := filepath.Join(sessDir, "turns", fmt.Sprintf("%03d", turn), "evidence", id+".txt")
+	path := evidence.Path(sessDir, id)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("preuve %s introuvable (%s)", id, path)

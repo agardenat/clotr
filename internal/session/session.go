@@ -40,6 +40,7 @@ type Turn struct {
 	Time    time.Time `json:"time"`
 	Request string    `json:"request"`
 	Tools   []string  `json:"tools,omitempty"`
+	Exclude []string  `json:"exclude,omitempty"`
 	Status  string    `json:"status"`
 	Error   string    `json:"error,omitempty"`
 	Models  []string  `json:"models,omitempty"`
