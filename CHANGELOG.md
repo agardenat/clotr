@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-11
+
 ### Ajouté
 - Connecteurs `http` et `ssh` : option `auth.password_vault` (`chemin[#champ]`, champ `password` par défaut). Le mot de passe est lu dans Vault (KV v1 ou v2) avec la configuration du poste (`VAULT_ADDR`, `VAULT_TOKEN` ou `~/.vault-token`, `VAULT_NAMESPACE`) quand `password_env` est vide. Option absente ou secret illisible : saisie sur le terminal comme avant, avec la raison de l'échec. Un mot de passe Vault refusé n'est pas relu : le suivant est saisi.
 - Templates : `http.request` accepte `tls` (`ca`, `cert`, `key` en PEM, `insecure`) et `proxy` pour un appel, ce qui permet d'utiliser des identifiants et une URL lus par le script (certificat client compris) ; module `yaml` (`decode`, `encode`) ; les chemins de `files` sont rendus avec les paramètres.
