@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,11 +30,14 @@ const (
 )
 
 type Endpoint struct {
-	Host    string
-	Port    int
-	User    string
-	KeyPath string
+	Host     string
+	Port     int
+	User     string
+	KeyPath  string
+	Password func(ctx context.Context) (string, error)
 }
+
+var ErrAuth = errors.New("authentification SSH refusée")
 
 func (e Endpoint) key() string {
 	return e.User + "@" + net.JoinHostPort(e.Host, strconv.Itoa(e.Port)) + "#" + e.KeyPath
@@ -92,9 +96,6 @@ func (p *Pool) signer(path string) (gossh.Signer, error) {
 	defer p.mu.Unlock()
 	if s, ok := p.signers[path]; ok {
 		return s, nil
-	}
-	if path == "" {
-		return nil, errors.New("aucune clé SSH (ssh_key_path) configurée")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -159,14 +160,54 @@ func (p *Pool) client(ctx context.Context, e Endpoint) (*gossh.Client, error) {
 	if ok {
 		return c, nil
 	}
-	signer, err := p.signer(e.KeyPath)
-	if err != nil {
-		return nil, err
-	}
 	hk, err := p.hostKeyCallback()
 	if err != nil {
 		return nil, err
 	}
+	if e.KeyPath == "" && e.Password == nil {
+		return nil, errors.New("aucune clé SSH (ssh_key_path) ni mot de passe (auth) configuré")
+	}
+	if e.KeyPath != "" {
+		signer, err := p.signer(e.KeyPath)
+		if err != nil {
+			return nil, err
+		}
+		c, err = p.connect(ctx, e, hk, gossh.PublicKeys(signer))
+		if err != nil && (e.Password == nil || !errors.Is(err, ErrAuth)) {
+			return nil, err
+		}
+	}
+	if c == nil {
+		pw, err := e.Password(ctx)
+		if err != nil {
+			return nil, err
+		}
+		answer := func(_, _ string, questions []string, echos []bool) ([]string, error) {
+			out := make([]string, len(questions))
+			for i := range questions {
+				if !echos[i] {
+					out[i] = pw
+				}
+			}
+			return out, nil
+		}
+		c, err = p.connect(ctx, e, hk, gossh.Password(pw), gossh.KeyboardInteractive(answer))
+		if err != nil {
+			return nil, err
+		}
+	}
+	p.mu.Lock()
+	if old, ok := p.clients[k]; ok {
+		p.mu.Unlock()
+		c.Close()
+		return old, nil
+	}
+	p.clients[k] = c
+	p.mu.Unlock()
+	return c, nil
+}
+
+func (p *Pool) connect(ctx context.Context, e Endpoint, hk gossh.HostKeyCallback, auth ...gossh.AuthMethod) (*gossh.Client, error) {
 	addr := net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
 	dctx, cancel := context.WithTimeout(ctx, p.opts.Timeout)
 	defer cancel()
@@ -179,25 +220,19 @@ func (p *Pool) client(ctx context.Context, e Endpoint) (*gossh.Client, error) {
 	}
 	cc, chans, reqs, err := gossh.NewClientConn(conn, addr, &gossh.ClientConfig{
 		User:            e.User,
-		Auth:            []gossh.AuthMethod{gossh.PublicKeys(signer)},
+		Auth:            auth,
 		HostKeyCallback: hk,
 		Timeout:         p.opts.Timeout,
 	})
 	if err != nil {
 		conn.Close()
+		if strings.Contains(err.Error(), "unable to authenticate") {
+			return nil, fmt.Errorf("handshake SSH %s@%s: %w (%v)", e.User, addr, ErrAuth, err)
+		}
 		return nil, fmt.Errorf("handshake SSH %s@%s: %w", e.User, addr, err)
 	}
 	_ = conn.SetDeadline(time.Time{})
-	c = gossh.NewClient(cc, chans, reqs)
-	p.mu.Lock()
-	if old, ok := p.clients[k]; ok {
-		p.mu.Unlock()
-		c.Close()
-		return old, nil
-	}
-	p.clients[k] = c
-	p.mu.Unlock()
-	return c, nil
+	return gossh.NewClient(cc, chans, reqs), nil
 }
 
 func (p *Pool) drop(e Endpoint) {
@@ -217,17 +252,21 @@ type Result struct {
 }
 
 func (p *Pool) Exec(ctx context.Context, e Endpoint, cmd string, maxBytes int) (Result, error) {
+	return p.ExecInput(ctx, e, cmd, "", maxBytes)
+}
+
+func (p *Pool) ExecInput(ctx context.Context, e Endpoint, cmd, stdin string, maxBytes int) (Result, error) {
 	select {
 	case p.sem <- struct{}{}:
 	case <-ctx.Done():
 		return Result{}, ctx.Err()
 	}
 	defer func() { <-p.sem }()
-	res, err := p.exec(ctx, e, cmd, maxBytes)
+	res, err := p.exec(ctx, e, cmd, stdin, maxBytes)
 	var oe *gossh.OpenChannelError
 	if err != nil && (errors.Is(err, io.EOF) || errors.As(err, &oe)) {
 		p.drop(e)
-		res, err = p.exec(ctx, e, cmd, maxBytes)
+		res, err = p.exec(ctx, e, cmd, stdin, maxBytes)
 	}
 	for _, wait := range missingExitRetries {
 		var me *gossh.ExitMissingError
@@ -239,14 +278,14 @@ func (p *Pool) Exec(ctx context.Context, e Endpoint, cmd string, maxBytes int) (
 		case <-ctx.Done():
 			return Result{}, ctx.Err()
 		}
-		res, err = p.exec(ctx, e, cmd, maxBytes)
+		res, err = p.exec(ctx, e, cmd, stdin, maxBytes)
 	}
 	return res, err
 }
 
 var missingExitRetries = []time.Duration{300 * time.Millisecond, time.Second, 3 * time.Second}
 
-func (p *Pool) exec(ctx context.Context, e Endpoint, cmd string, maxBytes int) (Result, error) {
+func (p *Pool) exec(ctx context.Context, e Endpoint, cmd, stdin string, maxBytes int) (Result, error) {
 	c, err := p.client(ctx, e)
 	if err != nil {
 		return Result{}, err
@@ -259,6 +298,9 @@ func (p *Pool) exec(ctx context.Context, e Endpoint, cmd string, maxBytes int) (
 	stdout := &limitBuffer{max: maxBytes}
 	stderr := &limitBuffer{max: 8 << 10}
 	s.Stdout, s.Stderr = stdout, stderr
+	if stdin != "" {
+		s.Stdin = strings.NewReader(stdin)
+	}
 	done := make(chan error, 1)
 	go func() { done <- s.Run(cmd) }()
 	select {

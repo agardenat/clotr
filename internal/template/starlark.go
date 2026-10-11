@@ -3,12 +3,15 @@ package template
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	gotime "time"
 
 	starjson "go.starlark.net/lib/json"
@@ -152,11 +155,32 @@ func (in *Instance) loadModule(thread *starlark.Thread, module string) (starlark
 	return globals, err
 }
 
+type offlineKey struct{}
+
+type offlineRun struct {
+	network atomic.Bool
+}
+
+var errOffline = errors.New("accès réseau interdit pendant la découverte hors ligne")
+
+func offline(ctx context.Context) bool {
+	return ctx.Value(offlineKey{}) != nil
+}
+
+func denyOffline(ctx context.Context) error {
+	r, ok := ctx.Value(offlineKey{}).(*offlineRun)
+	if !ok {
+		return nil
+	}
+	r.network.Store(true)
+	return errOffline
+}
+
 func (in *Instance) newThread(ctx context.Context, name string) *starlark.Thread {
 	thread := &starlark.Thread{
 		Name: in.Name + "/" + name,
 		Print: func(_ *starlark.Thread, msg string) {
-			if in.Print != nil {
+			if in.Print != nil && !offline(ctx) {
 				in.Print(msg)
 			}
 		},
@@ -294,6 +318,13 @@ func (in *Instance) runDiscover(ctx context.Context, inv *Inventory) error {
 		}
 		if t.Attrs == nil {
 			t.Attrs = map[string]string{}
+		}
+		for j, n := range t.Networks {
+			_, ipn, err := net.ParseCIDR(strings.TrimSpace(n))
+			if err != nil {
+				return fmt.Errorf("résultat de discover: targets[%d].networks[%d]: %q n'est pas une plage CIDR", i, j, n)
+			}
+			t.Networks[j] = ipn.String()
 		}
 	}
 	inv.Targets, inv.Lines, inv.Warnings, inv.Data = res.Targets, res.Lines, res.Warnings, res.Data

@@ -114,6 +114,25 @@ func (b Builder) prefix() string {
 	return ""
 }
 
+func SudoWithPassword(cmd string) string {
+	return "sudo -S -p '' -- sh -c " + Quote("exec </dev/null; "+cmd)
+}
+
+var sudoPasswordMessages = []string{"sudo: a password is required", "sudo: a terminal is required to read the password"}
+
+func SudoNeedsPassword(res Result) bool {
+	for _, m := range sudoPasswordMessages {
+		if strings.Contains(res.Stderr, m) || strings.HasPrefix(res.Stdout, m) {
+			return true
+		}
+	}
+	return false
+}
+
+func SudoPasswordRejected(stderr string) bool {
+	return strings.Contains(stderr, "incorrect password attempt") || strings.Contains(stderr, "Sorry, try again")
+}
+
 func (b Builder) List(dir string, depth, limit int, sortBy string) string {
 	sorter := ""
 	switch sortBy {

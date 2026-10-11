@@ -42,8 +42,29 @@ var OpenTTY = openConsole
 var Suspend func() (resume func())
 
 func Resolve(ctx context.Context, userEnv, passEnv, label string) (Pair, error) {
-	p := Pair{}
-	if userEnv != "" {
+	return resolve(ctx, "", userEnv, passEnv, label)
+}
+
+func ResolveUser(ctx context.Context, user, passEnv, label string) (Pair, error) {
+	return resolve(ctx, user, "", passEnv, label)
+}
+
+func Forget(label, user string) {
+	mu.Lock()
+	defer mu.Unlock()
+	delete(cache, userKey(label, user))
+	if c, ok := cache[label]; ok && c.User == user {
+		delete(cache, label)
+	}
+}
+
+func userKey(label, user string) string {
+	return label + "\x00" + user
+}
+
+func resolve(ctx context.Context, user, userEnv, passEnv, label string) (Pair, error) {
+	p := Pair{User: user}
+	if p.User == "" && userEnv != "" {
 		p.User = os.Getenv(userEnv)
 	}
 	if passEnv != "" {
@@ -52,9 +73,13 @@ func Resolve(ctx context.Context, userEnv, passEnv, label string) (Pair, error) 
 	if p.User != "" && p.Pass != "" {
 		return p, nil
 	}
+	key := label
+	if user != "" {
+		key = userKey(label, user)
+	}
 	mu.Lock()
 	defer mu.Unlock()
-	if c, ok := cache[label]; ok {
+	if c, ok := cache[key]; ok {
 		return c, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -96,7 +121,8 @@ func Resolve(ctx context.Context, userEnv, passEnv, label string) (Pair, error) 
 	if p.User == "" || p.Pass == "" {
 		return Pair{}, fmt.Errorf("%s: identifiants vides", label)
 	}
-	cache[label] = p
+	cache[key] = p
+	cache[userKey(label, p.User)] = p
 	return p, nil
 }
 

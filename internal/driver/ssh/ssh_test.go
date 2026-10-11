@@ -169,3 +169,63 @@ func TestPoolRetriesMissingExitStatus(t *testing.T) {
 		t.Fatalf("erreur après relances attendue: %v (%d appels)", err, calls["always"])
 	}
 }
+
+func TestPoolPasswordFallbackAndStdin(t *testing.T) {
+	dir := t.TempDir()
+	_, refusedPEM := testutil.NewSSHKey(t)
+	keyPath := filepath.Join(dir, "id")
+	os.WriteFile(keyPath, refusedPEM, 0o600)
+	other, _ := testutil.NewSSHKey(t)
+	hostKey, _ := testutil.NewSSHKey(t)
+	srv := testutil.StartSSHServerConfig(t, testutil.SSHServerConfig{ClientKey: other.PublicKey(), Password: "s3cret", HostKey: hostKey, Reply: func(cmd, stdin string) (string, int) {
+		return "stdin=" + stdin, 0
+	}})
+	h, p, _ := net.SplitHostPort(srv.Addr)
+	port, _ := strconv.Atoi(p)
+	pool, _ := NewPool(Options{KnownHosts: filepath.Join(dir, "kh"), HostKey: AcceptNew})
+	defer pool.Close()
+	asked := 0
+	pw := "s3cret"
+	ep := Endpoint{Host: h, Port: port, User: "ops", KeyPath: keyPath, Password: func(context.Context) (string, error) {
+		asked++
+		return pw, nil
+	}}
+	res, err := pool.ExecInput(context.Background(), ep, "cat", "abc\n", 100)
+	if err != nil || res.Stdout != "stdin=abc\n" || asked != 1 {
+		t.Fatalf("repli sur mot de passe: %+v %v (%d demandes)", res, err, asked)
+	}
+	if _, err := pool.Exec(context.Background(), ep, "true", 100); err != nil || asked != 1 {
+		t.Fatalf("connexion non réutilisée: %v (%d demandes)", err, asked)
+	}
+	pool2, _ := NewPool(Options{KnownHosts: filepath.Join(dir, "kh"), HostKey: AcceptNew})
+	defer pool2.Close()
+	pw = "faux"
+	if _, err := pool2.Exec(context.Background(), ep, "true", 100); !errors.Is(err, ErrAuth) {
+		t.Fatalf("ErrAuth attendu: %v", err)
+	}
+	noKey := Endpoint{Host: h, Port: port, User: "ops"}
+	if _, err := pool2.Exec(context.Background(), noKey, "true", 100); err == nil || !strings.Contains(err.Error(), "ni mot de passe") {
+		t.Fatalf("absence de clé et de mot de passe: %v", err)
+	}
+}
+
+func TestSudoWithPassword(t *testing.T) {
+	got := SudoWithPassword(Builder{}.Tail("/var/log/x", 5))
+	want := `sudo -S -p '' -- sh -c 'exec </dev/null; tail -n 5 -- '"'"'/var/log/x'"'"''`
+	if got != want {
+		t.Fatalf("commande:\n%s\nattendu:\n%s", got, want)
+	}
+	for res, want := range map[Result]bool{
+		{Stderr: "sudo: a password is required\n"}:                                       true,
+		{Stdout: "sudo: a password is required\n"}:                                       true,
+		{Stderr: "grep: x: Permission denied"}:                                           false,
+		{Stdout: "Oct 11 host sudo[1]: ops : a password is required ; COMMAND=/bin/x\n"}: false,
+	} {
+		if SudoNeedsPassword(res) != want {
+			t.Errorf("SudoNeedsPassword(%+v) != %v", res, want)
+		}
+	}
+	if !SudoPasswordRejected("Sorry, try again.\nsudo: 1 incorrect password attempt\n") {
+		t.Fatal("détection du mot de passe sudo refusé")
+	}
+}

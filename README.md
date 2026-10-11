@@ -133,7 +133,7 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
 - `params` : paramètres de l'instance, typés (`string`, `url`, `int`, `bool`, `env`, `path`, `enum`, `list` avec `item`), avec `required` et `default`. Un paramètre inconnu est rejeté ;
 - `connectors` : connexions nommées, dont les options sont rendues avec les paramètres (`{{.proxy_url}}`) :
   - `http` : `base_url`, `methods` (défaut `[GET]`), `allow` (expressions régulières sur le chemin), `headers`, `auth` (`user_env`, `password_env`, `label` : authentification basic, saisie sur le terminal si les variables sont vides), `proxy`, `proxy_port`, `verify_tls`, `ca_file`, `timeout` (défaut 60s), `max_bytes` (défaut 32 Mio) ;
-  - `ssh` (un seul par template) : `user`, `key`, `port`, `proxy`, `proxy_port`, `host_key`, `sudo`, `max_conns`, `known_hosts` ;
+  - `ssh` (un seul par template) : `user`, `key`, `auth` (`user_env`, `password_env`, `label` : mot de passe saisi sur le terminal seulement s'il est nécessaire, voir Outils SSH), `port`, `proxy`, `proxy_port`, `host_key`, `sudo`, `max_conns`, `known_hosts` ;
 - `targets` : cibles statiques. `foreach: <paramètre list>` crée une cible par élément ; un champ vide de l'élément hérite du paramètre de même nom. Les attributs `ssh_user`, `ssh_key_path` et `ssh_port` d'une cible remplacent ceux du connecteur ssh ;
 - `script` : fichier Starlark, chemin relatif au YAML ;
 - `files`, `env` : fichiers et variables d'environnement que le script peut lire ;
@@ -181,7 +181,7 @@ tool(
 ```
 
 `discover` reçoit `ctx.params` et `ctx.targets` (cibles statiques). Il renvoie :
-- `targets` : `name`, `kind`, `status`, `error`, `summary` (ligne d'environnement), `attrs`, `hosts` (`name`, `ip`, `group`, `state`, `roles`, `attrs`) et `data` (libre). Une cible avec `error` est retirée pour le run ;
+- `targets` : `name`, `kind`, `status`, `error`, `summary` (ligne d'environnement), `attrs`, `hosts` (`name`, `ip`, `group`, `state`, `roles`, `attrs`), `networks` (plages CIDR dont toute IP est acceptée par les outils SSH, même hors de `hosts`) et `data` (libre). Une cible avec `error` est retirée pour le run ;
 - `lines` : lignes d'environnement globales ;
 - `warnings` et `data` (libre).
 
@@ -217,9 +217,9 @@ tool(
 
 ### Activation d'une instance
 
-Au démarrage d'un run, une instance est seulement déclarée : ses outils et son environnement sont transmis au planner, sans identifiants ni appel réseau. L'environnement reprend l'inventaire en cache du même template, script et paramètres, quel que soit son âge, sinon les cibles statiques de la configuration. Une instance n'est activée qu'au premier appel de l'un de ses outils par une tâche. Un outil `inventory` lit l'inventaire en cache sans activer l'instance, s'il a déjà été découvert (sa date figure dans la réponse).
+Au démarrage d'un run, une instance est seulement déclarée : ses outils et son environnement sont transmis au planner, sans identifiants ni appel réseau. L'environnement reprend l'inventaire en cache du même template, script et paramètres, quel que soit son âge. Sans cache, `discover` est exécuté hors ligne (10 s au plus, `http.request` et `ssh.*` refusés) : son résultat est retenu s'il n'a tenté aucun accès réseau, ce qui donne dès le départ les cibles et plages d'un template qui ne dépend que de ses paramètres ; sinon, les cibles statiques de la configuration. Une instance n'est activée qu'au premier appel de l'un de ses outils par une tâche. Un outil `inventory` lit l'inventaire en cache sans activer l'instance, s'il a déjà été découvert (sa date figure dans la réponse).
 
-Une instance n'est proposée aux agents (outils et environnement) que si la demande du tour ou une demande précédente de la session la mentionne : nom de l'instance, nom du template, nom d'une cible de l'inventaire ou l'un des `keywords` du template (mot entier, sans tenir compte de la casse). `-t <instance>` la force, et une instance déjà activée dans le processus (tour précédent d'une conversation) reste proposée. Sinon, l'environnement indique seulement qu'elle existe et comment l'utiliser : une question sans rapport ne peut ni l'activer ni demander ses identifiants. Le choix est tracé dans l'audit (`instances_scope`).
+Une instance n'est proposée aux agents (outils et environnement) que si la demande du tour ou une demande précédente de la session la mentionne : nom de l'instance, nom du template, nom d'une cible de l'inventaire ou l'un des `keywords` du template (mot entier, sans tenir compte de la casse). Une IP comprise dans les `networks` d'une cible compte comme mention. `-t <instance>` la force, y compris pour les tours suivants de la session (`run -s`), et une instance déjà activée dans le processus (tour précédent d'une conversation) reste proposée. Sinon, l'environnement indique seulement qu'elle existe et comment l'utiliser : une question sans rapport ne peut ni l'activer ni demander ses identifiants. Le choix est tracé dans l'audit (`instances_scope`).
 
 À l'activation :
 
@@ -232,11 +232,12 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 ### Outils SSH
 
 - Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `grep -c -E -I` (comptage), `df -hP`, `du -xh`. Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
-- `host` doit appartenir à l'inventaire de l'instance (FQDN, nom court ou IP) ;
+- `host` doit appartenir à l'inventaire de l'instance (FQDN, nom court ou IP), ou être une IP comprise dans les `networks` d'une cible. Une IP de plage présente dans la demande fait proposer l'instance ;
 - `path` doit être absolu, sans `..`, couvert par `ssh_paths.allow` et par aucun `ssh_paths.deny` (keytabs, jceks, jks, clés, `*password*`…). En récursif, les motifs `deny` sont aussi passés en `--exclude` ;
-- `sudo -n` est ajouté si `sudo: true` : le compte SSH doit disposer de sudo sans mot de passe ;
+- `sudo -n` est ajouté si `sudo: true`. Si sudo exige un mot de passe et que le connecteur déclare `auth`, la commande est relancée avec `sudo -S` sous `sh -c` : le mot de passe passe par l'entrée standard, jamais dans la ligne de commande, et l'hôte reste en mode mot de passe pour le run. Un mot de passe refusé est oublié et redemandé à l'appel suivant ;
+- authentification : la clé `key` d'abord, puis le mot de passe si la clé est absente ou refusée et que `auth` est déclaré (méthodes `password` et `keyboard-interactive`). Le mot de passe vient de `password_env` ou est saisi sur le terminal, une fois par utilisateur ; sans `user`, l'utilisateur est aussi demandé ;
 - les valeurs de type `password=…`, `token: …` et `<name>…password…</name><value>…</value>` sont masquées dans les sorties ;
-- connexions via le proxy SOCKS5 de l'instance, clé privée sans passphrase, `max_conns` sessions simultanées par instance ;
+- connexions via le proxy SOCKS5 de l'instance, clé privée sans passphrase, `max_conns` sessions simultanées par instance. Aucun fichier `ssh_config` n'est lu ;
 - `known_hosts` propre à clotr (`~/.local/state/clotr/known_hosts`) : `accept-new` (défaut) enregistre une clé inconnue et refuse une clé changée, `strict` refuse les hôtes inconnus, `insecure` ne vérifie pas ;
 - chaque commande est tracée dans l'audit (`remote_exec` : hôte, utilisateur, commande, durée, exit, taille).
 

@@ -130,6 +130,9 @@ func (t *Template) validate() error {
 		}
 		if c.Driver == "ssh" {
 			nssh++
+			if err := checkAuthOptions(options(c.Options)); err != nil {
+				fail("connectors.%s: %v", n, err)
+			}
 		}
 		if c.Driver == "http" {
 			if err := checkHTTPOptions(options(c.Options)); err != nil {
