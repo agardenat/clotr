@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-11
+
 ### Ajouté
 - `-x, --exclude` (`plan`, `run`, `tools`, `session --synthesize`) : exclut des groupes d'outils (mêmes préfixes que `-t`), prioritaire sur `-t` et `enabled`. L'exclusion est enregistrée avec le tour et reprise par `--synthesize`. Exclure le serveur de recherche web équivaut à `--web no`.
 - `--with-evidence` (`run`, `session`, `session --synthesize`) : l'annexe des preuves citées contient la sortie complète de chaque preuve. Produite à l'affichage depuis l'archive de la session (le `report.md` n'est pas modifié), elle peut être demandée après coup. Rapport en Markdown brut. `session -o` écrit aussi le rapport d'un tour existant.
