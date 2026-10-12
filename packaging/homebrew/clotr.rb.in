@@ -3,6 +3,14 @@ class Clotr < Formula
   homepage "https://github.com/@REPO@"
   license "Apache-2.0"
 
+  bottle do
+    root_url "https://github.com/@REPO@/releases/download/v@VERSION@"
+    sha256 cellar: :any_skip_relocation, arm64_@BOTTLE_MACOS@: "@BOTTLE_DARWIN_ARM64@"
+    sha256 cellar: :any_skip_relocation, @BOTTLE_MACOS@:       "@BOTTLE_DARWIN_AMD64@"
+    sha256 cellar: :any_skip_relocation, arm64_linux:  "@BOTTLE_LINUX_ARM64@"
+    sha256 cellar: :any_skip_relocation, x86_64_linux: "@BOTTLE_LINUX_AMD64@"
+  end
+
   on_macos do
     on_arm do
       url "https://github.com/@REPO@/releases/download/v@VERSION@/clotr_@VERSION@_darwin_arm64.tar.gz"

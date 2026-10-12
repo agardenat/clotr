@@ -321,7 +321,7 @@ make cross
 
 Les binaires sont produits dans `bin/` (`clotr`, puis `clotr-<os>-<arch>` pour linux, darwin et windows, amd64 et arm64, avec `.exe` pour windows). La version est injectée par `VERSION=...`, sinon `git describe`, sinon `dev`.
 
-`make dist` produit les archives, les paquets `.deb` et `.rpm` (via nfpm, lancé avec `go run`) et `SHA256SUMS` dans `dist/`, `make formula` la formule Homebrew `dist/clotr.rb` à partir de `SHA256SUMS`, et `make notes` la section du CHANGELOG correspondant à `VERSION`.
+`make dist` produit les archives, les bottles Homebrew (macOS arm64 et Intel étiquetés `BOTTLE_MACOS`, `ventura` par défaut, version minimale de macOS des binaires Go ; Linux arm64 et x86_64), les paquets `.deb` et `.rpm` (via nfpm, lancé avec `go run`) et `SHA256SUMS` dans `dist/`, `make formula` la formule Homebrew `dist/clotr.rb` à partir de `SHA256SUMS`, et `make notes` la section du CHANGELOG correspondant à `VERSION`.
 
 ## Release
 
@@ -336,7 +336,7 @@ git tag vX.Y.Z
 git push origin main vX.Y.Z
 ```
 
-Le workflow `release` vérifie que la section `[X.Y.Z]` existe dans le CHANGELOG, lance `vet` et les tests, publie la release GitHub (notes = section du CHANGELOG, archives, `SHA256SUMS`), puis pousse `Formula/clotr.rb` dans le dépôt `agardenat/homebrew-clotr`. Un tag avec suffixe (`v1.2.0-rc.1`) donne une pré-release, sans mise à jour du tap.
+Le workflow `release` vérifie que la section `[X.Y.Z]` existe dans le CHANGELOG, lance `vet` et les tests, publie la release GitHub (notes = section du CHANGELOG, archives, bottles, `SHA256SUMS`), puis pousse `Formula/clotr.rb` dans le dépôt `agardenat/homebrew-clotr`. Un tag avec suffixe (`v1.2.0-rc.1`) donne une pré-release, sans mise à jour du tap.
 
 La publication dans le tap utilise le secret `HOMEBREW_TAP_TOKEN` du dépôt : jeton fine-grained limité au dépôt `homebrew-clotr`, permission Contents en lecture et écriture.
 
