@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-12
+
 ### Modifié
 - Homebrew : la formule déclare des bottles (macOS arm64 et Intel à partir de macOS 13, Linux arm64 et x86_64), publiés avec la release. Homebrew installe le binaire sans préparer d'environnement de compilation : l'installation ne dépend plus de la version des Command Line Tools d'Xcode, qui bloquait quand ils ne fournissaient pas de SDK pour la version de macOS en cours.
 
