@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-12
+
 ### Ajouté
 - Recherche web native : `web_search.model` (`provider/modèle`) et `web_search.api` (`messages` ou `responses`) exposent l'outil `web_search`, qui interroge un modèle doté d'une recherche web intégrée (outil serveur `web_search_20250305` de l'API Messages, ou outil `web_search` de l'API Responses). La réponse rapporte les URL citées, les requêtes lancées, le nombre de recherches et les tokens, et est archivée comme preuve. Le modèle sert quand le serveur MCP de `web_search.mcp` n'est pas utilisable (absent, désactivé ou exclu par `-x`) ; la politique, `--web` et les sessions confidentielles s'appliquent comme pour le MCP.
 
