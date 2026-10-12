@@ -41,6 +41,8 @@ language: auto
 web_search:
   policy: ask
   mcp: ""
+  # model: opencode-go/claude-haiku-5-5
+  # api: messages
 
 routing:
   sovereign: prefer

@@ -22,6 +22,7 @@ import (
 	"github.com/agardenat/clotr/internal/memory"
 	"github.com/agardenat/clotr/internal/progress"
 	"github.com/agardenat/clotr/internal/tools"
+	"github.com/agardenat/clotr/internal/websearch"
 )
 
 var (
@@ -935,7 +936,11 @@ func (o *Orchestrator) webRule() string {
 	if len(o.WebTools) == 0 {
 		return "Recherche web non disponible pour ce run : ce que tes outils ne permettent pas d'établir va dans gaps, sans supposition."
 	}
-	return fmt.Sprintf("Recherche web disponible (%s) : en cas de doute ou d'inconnu sur un produit (valeur par défaut, comportement, message d'erreur, bug connu, compatibilité de versions), cherche avant de conclure, en privilégiant la documentation officielle de l'éditeur et ses bases de connaissances, et cite la preuve [Exxx] de la page lue. Dès qu'une page officielle pertinente apparaît, lis-la (extract) au lieu de reformuler la requête, et ne relance jamais une requête déjà faite. Les requêtes partent sur Internet : n'y mets jamais d'identifiant interne (nom d'hôte, IP, nom de cluster, d'environnement, de compte ou d'utilisateur, domaine ou chemin propre au client), seulement des termes génériques (produit, version, message d'erreur sans identifiant).", strings.Join(o.WebTools, ", "))
+	read := "Dès qu'une page officielle pertinente apparaît, lis-la (extract) au lieu de reformuler la requête, et ne relance jamais une requête déjà faite."
+	if slices.Equal(o.WebTools, []string{websearch.Name}) {
+		read = "La réponse de " + websearch.Name + " cite les URL des pages lues : cite la preuve [Exxx] de cette réponse, et ne repose jamais une question déjà posée."
+	}
+	return fmt.Sprintf("Recherche web disponible (%s) : en cas de doute ou d'inconnu sur un produit (valeur par défaut, comportement, message d'erreur, bug connu, compatibilité de versions), cherche avant de conclure, en privilégiant la documentation officielle de l'éditeur et ses bases de connaissances, et cite la preuve [Exxx] de la page lue. %s Les requêtes partent sur Internet : n'y mets jamais d'identifiant interne (nom d'hôte, IP, nom de cluster, d'environnement, de compte ou d'utilisateur, domaine ou chemin propre au client), seulement des termes génériques (produit, version, message d'erreur sans identifiant).", strings.Join(o.WebTools, ", "), read)
 }
 
 func (o *Orchestrator) displayPath(p string) string {
