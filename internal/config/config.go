@@ -68,6 +68,8 @@ type Config struct {
 type WebSearch struct {
 	Policy string `yaml:"policy"`
 	MCP    string `yaml:"mcp"`
+	Model  string `yaml:"model"`
+	API    string `yaml:"api"`
 }
 
 func ValidWebPolicy(p string) bool {
@@ -97,7 +99,7 @@ func (i Instance) IsEnabled() bool {
 
 var instanceName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
-var reservedPrefixes = []string{"fs", "mcp", "memory", "evidence"}
+var reservedPrefixes = []string{"fs", "mcp", "memory", "evidence", "web"}
 
 type SessionsConf struct {
 	Dir string `yaml:"dir"`
@@ -497,6 +499,17 @@ func (c *Config) validate() error {
 	}
 	if c.WebSearch.MCP != "" && !mcpNames[c.WebSearch.MCP] {
 		fail("web_search.mcp: serveur MCP %q absent de mcp", c.WebSearch.MCP)
+	}
+	if c.WebSearch.Model != "" {
+		prov, id, ok := strings.Cut(c.WebSearch.Model, "/")
+		if _, known := c.Provider(prov); !ok || id == "" || !known {
+			fail("web_search.model: %q invalide (provider/model, provider déclaré dans providers)", c.WebSearch.Model)
+		}
+		if c.WebSearch.API != "messages" && c.WebSearch.API != "responses" {
+			fail("web_search.api: %q invalide (messages|responses)", c.WebSearch.API)
+		}
+	} else if c.WebSearch.API != "" {
+		fail("web_search.api: sans web_search.model")
 	}
 	instNames := map[string]bool{}
 	for i, in := range c.Instances {

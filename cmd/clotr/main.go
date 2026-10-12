@@ -42,6 +42,7 @@ import (
 	"github.com/agardenat/clotr/internal/tools"
 	"github.com/agardenat/clotr/internal/tools/files"
 	"github.com/agardenat/clotr/internal/tools/mcp"
+	"github.com/agardenat/clotr/internal/websearch"
 )
 
 var version = "dev"
@@ -365,8 +366,22 @@ func loadBase(ctx context.Context, o *options) (*app, error) {
 	return &app{cfg: cfg, cat: cat, router: rt, audit: audit.Nop()}, nil
 }
 
+func webTarget(cfg *config.Config, exclude []string) (kind, name string) {
+	if name := cfg.WebSearch.MCP; name != "" && !matchGroup(exclude, "mcp_"+name) {
+		for _, m := range cfg.MCP {
+			if m.Name == name && m.IsEnabled() {
+				return "mcp", name
+			}
+		}
+	}
+	if cfg.WebSearch.Model != "" {
+		return "model", cfg.WebSearch.Model
+	}
+	return "", ""
+}
+
 func resolveWeb(cfg *config.Config, o *options, confidential bool) (bool, string, error) {
-	if cfg.WebSearch.MCP == "" {
+	if cfg.WebSearch.MCP == "" && cfg.WebSearch.Model == "" {
 		return false, "", nil
 	}
 	switch o.web {
@@ -380,7 +395,11 @@ func resolveWeb(cfg *config.Config, o *options, confidential bool) (bool, string
 		}
 		return false, i18n.T("web.confidential"), nil
 	}
-	if matchGroup(o.exclude, "mcp_"+cfg.WebSearch.MCP) {
+	_, target := webTarget(cfg, o.exclude)
+	if target == "" {
+		if !matchGroup(o.exclude, "mcp_"+cfg.WebSearch.MCP) {
+			return false, "", nil
+		}
 		if o.web == "yes" {
 			return false, "", fmt.Errorf("--web yes refusé: serveur %s exclu par -x", cfg.WebSearch.MCP)
 		}
@@ -388,22 +407,22 @@ func resolveWeb(cfg *config.Config, o *options, confidential bool) (bool, string
 	}
 	switch {
 	case o.web == "yes":
-		return true, cfg.WebSearch.MCP, nil
+		return true, target, nil
 	case o.web == "no":
 		return false, i18n.T("web.flag"), nil
 	case cfg.WebSearch.Policy == "allow":
-		return true, cfg.WebSearch.MCP, nil
+		return true, target, nil
 	case cfg.WebSearch.Policy == "deny":
 		return false, i18n.T("web.policy"), nil
 	}
-	ok, err := creds.Confirm(i18n.T("web.ask", cfg.WebSearch.MCP))
+	ok, err := creds.Confirm(i18n.T("web.ask", target))
 	if err != nil {
 		return false, i18n.T("web.notty"), nil
 	}
 	if !ok {
 		return false, i18n.T("web.denied"), nil
 	}
-	return true, cfg.WebSearch.MCP, nil
+	return true, target, nil
 }
 
 func (o *options) decideWeb(cfg *config.Config, confidential bool) error {
@@ -412,7 +431,7 @@ func (o *options) decideWeb(cfg *config.Config, confidential bool) error {
 		return err
 	}
 	o.webAllowed = allowed
-	if cfg.WebSearch.MCP == "" {
+	if why == "" {
 		return nil
 	}
 	if allowed {
@@ -552,6 +571,17 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 			rt.closers = append(rt.closers, func() { _ = s.Close() })
 			rt.registry.Add(s.Tools()...)
 			envLines = append(envLines, fmt.Sprintf("- MCP %s: %d outils (préfixe mcp_%s)", s.Name(), len(s.Tools()), s.Name()))
+		}
+	}
+	if kind, ref := webTarget(cfg, o.exclude); o.webAllowed && kind == "model" {
+		prov, model, _ := strings.Cut(ref, "/")
+		p, _ := cfg.Provider(prov)
+		if t, err := websearch.New(p, model, cfg.WebSearch.API, cfg.Limits.RequestTimeout.Duration); err != nil {
+			warn("%v (recherche web désactivée)", err)
+		} else {
+			rt.registry.Add(t)
+			rt.webTools = append(rt.webTools, t.Name())
+			envLines = append(envLines, fmt.Sprintf("- Recherche web: %s (recherche native du modèle %s)", t.Name(), t.Ref()))
 		}
 	}
 	rt.setupInstances(ctx, o, filter, warn)

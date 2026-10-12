@@ -46,13 +46,18 @@ func TestDefaults(t *testing.T) {
 func TestValidationErrors(t *testing.T) {
 	cases := map[string]string{
 		"providers: []\n": "au moins un provider",
-		"providers:\n  - name: a\n    base_url: nope\n":                                          "URL invalide",
-		"providers:\n  - name: a\n    base_url: http://x\nroles:\n  planner: {tier: huge}\n":     "tier",
-		"providers:\n  - name: a\n    base_url: http://x\nunknown: 1\n":                          "unknown",
-		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - name: m\n":                   "command ou url",
-		"providers:\n  - name: a\n    base_url: http://x\nlimits:\n  agent_timeout: 5 minutes\n": "invalid duration",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {policy: maybe}\n":         "web_search.policy",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {mcp: absent}\n":           "web_search.mcp",
+		"providers:\n  - name: a\n    base_url: nope\n":                                               "URL invalide",
+		"providers:\n  - name: a\n    base_url: http://x\nroles:\n  planner: {tier: huge}\n":          "tier",
+		"providers:\n  - name: a\n    base_url: http://x\nunknown: 1\n":                               "unknown",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - name: m\n":                        "command ou url",
+		"providers:\n  - name: a\n    base_url: http://x\nlimits:\n  agent_timeout: 5 minutes\n":      "invalid duration",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {policy: maybe}\n":              "web_search.policy",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {mcp: absent}\n":                "web_search.mcp",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: b/m, api: messages}\n":  "web_search.model",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/, api: messages}\n":   "web_search.model",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/m}\n":                 "web_search.api",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {api: responses}\n":             "web_search.api",
+		"providers:\n  - name: a\n    base_url: http://x\ninstances:\n  - {name: web, template: t}\n": "réservé",
 	}
 	for in, want := range cases {
 		_, err := Parse([]byte(in))

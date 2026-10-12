@@ -111,7 +111,8 @@ Chaque entrée garde la tâche, le modèle et l'indicateur souverain de son aute
 
 Les agents doivent rester factuels : chaque affirmation repose sur une preuve `[Exxx]`, et aucune valeur par défaut, aucun comportement de produit ni aucune signification de message n'est supposé. En cas de doute, ils cherchent sur le web si la recherche est autorisée pour le run. Sinon, le point va dans les non vérifiés.
 
-- `web_search.mcp` désigne le serveur MCP qui fournit la recherche. Ce serveur n'est connecté que si la recherche est autorisée, même avec `-t`. `-x mcp_<serveur>` (ou `-x mcp`) l'écarte comme `--web no`.
+- `web_search.mcp` désigne le serveur MCP qui fournit la recherche. Ce serveur n'est connecté que si la recherche est autorisée, même avec `-t`. Sans `web_search.model`, `-x mcp_<serveur>` (ou `-x mcp`) l'écarte comme `--web no`.
+- `web_search.model` (`provider/modèle`) et `web_search.api` (`messages` ou `responses`) désignent un modèle doté d'une recherche web native, interrogé par l'outil `web_search`. Les agents gardent leur modèle en `/chat/completions` : l'outil pose la question au modèle de recherche par l'API indiquée (`/messages` avec l'outil serveur `web_search_20250305`, ou `/responses` avec l'outil `web_search`) et renvoie sa réponse, les URL citées, les requêtes lancées, le nombre de recherches et les tokens consommés. Le modèle sert quand le serveur MCP n'est pas utilisable : `web_search.mcp` vide, serveur désactivé (`enabled: false`) ou exclu par `-x`. La politique, `--web` et la règle des sessions confidentielles s'appliquent de la même façon. La question part chez le fournisseur du modèle : les consignes sur les identifiants internes valent aussi pour elle.
 - `web_search.policy` : `ask` (défaut, question au démarrage de `run` et `plan`, refus sans terminal), `allow` ou `deny`. `--web yes|no` l'emporte sur la politique pour un run.
 - Une session confidentielle n'autorise jamais la recherche web (`--web yes` y est refusé).
 - Les outils web sont ajoutés à chaque tâche outillée. Les consignes demandent de privilégier la documentation officielle de l'éditeur, et de ne jamais mettre d'identifiant interne (hôte, IP, cluster, compte, domaine) dans les requêtes.
@@ -360,7 +361,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `files` | `roots`, `max_file_bytes` |
 | `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true ; false : activée seulement par `-t <instance>`) |
-| `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`). Voir Recherche web. |
+| `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
 | `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true ; false : connecté seulement par `-t mcp_<serveur>`). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. |
 
 Une section absente désactive les outils correspondants. Un outil dont l'initialisation échoue est désactivé, avec un avertissement.
@@ -408,7 +409,7 @@ clotr run --chat --direct
 | `--confidential` | run confidentiel, équivalent de `--sovereign require` |
 | `--lang auto\|fr\|en` | langue de sortie (prioritaire sur `language`) |
 | `-t, --tools` | restreint les groupes d'outils (`fs`, `mcp`, `mcp_<serveur>`, `<instance>`) ; sans `-t`, tous sont proposés au planner, et une instance n'est activée que si une tâche l'utilise. Un serveur ou une instance cité par son nom (`-t mcp_<serveur>`, `-t <instance>`) est activé même avec `enabled: false` ; `-t mcp` respecte `enabled`. Un nom qui ne correspond à aucun groupe est refusé. |
-| `-x, --exclude` | exclut des groupes d'outils, mêmes préfixes que `-t` ; prioritaire sur `-t` et `enabled`. Exclure le serveur de `web_search.mcp` désactive la recherche web. |
+| `-x, --exclude` | exclut des groupes d'outils, mêmes préfixes que `-t` ; prioritaire sur `-t` et `enabled`. Exclure le serveur de `web_search.mcp` désactive la recherche web, ou la reporte sur `web_search.model` s'il est défini. |
 | `-o, --output` | écrit le rapport dans un fichier |
 | `--json` | sortie JSON : plan, résultats par tâche, rapport, `models_used` |
 | `-q, --quiet` | n'affiche pas la progression sur stderr |
