@@ -408,7 +408,7 @@ clotr run --chat --direct
 | `--sovereign any\|prefer\|require` | politique souveraine pour l'exécution |
 | `--confidential` | run confidentiel, équivalent de `--sovereign require` |
 | `--lang auto\|fr\|en` | langue de sortie (prioritaire sur `language`) |
-| `-t, --tools` | restreint les groupes d'outils (`fs`, `mcp`, `mcp_<serveur>`, `<instance>`) ; sans `-t`, tous sont proposés au planner, et une instance n'est activée que si une tâche l'utilise. Un serveur ou une instance cité par son nom (`-t mcp_<serveur>`, `-t <instance>`) est activé même avec `enabled: false` ; `-t mcp` respecte `enabled`. Un nom qui ne correspond à aucun groupe est refusé. |
+| `-t, --tools` | restreint les groupes d'outils (`fs`, `mcp`, `mcp_<serveur>`, `<instance>`) ; sans `-t`, tous sont proposés au planner, et une instance n'est activée que si une tâche l'utilise. Un serveur ou une instance cité par son nom (`-t mcp_<serveur>`, `-t <instance>`) est activé même avec `enabled: false` ; `-t mcp` respecte `enabled`. Un nom qui ne correspond à aucun groupe est refusé. Une instance activée que `-t` écarte alors que la demande la cite (nom, mot-clé, cible, IP dans ses `networks`) fait l'objet d'un avertissement au démarrage, avec ce qui a été reconnu (audit `instance_filtered`) ; elle reste écartée. |
 | `-x, --exclude` | exclut des groupes d'outils, mêmes préfixes que `-t` ; prioritaire sur `-t` et `enabled`. Exclure le serveur de `web_search.mcp` désactive la recherche web, ou la reporte sur `web_search.model` s'il est défini. |
 | `-o, --output` | écrit le rapport dans un fichier |
 | `--json` | sortie JSON : plan, résultats par tâche, rapport, `models_used` |

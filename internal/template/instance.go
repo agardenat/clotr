@@ -51,12 +51,16 @@ type Target struct {
 }
 
 func (t *Target) inNetworks(ip net.IP) bool {
+	return t.network(ip) != ""
+}
+
+func (t *Target) network(ip net.IP) string {
 	for _, n := range t.Networks {
 		if _, ipn, err := net.ParseCIDR(n); err == nil && ipn.Contains(ip) {
-			return true
+			return n
 		}
 	}
-	return false
+	return ""
 }
 
 type Host struct {
@@ -384,6 +388,10 @@ func (in *Instance) Activated() bool {
 }
 
 func (in *Instance) Mentioned(text string) bool {
+	return in.Mention(text) != ""
+}
+
+func (in *Instance) Mention(text string) string {
 	terms := append([]string{in.Name, in.T.Name}, in.T.Keywords...)
 	var networks []*Target
 	in.mu.Lock()
@@ -399,8 +407,8 @@ func (in *Instance) Mentioned(text string) bool {
 	for _, lit := range ipv4Re.FindAllString(text, -1) {
 		ip := net.ParseIP(lit)
 		for _, t := range networks {
-			if ip != nil && t.inNetworks(ip) {
-				return true
+			if n := t.network(ip); ip != nil && n != "" {
+				return lit + " ∈ " + n
 			}
 		}
 	}
@@ -409,10 +417,10 @@ func (in *Instance) Mentioned(text string) bool {
 			continue
 		}
 		if regexp.MustCompile(`(?i)(^|[^\pL\pN_])` + regexp.QuoteMeta(term) + `($|[^\pL\pN_])`).MatchString(text) {
-			return true
+			return term
 		}
 	}
-	return false
+	return ""
 }
 
 func (in *Instance) hasCachedInventory() bool {
