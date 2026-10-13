@@ -59,6 +59,7 @@ func TestWarnFilteredInstanceMentioned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer log.Close()
 	rt := &app{cfg: cfg, registry: tools.NewRegistry(100), audit: log}
 	rt.setupInstances(context.Background(), &options{quiet: true}, toolFilter{only: []string{"fs"}, exclude: []string{"gone"}}, func(string, ...any) {})
 	if len(rt.instances) != 0 || len(rt.filtered) != 1 || rt.filtered[0].Name != "lab" {
