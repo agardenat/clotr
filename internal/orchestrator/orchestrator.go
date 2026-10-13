@@ -23,6 +23,7 @@ import (
 	"github.com/agardenat/clotr/internal/memory"
 	"github.com/agardenat/clotr/internal/progress"
 	"github.com/agardenat/clotr/internal/tools"
+	"github.com/agardenat/clotr/internal/tools/dns"
 	"github.com/agardenat/clotr/internal/websearch"
 )
 
@@ -97,7 +98,7 @@ type Orchestrator struct {
 
 const (
 	triageID   = "t0"
-	triageGoal = "Tri d'incident, avant toute planification : localise le composant en échec désigné par la demande (ressource, cible, hôte), puis lis son message d'erreur exact (opération en échec, code, sous-code, détails) et sa configuration effective. Dès qu'une sortie d'outil montre une cause, signale-la avec cause_report, avant toute autre recherche ; si la même sortie en montre plusieurs, signale-les toutes dans la même étape. Le tri se termine dès qu'une cause établie est signalée : l'explication détaillée des codes d'erreur et la recherche du correctif seront confiées aux tâches planifiées ensuite, qui partiront de ton résultat."
+	triageGoal = "Tri d'incident, avant toute planification : localise le composant en échec désigné par la demande (ressource, cible, hôte) ; pour un accès à une URL ou à un nom, vérifie d'abord vers quelle IP il pointe et si c'est le point d'entrée attendu. Lis ensuite son message d'erreur exact (opération en échec, code, sous-code, détails) et sa configuration effective. Dès qu'une sortie d'outil montre une cause, signale-la avec cause_report, avant toute autre recherche ; si la même sortie en montre plusieurs, signale-les toutes dans la même étape. Le tri se termine dès qu'une cause établie est signalée : l'explication détaillée des codes d'erreur et la recherche du correctif seront confiées aux tâches planifiées ensuite, qui partiront de ton résultat."
 	triageDone = "Une cause établie est signalée : l'objectif du tri est atteint. Conclus maintenant, au format demandé, sans appeler d'outil : localisation du composant, message d'erreur exact et configuration utile, avec leurs preuves. Indique dans gaps ce qui reste à expliquer ou à corriger, pour les tâches suivantes."
 )
 
@@ -465,7 +466,7 @@ func (o *Orchestrator) Validate(p *Plan) error {
 				}
 			}
 		}
-		extra := append([]string{evidence.ToolName, evidence.SearchName, lead.ToolName}, o.WebTools...)
+		extra := append([]string{evidence.ToolName, evidence.SearchName, lead.ToolName, dns.ToolName}, o.WebTools...)
 		for _, n := range extra {
 			if !slices.Contains(expanded, n) && slices.Contains(o.Tools.Names(), n) {
 				expanded = append(expanded, n)
@@ -983,7 +984,7 @@ func (o *Orchestrator) workerPrompt(role string) string {
 Tu travailles en autonomie complète: ne pose aucune question, n'attends aucune confirmation.
 Tu ne modifies jamais rien; tes outils sont uniquement des outils de lecture.
 Reste factuel : chaque affirmation repose sur une sortie d'outil citée [Exxx]. N'invente jamais une valeur par défaut, un comportement de produit, la signification d'un message ou d'un paramètre, ni une chronologie.
-%s%s
+%s%s%s
 Avant de classer un constat comme anomalie, vérifie qu'il ne s'explique pas par un comportement attendu décrit dans l'environnement. Si ta tâche porte sur un problème, cherche ce qui le cause et ce qui l'empêcherait durablement (paramètre, mécanisme, documentation), pas seulement son état actuel. Pour un échec d'opération, lis d'abord le message d'erreur exact (code, sous-code, détails) : il donne souvent la cause, avant tout parcours de l'historique par fenêtres successives. Un lien de cause à effet doit être appuyé par une preuve (message d'erreur, configuration, chronologie) ; sinon présente-le comme hypothèse dans gaps. Distingue valeurs par défaut et valeurs modifiées.
 Une erreur d'outil (paramètre ou nom refusé, réponse illisible, sortie tronquée) est une limite de ta collecte, pas un constat sur l'infrastructure : note-la dans gaps, jamais dans findings. Pour tout taux, ratio ou projection, écris l'opération avec les valeurs mesurées et leurs horodatages.
 Tu travailles tant que tu progresses : la tâche s'arrête d'elle-même quand tes appels n'apportent plus rien de nouveau. Ne relis pas une donnée déjà obtenue; si un outil renvoie une erreur de syntaxe ou de paramètre, corrige au plus une fois en t'appuyant sur sa description, puis passe à autre chose et note le manque dans gaps; si une sortie est tronquée, affine la requête (filtre, match, chemin précis) plutôt que de la répéter.
@@ -996,7 +997,14 @@ Environnement:
 Quand tu as terminé, réponds UNIQUEMENT avec un objet JSON:
 {"findings":["[CRITIQUE|MAJEUR|MINEUR|INFO] constat [E012]"],"evidence":["[E012] outil + paramètres essentiels : extrait factuel"],"gaps":["ce qui n'a pas pu être vérifié et pourquoi"]}
 Chaque sortie d'outil commence par son identifiant de preuve [Exxx] (archivée en entier) : cite-le au début de chaque evidence et à la fin de chaque finding qu'il établit.
-%s`, role, r.Description, o.webRule(), o.incidentRule(), o.Environment, o.langDirective())
+%s`, role, r.Description, o.webRule(), o.incidentRule(), o.accessRule(), o.Environment, o.langDirective())
+}
+
+func (o *Orchestrator) accessRule() string {
+	if !slices.Contains(o.Tools.Names(), dns.ToolName) {
+		return ""
+	}
+	return "\nIncident d'accès à une URL ou à un nom (inaccessible, erreur TLS ou de certificat, page ou authentification inattendue) : vérifie d'abord la chaîne d'accès de bout en bout, avant les logs applicatifs : résous le nom avec " + dns.ToolName + " et compare l'IP obtenue au point d'entrée attendu (adresse du load balancer de l'ingress ou du proxy, IP de la VM). Une IP inattendue est une cause en soi : signale-la telle quelle."
 }
 
 func (o *Orchestrator) incidentRule() string {
@@ -1023,7 +1031,7 @@ Reste factuel : n'invente jamais une valeur par défaut, un comportement de prod
 Environnement:
 %s
 Réponse finale : Markdown, directe et concise, sans préambule ; si la demande impose une forme ou une longueur, respecte-la strictement. Les notes de mémoire (#N) ne sont pas des preuves : cite les preuves [Exxx]. Ne fais suivre aucune annexe de preuves : clotr l'ajoute.
-%s`, role, r.Description, tools, o.webRule(), o.Environment, o.langDirective())
+%s`, role, r.Description, tools, o.webRule()+o.accessRule(), o.Environment, o.langDirective())
 }
 
 func (o *Orchestrator) webRule() string {
