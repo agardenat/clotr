@@ -130,6 +130,47 @@ func TestToolWhen(t *testing.T) {
 	}
 }
 
+func TestSSHPathsRendered(t *testing.T) {
+	y := "name: x\ntargets: [{kind: a}]\nparams: {data: {type: string, default: /srv/app/}, extra: {type: string, default: \"\"}}\nconnectors: {s: {driver: ssh}}\nssh_paths: {allow: [/etc/**, \"{{.data}}/logs/**\", \"{{if .extra}}{{.extra}}/**{{end}}\"], deny: [\"{{.data}}/logs/private/**\"]}\ntools: [{kind: ssh_read}]\n"
+	tpl, err := Parse([]byte(y), filepath.Join(t.TempDir(), "x.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := NewInstance("i", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src := in.rules.Source(); !slices.Equal(src.Allow, []string{"/etc/**", "/srv/app/logs/**"}) || !slices.Equal(src.Deny, []string{"/srv/app/logs/private/**"}) {
+		t.Fatalf("rendu: %+v", src)
+	}
+	if _, err := in.rules.Check("/srv/app/logs/app.log"); err != nil {
+		t.Error(err)
+	}
+	for _, p := range []string{"/srv/app/logs/private/k", "/srv/app/conf/app.yml", "/opt/x/a"} {
+		if _, err := in.rules.Check(p); err == nil {
+			t.Errorf("%s autorisé", p)
+		}
+	}
+	if !strings.Contains(in.pathsDesc(), "/srv/app/logs/**") || strings.Contains(in.pathsDesc(), "{{") {
+		t.Errorf("description: %s", in.pathsDesc())
+	}
+	in, err = NewInstance("i", tpl, map[string]any{"extra": "/opt/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := in.rules.Check("/opt/x/a"); err != nil {
+		t.Error(err)
+	}
+	for given, want := range map[string]string{"/srv/../etc": "refusé", "srv": "doit être absolu"} {
+		if _, err := NewInstance("i", tpl, map[string]any{"data": given}); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v", given, err)
+		}
+	}
+	if _, err := Parse([]byte(strings.Replace(y, "{{.data}}/logs/**", "{{.data/logs/**", 1)), filepath.Join(t.TempDir(), "x.yaml")); err == nil || !strings.Contains(err.Error(), "ssh_paths.allow[1]") {
+		t.Errorf("gabarit invalide: %v", err)
+	}
+}
+
 func TestScriptRuntimeGuards(t *testing.T) {
 	tpl := writeTemplate(t, "name: x\nscript: x.star\nenv: [OK_VAR]\nfiles: [/nonexistent/ok]\n", `
 def get_env(a):

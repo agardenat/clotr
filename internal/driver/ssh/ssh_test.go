@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,11 +62,57 @@ func TestQuoteAndBuilders(t *testing.T) {
 		b.GrepCount("/var/log/a.log", "PREAUTH", false, false, nil, 10):                `sudo -n grep -c -E -I -e 'PREAUTH' -- '/var/log/a.log' | head -c 10`,
 		b.GrepCount("/var/log", "x'y", true, true, []string{"*.keytab"}, 10):           `sudo -n grep -c -E -I -i -r --exclude='*.keytab' -e 'x'"'"'y' -- '/var/log' | grep -v ':0$' | head -c 10`,
 		Builder{}.Tail("/var/log/x", 1):                                                `tail -n 1 -- '/var/log/x'`,
+		b.Tail("/var/log/x.log.gz", 5):                                                 `sudo -n gzip -t -- '/var/log/x.log.gz' && sudo -n gzip -cd -- '/var/log/x.log.gz' | tail -n 5`,
+		b.GrepCount("/var/log/a.gz", "E", false, false, nil, 10):                       `sudo -n gzip -t -- '/var/log/a.gz' && sudo -n gzip -cd -- '/var/log/a.gz' | grep -c -E -I -e 'E' | head -c 10`,
+		b.Grep("/var/log/a.gz", "E", false, true, 5, nil, 10):                          `sudo -n grep -n -E -I -m 5 -r -e 'E' -- '/var/log/a.gz' | head -c 10`,
 	}
 	for got, want := range cases {
 		if got != want {
 			t.Errorf("commande:\n%s\nattendu:\n%s", got, want)
 		}
+	}
+}
+
+func TestCompressedCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh requis")
+	}
+	if _, err := exec.LookPath("gzip"); err != nil {
+		t.Skip("gzip absent")
+	}
+	dir := t.TempDir()
+	f := filepath.Join(dir, "app.log.gz")
+	if out, err := exec.Command("sh", "-c", "printf '2026-10-13 10:00:00 ERROR a\\n2026-10-13 10:00:01 INFO b\\n2026-10-13 10:00:02 ERROR c\\n' | gzip > "+Quote(f)).CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	bad := filepath.Join(dir, "bad.log.gz")
+	if err := os.WriteFile(bad, []byte("texte\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(c string) (string, error) {
+		out, err := exec.Command("sh", "-c", c).CombinedOutput()
+		return string(out), err
+	}
+	b := Builder{}
+	cases := map[string]string{
+		b.Read(f, 0, 0, 1000):                          "2026-10-13 10:00:00 ERROR a\n2026-10-13 10:00:01 INFO b\n2026-10-13 10:00:02 ERROR c\n",
+		b.Read(f, 2, 2, 1000):                          "2026-10-13 10:00:01 INFO b\n",
+		b.Tail(f, 1):                                   "2026-10-13 10:00:02 ERROR c\n",
+		b.TailFiltered(f, "ERROR", 1):                  "2026-10-13 10:00:02 ERROR c\n",
+		b.Grep(f, "ERROR", false, false, 5, nil, 1000): "1:2026-10-13 10:00:00 ERROR a\n3:2026-10-13 10:00:02 ERROR c\n",
+		b.GrepCount(f, "ERROR", false, false, nil, 10): "2\n",
+	}
+	for c, want := range cases {
+		if got, err := run(c); err != nil || got != want {
+			t.Errorf("%s\n=> %q, %v ; attendu %q", c, got, err, want)
+		}
+	}
+	got, err := run(b.StatTail(f, 30))
+	if head, body, _ := strings.Cut(got, "\n"); err != nil || !strings.HasPrefix(head, "83 ") || body != "b\n2026-10-13 10:00:02 ERROR c\n" {
+		t.Errorf("stat_tail: %q, %v", got, err)
+	}
+	if got, err := run(b.GrepCount(bad, "ERROR", false, false, nil, 10)); err == nil || !strings.Contains(got, "not in gzip format") {
+		t.Errorf("fichier non compressé: %q, %v", got, err)
 	}
 }
 

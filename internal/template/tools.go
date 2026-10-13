@@ -222,7 +222,8 @@ func clamp(v, def, lo, hi int) int {
 const hostProps = `"target":{"type":"string","description":"cible (optionnel si l'hôte est unique)"},"host":{"type":"string","description":"FQDN, nom court ou IP d'un hôte de l'inventaire, ou IP d'une plage de la cible"}`
 
 func (in *Instance) pathsDesc() string {
-	return fmt.Sprintf("Chemins autorisés : %s ; refusés : %s.", strings.Join(in.T.SSHPaths.Allow, ", "), strings.Join(in.T.SSHPaths.Deny, ", "))
+	src := in.rules.Source()
+	return fmt.Sprintf("Chemins autorisés : %s ; refusés : %s.", strings.Join(src.Allow, ", "), strings.Join(src.Deny, ", "))
 }
 
 func sshListTool(in *Instance, name, desc string) tools.Tool {
@@ -258,7 +259,7 @@ func sshListTool(in *Instance, name, desc string) tools.Tool {
 func sshReadTool(in *Instance, name, desc string) tools.Tool {
 	return fnTool{
 		name:   name,
-		desc:   withDesc(desc, "Lit un fichier texte sur un hôte en SSH (lecture seule), en entier (64 Kio max) ou une plage de lignes. Les valeurs de secrets (password, secret, token…) sont masquées.\n"+in.pathsDesc()),
+		desc:   withDesc(desc, "Lit un fichier texte sur un hôte en SSH (lecture seule), en entier (64 Kio max) ou une plage de lignes ; un fichier .gz est décompressé. Les valeurs de secrets (password, secret, token…) sont masquées.\n"+in.pathsDesc()),
 		schema: `{"type":"object","properties":{` + hostProps + `,"path":{"type":"string","description":"fichier absolu"},"from_line":{"type":"integer"},"to_line":{"type":"integer"}},"required":["host","path"]}`,
 		call: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			a, err := tools.Decode[struct {
@@ -291,7 +292,7 @@ func sshReadTool(in *Instance, name, desc string) tools.Tool {
 func sshTailTool(in *Instance, name, desc string) tools.Tool {
 	return fnTool{
 		name:   name,
-		desc:   withDesc(desc, "Dernières lignes d'un fichier (log) sur un hôte en SSH (lecture seule).\n"+in.pathsDesc()),
+		desc:   withDesc(desc, "Dernières lignes d'un fichier (log) sur un hôte en SSH (lecture seule) ; un fichier .gz est décompressé.\n"+in.pathsDesc()),
 		schema: `{"type":"object","properties":{` + hostProps + `,"path":{"type":"string","description":"fichier absolu"},"lines":{"type":"integer","description":"nombre de lignes (défaut 200, max 1000)"}},"required":["host","path"]}`,
 		call: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			a, err := tools.Decode[struct {
@@ -321,7 +322,7 @@ func sshTailTool(in *Instance, name, desc string) tools.Tool {
 func sshGrepTool(in *Instance, name, desc string) tools.Tool {
 	return fnTool{
 		name:   name,
-		desc:   withDesc(desc, "Recherche une expression régulière étendue (grep -E) dans un fichier ou, avec recursive, un répertoire, sur un hôte en SSH (lecture seule). Les fichiers binaires et les fichiers refusés sont ignorés. Pour un total exact (nombre d'occurrences d'un message sur tout un fichier), utiliser count au lieu de compter des lignes plafonnées par max_matches.\n"+in.pathsDesc()),
+		desc:   withDesc(desc, "Recherche une expression régulière étendue (grep -E) dans un fichier ou, avec recursive, un répertoire, sur un hôte en SSH (lecture seule). Un fichier .gz est décompressé ; en récursif, les fichiers binaires (dont les .gz) et les fichiers refusés sont ignorés : viser les .gz un par un. Pour un total exact (nombre d'occurrences d'un message sur tout un fichier), utiliser count au lieu de compter des lignes plafonnées par max_matches.\n"+in.pathsDesc()),
 		schema: `{"type":"object","properties":{` + hostProps + `,"path":{"type":"string","description":"fichier ou répertoire absolu"},"pattern":{"type":"string","description":"expression régulière étendue"},"ignore_case":{"type":"boolean"},"recursive":{"type":"boolean"},"max_matches":{"type":"integer","description":"correspondances max par fichier (défaut 50, max 500)"},"count":{"type":"boolean","description":"renvoie seulement le nombre exact de lignes correspondantes de chaque fichier, lu en entier (sans plafond ni troncature), au lieu des lignes"}},"required":["host","path","pattern"]}`,
 		call: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			a, err := tools.Decode[struct {
@@ -482,7 +483,7 @@ func resolveOutput(name string, h *Host, out string) string {
 func logStatsTool(in *Instance, name, desc string) tools.Tool {
 	return fnTool{
 		name:   name,
-		desc:   withDesc(desc, "Statistiques d'un fichier de log sur un hôte en SSH (lecture seule), calculées sur sa fin (4 Mio par défaut) : taille, période couverte, débit (lignes et octets par heure), répartition par niveau et par heure, loggers les plus bavards, messages les plus répétés (normalisés). À utiliser pour expliquer un volume de logs anormal, plutôt que de multiplier les grep.\n"+in.pathsDesc()),
+		desc:   withDesc(desc, "Statistiques d'un fichier de log sur un hôte en SSH (lecture seule), calculées sur sa fin (4 Mio par défaut, après décompression pour un .gz) : taille, période couverte, débit (lignes et octets par heure), répartition par niveau et par heure, loggers les plus bavards, messages les plus répétés (normalisés). À utiliser pour expliquer un volume de logs anormal, plutôt que de multiplier les grep.\n"+in.pathsDesc()),
 		schema: `{"type":"object","properties":{` + hostProps + `,"path":{"type":"string","description":"fichier de log absolu"},"sample_mb":{"type":"integer","description":"taille de l'échantillon en Mio (défaut 4, max 16)"},"top":{"type":"integer","description":"nombre de loggers/messages (défaut 15, max 40)"}},"required":["host","path"]}`,
 		call: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			a, err := tools.Decode[struct {
