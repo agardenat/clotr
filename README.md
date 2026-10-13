@@ -253,7 +253,7 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 - `sudo -n` est ajouté si `sudo: true`. Si sudo exige un mot de passe et que le connecteur déclare `auth`, la commande est relancée avec `sudo -S` sous `sh -c` : le mot de passe passe par l'entrée standard, jamais dans la ligne de commande, et l'hôte reste en mode mot de passe pour le run. Un mot de passe refusé est oublié et redemandé à l'appel suivant ;
 - authentification : la clé `key` d'abord, puis le mot de passe si la clé est absente ou refusée et que `auth` est déclaré (méthodes `password` et `keyboard-interactive`). Le mot de passe vient de `password_env`, sinon du secret `password_vault`, sinon il est saisi sur le terminal, une fois par utilisateur ; sans `user`, l'utilisateur est aussi demandé ;
 - les valeurs de type `password=…`, `token: …` et `<name>…password…</name><value>…</value>` sont masquées dans les sorties ;
-- connexions via le proxy SOCKS5 de l'instance, clé privée sans passphrase, `max_conns` sessions simultanées par instance. Aucun fichier `ssh_config` n'est lu ;
+- connexions via le proxy SOCKS5 de l'instance, clé privée sans passphrase, `max_conns` sessions simultanées par instance. Aucun fichier `ssh_config` n'est lu. Un hôte qui déclare une IP est joint par son IP (le nom ne sert qu'à l'affichage et à la désignation) ; sinon par son nom, résolu par le proxy SOCKS ;
 - `known_hosts` propre à clotr (`~/.local/state/clotr/known_hosts`) : `accept-new` (défaut) enregistre une clé inconnue et refuse une clé changée, `strict` refuse les hôtes inconnus, `insecure` ne vérifie pas ;
 - chaque commande est tracée dans l'audit (`remote_exec` : hôte, utilisateur, commande, durée, exit, taille).
 

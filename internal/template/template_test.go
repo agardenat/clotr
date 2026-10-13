@@ -736,3 +736,28 @@ def discover(ctx):
 		t.Fatalf("découverte réseau acceptée hors ligne: %+v", tg[0])
 	}
 }
+
+func TestSSHEndpointPrefersIP(t *testing.T) {
+	tpl := writeTemplate(t, `name: x
+connectors:
+  ssh: {driver: ssh, user: ops}
+tools:
+  - kind: ssh_tail
+ssh_paths: {allow: [/var/log/**]}
+targets:
+  - {kind: hosts, name: t}
+`, "")
+	in, err := NewInstance("i", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		h    Host
+		want string
+	}{{Host{Name: "web1.example.invalid", IP: "10.0.0.7"}, "10.0.0.7"}, {Host{Name: "web1.example.test"}, "web1.example.test"}, {Host{IP: "10.0.0.8"}, "10.0.0.8"}} {
+		ep, _, err := in.sshEndpoint(context.Background(), &Target{}, &c.h)
+		if err != nil || ep.Host != c.want {
+			t.Fatalf("%+v: %q %v", c.h, ep.Host, err)
+		}
+	}
+}

@@ -4,6 +4,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Modifié
+- SSH : un hôte qui déclare une IP est joint par son IP, le nom ne servant plus qu'à l'affichage et à la désignation ; un nom non résolvable par le proxy SOCKS ne bloque plus la connexion. Avec `host_key: strict`, une clé enregistrée sous le nom de l'hôte n'est plus reconnue.
+
 ## [0.12.0] - 2026-10-13
 
 ### Ajouté
