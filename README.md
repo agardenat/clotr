@@ -150,7 +150,7 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
 - `files`, `env` : fichiers et variables d'environnement que le script peut lire ; les chemins de `files` sont rendus avec les paramètres (`"{{.config_path}}"`) ;
 - `tools` : outils génériques du moteur (`inventory`, `ssh_list`, `ssh_read`, `ssh_tail`, `ssh_grep`, `ssh_disk`, `ssh_resolve`, `log_stats`), avec `name` et `description` optionnels, et `when` : condition rendue avec les paramètres (`"{{.ssh}}"`), l'outil n'est créé que si elle vaut vrai (vide = faux, valeur non booléenne refusée) ;
 - `companions` : outils ajoutés d'office à toute tâche qui utilise un outil de l'instance ;
-- `ssh_paths` : `allow` et `deny` (globs, `**` récursif) ;
+- `ssh_paths` : `allow` et `deny` (globs, `**` récursif), rendus avec les paramètres (`"{{.data_dir}}/logs/**"`) : une entrée rendue vide est ignorée (`"{{if .data_dir}}…{{end}}"`), une entrée rendue doit rester sans `..` et, dans `allow`, absolue ;
 - `hints` : consignes transmises au planner et aux agents.
 
 Les outils sont préfixés par le nom de l'instance (`<instance>_<outil>`).
@@ -251,7 +251,8 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 
 ### Outils SSH
 
-- Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `grep -c -E -I` (comptage), `df -hP`, `du -xh`, `getent ahosts` (résolution d'un nom). Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
+- Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `grep -c -E -I` (comptage), `df -hP`, `du -xh`, `getent ahosts` (résolution d'un nom), `gzip -t` et `gzip -cd` (fichier `.gz`). Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
+- un fichier `.gz` est vérifié (`gzip -t`) puis décompressé vers `head`, `sed`, `tail` ou `grep` pour la lecture, la fin, la recherche, le comptage et les statistiques de log (taille décompressée) ; un fichier absent, illisible ou corrompu donne une erreur. En recherche récursive, les fichiers compressés restent ignorés comme les autres fichiers binaires ;
 - `host` doit appartenir à l'inventaire de l'instance (FQDN, nom court ou IP), ou être une IP comprise dans les `networks` d'une cible. Une IP de plage présente dans la demande fait proposer l'instance ;
 - `path` doit être absolu, sans `..`, couvert par `ssh_paths.allow` et par aucun `ssh_paths.deny` (keytabs, jceks, jks, clés, `*password*`…). En récursif, les motifs `deny` sont aussi passés en `--exclude` ;
 - `sudo -n` est ajouté si `sudo: true`. Si sudo exige un mot de passe et que le connecteur déclare `auth`, la commande est relancée avec `sudo -S` sous `sh -c` : le mot de passe passe par l'entrée standard, jamais dans la ligne de commande, et l'hôte reste en mode mot de passe pour le run. Un mot de passe refusé est oublié et redemandé à l'appel suivant ;

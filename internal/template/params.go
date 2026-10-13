@@ -3,6 +3,7 @@ package template
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"text/template"
 
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/driver/ssh"
 )
 
 var envRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -163,6 +165,65 @@ func Render(s string, data map[string]any) (string, error) {
 	}
 	return b.String(), nil
 }
+
+func renderPaths(r ssh.PathRules, data map[string]any) (ssh.PathRules, error) {
+	render := func(field string, globs []string) ([]string, error) {
+		var out []string
+		for i, g := range globs {
+			if !strings.Contains(g, "{{") {
+				out = append(out, g)
+				continue
+			}
+			v, err := Render(g, data)
+			if err != nil {
+				return nil, fmt.Errorf("ssh_paths.%s[%d]: %w", field, i, err)
+			}
+			if v = strings.TrimSpace(v); v == "" {
+				continue
+			}
+			if strings.Contains(v, "..") || unsafePath.MatchString(v) {
+				return nil, fmt.Errorf("ssh_paths.%s[%d]: %q refusé", field, i, v)
+			}
+			out = append(out, path.Clean(v))
+		}
+		return out, nil
+	}
+	allow, err := render("allow", r.Allow)
+	if err != nil {
+		return r, err
+	}
+	deny, err := render("deny", r.Deny)
+	if err != nil {
+		return r, err
+	}
+	return ssh.PathRules{Allow: allow, Deny: deny}, nil
+}
+
+func checkPaths(r ssh.PathRules) error {
+	static := ssh.PathRules{}
+	for field, globs := range map[string][]string{"allow": r.Allow, "deny": r.Deny} {
+		for i, g := range globs {
+			if !strings.Contains(g, "{{") {
+				if field == "allow" {
+					static.Allow = append(static.Allow, g)
+				} else {
+					static.Deny = append(static.Deny, g)
+				}
+				continue
+			}
+			if _, err := template.New("").Parse(g); err != nil {
+				return fmt.Errorf("ssh_paths.%s[%d]: %w", field, i, err)
+			}
+		}
+	}
+	if len(static.Allow) == 0 && len(r.Allow) > 0 {
+		static.Allow = []string{"/"}
+	}
+	_, err := ssh.CompileRules(static)
+	return err
+}
+
+var unsafePath = regexp.MustCompile("[\x00-\x1f\x7f]")
 
 func renderAny(v any, data map[string]any) (any, error) {
 	switch x := v.(type) {

@@ -36,6 +36,10 @@ func CompileRules(r PathRules) (*Rules, error) {
 	return out, nil
 }
 
+func (r *Rules) Source() PathRules {
+	return r.src
+}
+
 func globRegexp(g string) *regexp.Regexp {
 	var b strings.Builder
 	b.WriteString("^")
@@ -157,25 +161,54 @@ func (b Builder) Disk(dir string, depth, limit int) string {
 	return fmt.Sprintf("%sdf -hP -- %s; echo '--- du'; %sdu -xh --max-depth=%d -- %s 2>/dev/null | sort -rh | head -n %d; echo '--- files'; %sfind %s -xdev -type f 2>/dev/null | wc -l", p, q, p, depth, q, limit, p, q)
 }
 
+func Compressed(file string) bool {
+	return strings.HasSuffix(file, ".gz")
+}
+
+func (b Builder) source(file string) (string, bool) {
+	if !Compressed(file) {
+		return "", false
+	}
+	p, q := b.prefix(), Quote(file)
+	return fmt.Sprintf("%sgzip -t -- %s && %sgzip -cd -- %s | ", p, q, p, q), true
+}
+
 func (b Builder) StatTail(file string, maxBytes int) string {
+	if src, ok := b.source(file); ok {
+		return fmt.Sprintf("%swc -c | tr -d ' \\n' && printf ' ' && %sstat -c '%%Y' -- %s && %sgzip -cd -- %s | tail -c %d", src, b.prefix(), Quote(file), b.prefix(), Quote(file), maxBytes)
+	}
 	return fmt.Sprintf("%sstat -c '%%s %%Y' -- %s && %stail -c %d -- %s", b.prefix(), Quote(file), b.prefix(), maxBytes, Quote(file))
 }
 
 func (b Builder) Read(file string, from, to, maxBytes int) string {
+	src, gz := b.source(file)
 	if from > 0 {
 		if to < from {
 			to = from + 199
 		}
-		return fmt.Sprintf("%ssed -n %s -- %s | head -c %d", b.prefix(), Quote(strconv.Itoa(from)+","+strconv.Itoa(to)+"p"), Quote(file), maxBytes)
+		lines := Quote(strconv.Itoa(from) + "," + strconv.Itoa(to) + "p")
+		if gz {
+			return fmt.Sprintf("%ssed -n %s | head -c %d", src, lines, maxBytes)
+		}
+		return fmt.Sprintf("%ssed -n %s -- %s | head -c %d", b.prefix(), lines, Quote(file), maxBytes)
+	}
+	if gz {
+		return fmt.Sprintf("%shead -c %d", src, maxBytes)
 	}
 	return fmt.Sprintf("%shead -c %d -- %s", b.prefix(), maxBytes, Quote(file))
 }
 
 func (b Builder) Tail(file string, lines int) string {
+	if src, ok := b.source(file); ok {
+		return fmt.Sprintf("%stail -n %d", src, lines)
+	}
 	return fmt.Sprintf("%stail -n %d -- %s", b.prefix(), lines, Quote(file))
 }
 
 func (b Builder) TailFiltered(file, pattern string, lines int) string {
+	if src, ok := b.source(file); ok {
+		return fmt.Sprintf("%sgrep -E -I -e %s | tail -n %d", src, Quote(pattern), lines)
+	}
 	return fmt.Sprintf("%sgrep -E -I -e %s -- %s | tail -n %d", b.prefix(), Quote(pattern), Quote(file), lines)
 }
 
@@ -184,6 +217,11 @@ func (b Builder) Grep(p, pattern string, ignoreCase, recursive bool, maxCount in
 	opts = append(opts, "-n", "-E", "-I", "-m", strconv.Itoa(maxCount))
 	if ignoreCase {
 		opts = append(opts, "-i")
+	}
+	if !recursive {
+		if src, ok := b.source(p); ok {
+			return fmt.Sprintf("%sgrep %s -e %s | head -c %d", src, strings.Join(opts, " "), Quote(pattern), maxBytes)
+		}
 	}
 	if recursive {
 		opts = append(opts, "-r")
@@ -198,6 +236,11 @@ func (b Builder) GrepCount(p, pattern string, ignoreCase, recursive bool, exclud
 	opts := []string{"-c", "-E", "-I"}
 	if ignoreCase {
 		opts = append(opts, "-i")
+	}
+	if !recursive {
+		if src, ok := b.source(p); ok {
+			return fmt.Sprintf("%sgrep %s -e %s | head -c %d", src, strings.Join(opts, " "), Quote(pattern), maxBytes)
+		}
 	}
 	nonZero := ""
 	if recursive {

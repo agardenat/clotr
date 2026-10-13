@@ -190,7 +190,7 @@ func (t *Template) validate() error {
 		seen[name] = true
 	}
 	if nssh > 0 {
-		if _, err := ssh.CompileRules(t.SSHPaths); err != nil {
+		if err := checkPaths(t.SSHPaths); err != nil {
 			fail("%v", err)
 		}
 	}

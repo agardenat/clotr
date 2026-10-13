@@ -169,9 +169,13 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 		}
 	}
 	if in.sshName != "" {
-		in.rules, err = ssh.CompileRules(t.SSHPaths)
+		paths, err := renderPaths(t.SSHPaths, params)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("instance %s: %w", name, err)
+		}
+		in.rules, err = ssh.CompileRules(paths)
+		if err != nil {
+			return nil, fmt.Errorf("instance %s: %w", name, err)
 		}
 		in.sudo, err = in.conns[in.sshName].bool("sudo", false)
 		if err != nil {
