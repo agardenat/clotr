@@ -50,6 +50,7 @@ var msgs = map[string]msg{
 	"task.skipped":         {"not started: conclusion requested", "non lancée : conclusion demandée"},
 	"lead.established":     {"established cause: %s", "cause établie : %s"},
 	"lead.probable":        {"probable cause: %s", "cause probable : %s"},
+	"instance.filtered":    {"warning: instance %s matches the request (%s) but -t leaves it out; add -t %s to use it", "avertissement : l'instance %s correspond à la demande (%s) mais -t l'écarte ; ajouter -t %s pour l'utiliser"},
 	"triage":               {"triage: locate the failing component and read its exact error", "tri : localiser le composant en échec et lire son erreur exacte"},
 	"continuation":         {"continuation of %s: %s", "suite de %s : %s"},
 	"dropped":              {"dropped: unavailable for this run: %s", "écarté : indisponible pour ce run : %s"},

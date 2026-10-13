@@ -100,6 +100,7 @@ type app struct {
 	webTools    []string
 	evidence    *evidence.Store
 	leads       *lead.Store
+	filtered    []*template.Instance
 	closers     []func()
 }
 
@@ -645,13 +646,16 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 
 func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter, warn func(string, ...any)) {
 	cfg := rt.cfg
-	var active []config.Instance
+	var active, filtered []config.Instance
 	for _, in := range cfg.Instances {
-		if filter.active(in.Name, in.IsEnabled()) {
+		switch {
+		case filter.active(in.Name, in.IsEnabled()):
 			active = append(active, in)
+		case in.IsEnabled() && !matchGroup(filter.exclude, in.Name):
+			filtered = append(filtered, in)
 		}
 	}
-	if len(active) == 0 {
+	if len(active)+len(filtered) == 0 {
 		return
 	}
 	set, err := template.Load(cfg.Templates.Dir)
@@ -663,6 +667,21 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		warn("%s", w)
 	}
 	rt.instanceEnv = map[string][]string{}
+	for _, ic := range filtered {
+		t, ok := set.Get(ic.Template)
+		if !ok {
+			continue
+		}
+		in, err := template.NewInstance(ic.Name, t, ic.Params)
+		if err == nil {
+			err = in.Defer(ctx, cfg.Templates.CacheDir, cfg.Templates.CacheTTL.Duration, false)
+		}
+		if err != nil {
+			continue
+		}
+		rt.filtered = append(rt.filtered, in)
+		rt.closers = append(rt.closers, in.Close)
+	}
 	for _, ic := range active {
 		t, ok := set.Get(ic.Template)
 		if !ok {
@@ -689,6 +708,15 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		rt.registry.AddGroup(in.ToolPrefix())
 		rt.registry.AddCompanions(in.ToolPrefix(), in.Companions()...)
 		rt.instanceEnv[ic.Name] = in.EnvironmentLines()
+	}
+}
+
+func (rt *app) warnFiltered(text string) {
+	for _, in := range rt.filtered {
+		if why := in.Mention(text); why != "" {
+			fmt.Fprintln(os.Stderr, i18n.T("instance.filtered", in.Name, why, in.Name))
+			rt.audit.Log("instance_filtered", map[string]any{"instance": in.Name, "match": why})
+		}
 	}
 }
 
@@ -975,6 +1003,7 @@ func cmdPlan(ctx context.Context, o *options, args []string, w io.Writer) error 
 	events := newProgress(o, rt.cfg.Limits.MaxSteps, "")
 	defer events.Close()
 	rt.audit.Log("plan_start", map[string]any{"request": request, "version": version})
+	rt.warnFiltered(request)
 	reg, env := rt.scope(o.tools, request)
 	orch := rt.orchestrator(events, reg, env)
 	p, err := orch.Plan(ctx, request)
@@ -1073,6 +1102,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		mention += "\n" + t.Request
 		forced = append(forced, t.Tools...)
 	}
+	rt.warnFiltered(mention)
 	reg, env := rt.scope(forced, mention)
 	orch := rt.orchestrator(events, reg, env)
 	orch.History, orch.Turn = history, n

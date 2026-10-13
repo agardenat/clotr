@@ -622,6 +622,12 @@ def discover(ctx):
 	if !in.Mentioned("sur 10.8.3.4, pourquoi ?") || in.Mentioned("sur 10.7.0.1") {
 		t.Fatal("mention par IP de plage")
 	}
+	if got := in.Mention("sur 10.8.3.4, pourquoi ?"); got != "10.8.3.4 ∈ 10.8.0.0/16" {
+		t.Fatalf("motif de mention par IP: %q", got)
+	}
+	if got := in.Mention("le serveur DMZ répond mal"); got != "dmz" {
+		t.Fatalf("motif de mention par cible: %q", got)
+	}
 	if tg, h, err := in.findHost("", "10.8.3.4"); err != nil || tg.Name != "dmz" || h.IP != "10.8.3.4" {
 		t.Fatalf("IP de plage: %v %v %v", tg, h, err)
 	}
