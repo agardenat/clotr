@@ -107,6 +107,10 @@ Ces deux outils sont ajoutés à chaque tâche outillée. Les constats de chaque
 
 Chaque entrée garde la tâche, le modèle et l'indicateur souverain de son auteur. À la fin du `run`, stderr affiche le nombre d'entrées, dont les souveraines, ainsi que le nombre d'entrées souveraines lues via `memory_search` par un modèle non souverain. La mémoire est sauvegardée dans le `memory.json` de la session, puis rechargée au tour suivant.
 
+## Résolution DNS
+
+L'outil intégré `dns_resolve` résout un nom depuis le poste qui exécute clotr, par le résolveur du système : nom canonique (CNAME) et adresses IPv4/IPv6. Il est proposé à toutes les tâches, et `-x dns` l'écarte. Pour un incident d'accès à une URL (inaccessible, erreur TLS, authentification inattendue), la consigne des agents est de vérifier d'abord la chaîne d'accès : résoudre le nom et comparer l'IP obtenue au point d'entrée attendu (load balancer de l'ingress, proxy, VM) ; une IP inattendue est signalée comme cause. Le résultat reflète la vue DNS du poste : un nom résolu seulement par le DNS interne d'un autre réseau apparaît comme inexistant.
+
 ## Recherche web
 
 Les agents doivent rester factuels : chaque affirmation repose sur une preuve `[Exxx]`, et aucune valeur par défaut, aucun comportement de produit ni aucune signification de message n'est supposé. En cas de doute, ils cherchent sur le web si la recherche est autorisée pour le run. Sinon, le point va dans les non vérifiés.

@@ -41,6 +41,7 @@ import (
 	"github.com/agardenat/clotr/internal/session"
 	"github.com/agardenat/clotr/internal/template"
 	"github.com/agardenat/clotr/internal/tools"
+	"github.com/agardenat/clotr/internal/tools/dns"
 	"github.com/agardenat/clotr/internal/tools/files"
 	"github.com/agardenat/clotr/internal/tools/mcp"
 	"github.com/agardenat/clotr/internal/websearch"
@@ -504,7 +505,7 @@ func (f toolFilter) active(prefix string, on bool) bool {
 }
 
 func checkToolGroups(cfg *config.Config, lists ...[]string) error {
-	groups := []string{"fs", "memory", "evidence"}
+	groups := []string{"fs", "memory", "evidence", dns.Group}
 	for _, m := range cfg.MCP {
 		groups = append(groups, "mcp_"+m.Name)
 	}
@@ -625,6 +626,9 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	rt.evidence = o.evidence
 	rt.memory = memory.NewStore()
 	rt.registry.Add(rt.memory.Tools()...)
+	if !matchGroup(o.exclude, dns.Group) {
+		rt.registry.Add(dns.New())
+	}
 	if rt.evidence != nil {
 		rt.registry.Add(rt.evidence.Tool(), rt.evidence.SearchTool())
 		if o.incident {

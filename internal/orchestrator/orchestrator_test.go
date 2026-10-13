@@ -21,6 +21,7 @@ import (
 	"github.com/agardenat/clotr/internal/router"
 	"github.com/agardenat/clotr/internal/testutil"
 	"github.com/agardenat/clotr/internal/tools"
+	"github.com/agardenat/clotr/internal/tools/dns"
 )
 
 var taskID = regexp.MustCompile(`Ta tâche \(([^)]+)\)`)
@@ -553,5 +554,20 @@ func TestTriageEndsOnEstablishedCause(t *testing.T) {
 	_, _ = o.Memory.Put(memory.Entry{Key: "cause/t0/2", Content: "c", Kind: "lead", Task: "t0", Tags: []string{"cause", "established"}})
 	if o.causeEstablished() != triageDone {
 		t.Fatal("tri non terminé sur une cause établie")
+	}
+}
+
+func TestAccessRuleAndDNSToolWithTasks(t *testing.T) {
+	o, _ := newOrch(t, nil, nil)
+	if strings.Contains(o.workerPrompt("collector"), "chaîne d'accès") {
+		t.Fatal("consigne d'accès sans outil DNS")
+	}
+	o.Tools.Add(dns.New())
+	if !strings.Contains(o.workerPrompt("collector"), "chaîne d'accès de bout en bout") || !strings.Contains(o.directPrompt("collector"), dns.ToolName) {
+		t.Fatal("consigne d'accès absente")
+	}
+	p := &Plan{Tasks: []Task{{ID: "t1", Role: "collector", Goal: "g", Tools: []string{"k8s"}}}}
+	if err := o.Validate(p); err != nil || !slices.Contains(p.Tasks[0].Tools, dns.ToolName) {
+		t.Fatalf("outil DNS non ajouté: %v %v", p.Tasks[0].Tools, err)
 	}
 }

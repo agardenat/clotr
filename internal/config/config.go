@@ -99,7 +99,7 @@ func (i Instance) IsEnabled() bool {
 
 var instanceName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
-var reservedPrefixes = []string{"fs", "mcp", "memory", "evidence", "web", "cause"}
+var reservedPrefixes = []string{"fs", "mcp", "memory", "evidence", "web", "cause", "dns"}
 
 type SessionsConf struct {
 	Dir string `yaml:"dir"`
