@@ -588,9 +588,9 @@ func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.En
 	if err != nil {
 		return ssh.Endpoint{}, nil, fmt.Errorf("port SSH invalide")
 	}
-	host := h.Name
+	host := h.IP
 	if host == "" {
-		host = h.IP
+		host = h.Name
 	}
 	ep := ssh.Endpoint{Host: host, Port: port, User: pick("ssh_user", "user"), KeyPath: config.ExpandHome(pick("ssh_key_path", "key"))}
 	a := o.sub("auth")
