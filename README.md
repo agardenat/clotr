@@ -7,7 +7,7 @@ Binaire Go statique, sans dépendance d'exécution.
 ## Fonctionnement
 
 1. **Catalogue** : `GET {base_url}/models` sur chaque provider, en parallèle. Les capacités (tier, contexte, tool-calling) viennent des `profiles` de la config, ou de `/model/info` si le provider est un proxy LiteLLM (`model_info: true`). Le résultat est mis en cache (`~/.cache/clotr/catalog.json`, TTL `catalog.cache_ttl`).
-2. **Planner** (rôle `planner`) : découpe la demande en tâches JSON `{id, role, goal, tools, depends_on}`. Le plan est validé (rôles, outils, dépendances, cycles), avec une nouvelle tentative si le plan est invalide. Une dépendance entre deux tâches du même rôle est retirée (seule une analyse attend des collectes) : la tâche concernée démarre tout de suite et son objectif précise qu'elle ne reçoit pas ces résultats (audit `plan_deps_dropped`).
+2. **Planner** (rôle `planner`) : découpe la demande en tâches JSON `{id, role, goal, tools, depends_on}`. Le plan est validé (rôles, outils, dépendances, cycles), avec une nouvelle tentative si le plan est invalide. Une dépendance entre deux tâches du même rôle est retirée (seule une analyse attend des collectes) : la tâche concernée démarre tout de suite et son objectif précise qu'elle ne reçoit pas ces résultats (audit `plan_deps_dropped`). Pour une investigation, le planner découpe par périmètre disjoint (cible, hôte, ressource, composant) et non par type de donnée sur un même composant, chaque objectif nomme les ressources dont la tâche a la charge, et la localisation d'une cible à retrouver reste dans la tâche qui l'investigue.
 3. **Sous-agents** : une goroutine par tâche. Une tâche démarre dès que ses dépendances sont terminées, et reçoit leurs résultats en entrée. La concurrence est bornée globalement (`limits.max_agents`) et par provider (`max_concurrency`). Chaque agent exécute une boucle de tool-calling, et les appels d'outils d'un même tour sont lancés en parallèle.
 4. **Durée des tâches** : une tâche n'est pas arrêtée parce qu'elle dure, mais parce qu'elle ne progresse plus. Une étape progresse si elle lance au moins un appel d'outil nouveau (outil et paramètres jamais utilisés dans la tâche). Après `limits.stall_steps` étapes sans appel nouveau (défaut 3), l'agent conclut avec ce qu'il a, et la tâche est marquée « plus de progression ». `limits.max_steps` (défaut 100) n'est qu'un plafond de sécurité contre les boucles. `limits.agent_timeout` est désactivé par défaut ; s'il est réglé, l'agent conclut avant ce délai, avec une réserve de `min(5 min, request_timeout)` pour la conclusion. Seuls les appels individuels restent bornés : `request_timeout` pour un appel trop long, `idle_timeout` pour un flux muet. Une tâche arrêtée par `max_steps` ou `agent_timeout` est poursuivie par une suite (`tN.2`, `limits.continuations`, défaut 1) qui reçoit le résultat partiel ; pas de suite après un arrêt pour absence de progression. Une tâche encore limitée après ses suites reçoit un gap « investigation incomplète ».
 5. **Contrôle des preuves** (par clotr) : la réponse d'un sous-agent doit contenir `findings`, `evidence` ou `gaps`, et chaque constat citer dans son texte une preuve existante ; sinon la réponse est renvoyée à l'agent (deux reprises au plus). Un constat encore sans preuve est marqué « [NON PROUVÉ] ». Un appel d'outil écrit dans le texte au format harmony (`to=functions.<outil>{…}`) est exécuté comme un appel d'outil.
@@ -280,7 +280,7 @@ Le CLI n'expose aucun outil d'écriture et n'exécute aucune commande locale. Le
 | `mcp_<serveur>` | outils du serveur | seuls sont exposés les outils annotés `readOnlyHint: true` ou listés dans `allow`. `deny` est prioritaire. |
 | `<instance>_*` | outils du template | voir Templates : requêtes HTTP limitées par les garde-fous des connecteurs, SSH limité à des commandes fixes, aux hôtes de l'inventaire et aux chemins autorisés. |
 
-Les sorties d'outils sont tronquées à `limits.tool_output_max_chars`. Les droits effectifs dépendent des comptes utilisés (connecteurs des templates, serveurs MCP), qui doivent être en lecture seule.
+Les sorties d'outils envoyées au modèle sont tronquées à `limits.tool_output_max_chars` ; la preuve archive la sortie complète, que `evidence_read` relit par motif ou par plage de lignes sans refaire l'appel. Les droits effectifs dépendent des comptes utilisés (connecteurs des templates, serveurs MCP), qui doivent être en lecture seule.
 
 ## Installation
 
@@ -419,6 +419,7 @@ clotr run --chat --direct
 | `--chat` (`run`) | mode conversation, voir Conversation |
 | `--raw` (`run`, `session`) | rapport en Markdown brut, sans mise en forme pour le terminal |
 | `--with-evidence` (`run`, `session`) | annexe la sortie complète de chaque preuve citée, voir Preuves |
+| `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |
 | `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
 
 La demande `-` est lue sur stdin. Ctrl-C annule proprement les agents en cours.
@@ -441,6 +442,16 @@ Le tableau final reste affiché au-dessus du bilan, et le rapport est écrit sur
 ### Rendu du rapport
 
 Si stdout est un terminal, `run` et `session` affichent le rapport mis en forme (titres, gras, tableaux, listes, blocs de code colorés, retour à la ligne à la largeur du terminal, 120 colonnes au plus, sur les espaces seulement, suite d'une puce indentée sous son texte) avec [glamour](https://github.com/charmbracelet/glamour). Le thème clair ou sombre suit le fond du terminal ; `GLAMOUR_STYLE` (`dark`, `light`, `dracula`, `tokyo-night`, `ascii`, `notty` ou un fichier JSON de style) l'impose. Le rapport reste en Markdown brut avec `--raw`, `-o`, `--json` ou une redirection, ainsi que dans `report.md`.
+
+### Mode incident
+
+`run --incident` est fait pour l'investigation d'un dysfonctionnement :
+
+- **Tri d'abord** : avant le plan, une tâche `t0` (rôle outillé le plus léger) localise le composant en échec et lit son message d'erreur exact et sa configuration. Le tri se termine dès qu'il signale une cause établie : il conclut à l'étape suivante (audit `goal_reached`), et l'explication des codes d'erreur et la recherche du correctif passent aux tâches planifiées. Le planner part de son résultat : il ne replanifie pas ce qu'elle a établi et, si la cause est prouvée, ne prévoit que sa vérification et la recherche du correctif. Chaque tâche reçoit le résultat de `t0` en entrée et n'a pas à relocaliser le composant.
+- **Causes en direct** : les agents disposent de l'outil `cause_report` (résumé, preuves `[Exxx]` existantes obligatoires, statut `established` ou `probable`). Une cause signalée s'affiche aussitôt au-dessus du tableau de progression, est enregistrée en mémoire de session (`kind: lead`) et dans l'audit (`lead`), et est transmise aux autres tâches en cours à leur étape suivante (audit `inbox`), qui ne refont pas la collecte. Une cause issue d'un modèle souverain n'est pas transmise à une tâche non souveraine. Une cause déjà signalée n'est pas réaffichée. Le synthesizer reçoit les causes signalées, à confirmer par les preuves ; la sortie `--json` les donne dans `leads`.
+- **Ctrl-C pour conclure** : un premier Ctrl-C demande la conclusion : les tâches en cours concluent à leur étape suivante avec ce qu'elles ont (« conclusion demandée »), celles pas encore lancées sont abandonnées (« non lancée »), la vérification des constats est sautée et le rapport est produit. Un second Ctrl-C interrompt le run comme sans `--incident`.
+
+`--incident` est incompatible avec `--direct` et `--chat`.
 
 ### Réponse directe
 

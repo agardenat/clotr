@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -35,6 +36,8 @@ const (
 	emptyMsg         = "Ta réponse ne contient aucun texte (seulement un raisonnement). Écris maintenant la réponse finale au format demandé, sans appeler d'outil."
 	continueMsg      = "Ta réponse a été coupée par la limite de longueur. Continue exactement là où elle s'arrête, sans rien répéter ni ajouter de préambule."
 	concludeTimeMsg  = "Temps presque écoulé. Conclus maintenant avec les éléments déjà collectés, au format demandé, sans appeler d'outil. Indique dans gaps ce qui reste à faire."
+	concludeNowMsg   = "L'utilisateur demande de conclure maintenant. Conclus avec les éléments déjà collectés, au format demandé, sans appeler d'outil. Indique dans gaps ce qui reste à faire."
+	inboxMsg         = "Causes signalées par d'autres tâches pendant que tu travailles (preuves citées, non vérifiées par toi) :\n%s\nNe refais pas leur collecte. Si ta tâche est concernée, vérifie-les ou cherche le correctif ; sinon poursuis ta tâche."
 )
 
 const (
@@ -51,6 +54,7 @@ type Runner struct {
 	ToolChars       int
 	StallSteps      int
 	ConcludeNotes   func(task string) string
+	Inbox           func(reader tools.Caller) string
 	Evidence        *evidence.Store
 	Chat            llm.Chatter
 	Tools           *tools.Registry
@@ -62,7 +66,12 @@ type Runner struct {
 	Budget          *budget.Tracker
 	Boundary        Boundary
 	down            sync.Map
+	concluding      atomic.Bool
 }
+
+func (r *Runner) ConcludeNow() { r.concluding.Store(true) }
+
+func (r *Runner) Concluding() bool { return r.concluding.Load() }
 
 type Boundary interface {
 	Outbound(model catalog.ModelInfo, msgs []llm.Message) []llm.Message
@@ -91,6 +100,7 @@ type Spec struct {
 	Deadline   time.Time
 	Check      func(content string) string
 	OnText     func(text string)
+	Reached    func() string
 }
 
 type Output struct {
@@ -146,13 +156,23 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 	var produced []toolMsg
 	seen := map[string]bool{}
 	idle, checks := 0, 0
+	reached := ""
 	for step := 1; ; step++ {
 		s.out.Steps = step
 		t0 := time.Now()
 		late := !spec.Deadline.IsZero() && len(defs) > 0 && step > 1 && time.Until(spec.Deadline) < lastStep
 		stalled := r.StallSteps > 0 && idle >= r.StallSteps && len(defs) > 0
-		final := step > maxSteps || late || stalled || len(defs) == 0
+		interrupted := r.Concluding() && len(defs) > 0
+		final := step > maxSteps || late || stalled || interrupted || reached != "" || len(defs) == 0
 		switch {
+		case reached != "" && !interrupted:
+			msgs = append(msgs, llm.Message{Role: "user", Content: reached + r.notes(spec.TaskID)})
+			r.Audit.Log("goal_reached", map[string]any{"task": spec.TaskID, "step": step})
+		case interrupted:
+			s.out.Limited, s.out.Limit = true, "interrupted"
+			msgs = append(msgs, llm.Message{Role: "user", Content: concludeNowMsg + r.notes(spec.TaskID)})
+			r.Audit.Log("conclude_now", map[string]any{"task": spec.TaskID, "step": step})
+			r.Events.Emit(progress.Event{Task: spec.TaskID, Kind: "interrupted", Detail: i18n.T("limit.user"), Step: step})
 		case stalled:
 			s.out.Limited, s.out.Limit = true, "stall"
 			msgs = append(msgs, llm.Message{Role: "user", Content: concludeStallMsg + r.notes(spec.TaskID)})
@@ -168,6 +188,12 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 			msgs = append(msgs, llm.Message{Role: "user", Content: concludeTimeMsg + r.notes(spec.TaskID)})
 			r.Events.Emit(progress.Event{Task: spec.TaskID, Kind: "time_limit", Detail: i18n.T("limit.time"), Step: step})
 			r.Audit.Log("time_limit", map[string]any{"task": spec.TaskID, "step": step})
+		}
+		if !final && step > 1 && r.Inbox != nil {
+			if news := r.Inbox(tools.Caller{Task: spec.TaskID, Model: s.model.Ref(), Sovereign: s.model.Sovereign}); news != "" {
+				msgs = append(msgs, llm.Message{Role: "user", Content: fmt.Sprintf(inboxMsg, news)})
+				r.Audit.Log("inbox", map[string]any{"task": spec.TaskID, "step": step, "content": news})
+			}
 		}
 		req := llm.Request{Messages: msgs, Session: s.id, OnProgress: s.streamProgress(step)}
 		if !final {
@@ -250,6 +276,9 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 			msgs = append(msgs, m)
 		}
 		r.compact(msgs, produced, step)
+		if spec.Reached != nil {
+			reached = spec.Reached()
+		}
 		lastStep = time.Since(t0)
 	}
 }
@@ -461,7 +490,9 @@ func (s *session) execTools(ctx context.Context, step int, calls []llm.ToolCall)
 			if s.r.Evidence != nil && !strings.HasPrefix(tc.Function.Name, "memory_") && !strings.HasPrefix(tc.Function.Name, "evidence_") {
 				id := s.r.Evidence.Add(s.spec.TaskID, tc.Function.Name, tc.Function.Arguments, res, err)
 				rec["evidence"] = id
-				res = "[" + id + "] " + res
+				res = "[" + id + "] " + s.r.Tools.Clip(res, id)
+			} else {
+				res = s.r.Tools.Clip(res, "")
 			}
 			s.r.Audit.Log("tool_call", rec)
 			out[i] = llm.Message{Role: "tool", ToolCallID: tc.ID, Content: res}

@@ -68,6 +68,9 @@ limits: {max_agents: 8, max_tasks: 5}
 			defer pmu.Unlock()
 			p := plans[min(planIdx, len(plans)-1)]
 			planIdx++
+			tl.mu.Lock()
+			tl.input["planner"] = user
+			tl.mu.Unlock()
 			return testutil.Reply(p), nil
 		case strings.Contains(sys, "réponse finale"):
 			return testutil.Reply("# Rapport"), nil
@@ -470,5 +473,85 @@ func TestPruneSameRoleDeps(t *testing.T) {
 	dropped := pruneSameRoleDeps(p)
 	if len(dropped) != 1 || dropped["t2"][0] != "t1" || len(p.Tasks[1].DependsOn) != 0 || len(p.Tasks[2].DependsOn) != 2 || !strings.Contains(p.Tasks[1].Goal, "Les résultats de t1 ne te sont pas transmis") || strings.Contains(p.Tasks[2].Goal, "transmis") {
 		t.Fatalf("%v %+v", dropped, p.Tasks)
+	}
+}
+
+func TestIncidentTriageBeforePlan(t *testing.T) {
+	o, tl := newOrch(t, []string{dagPlan}, nil)
+	o.Incident = true
+	rep, err := o.Run(context.Background(), "le pool GPU ne démarre pas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Results[0].TaskID != "t0" || rep.Results[0].Status != "ok" || len(rep.Results) != 5 {
+		t.Fatalf("résultats: %+v", rep.Results)
+	}
+	for _, id := range []string{"t1", "t2", "t3"} {
+		if tl.start[id].Before(tl.end["t0"]) {
+			t.Errorf("%s démarré avant la fin du tri", id)
+		}
+		if !strings.Contains(tl.input[id], "t0 vu") {
+			t.Errorf("%s ne reçoit pas le résultat du tri: %q", id, tl.input[id])
+		}
+	}
+	if !strings.Contains(tl.input["planner"], "Résultat du tri d'incident") || !strings.Contains(tl.input["planner"], "t0 vu") {
+		t.Fatalf("entrée du planner: %q", tl.input["planner"])
+	}
+	if !strings.Contains(tl.input["t0"], "Tri d'incident") {
+		t.Fatalf("objectif du tri: %q", tl.input["t0"])
+	}
+}
+
+func TestIncidentPlanReservesTriageID(t *testing.T) {
+	o, _ := newOrch(t, nil, nil)
+	o.triaged = &Result{TaskID: triageID, Status: "ok"}
+	if err := o.Validate(&Plan{Tasks: []Task{{ID: "t0", Role: "collector", Goal: "g"}}}); err == nil {
+		t.Fatal("id t0 accepté")
+	}
+	p := &Plan{Tasks: []Task{{ID: "t1", Role: "collector", Goal: "g", DependsOn: []string{"t0"}}}}
+	if err := o.Validate(p); err != nil || len(p.Tasks[0].DependsOn) != 0 {
+		t.Fatalf("dépendance vers le tri: %v %v", err, p.Tasks[0].DependsOn)
+	}
+}
+
+func TestConcludeNowSkipsPendingTasks(t *testing.T) {
+	o, _ := newOrch(t, []string{dagPlan}, nil)
+	o.Cfg.Limits.MaxAgents = 1
+	go func() {
+		time.Sleep(workDelay / 2)
+		o.ConcludeNow()
+	}()
+	rep, err := o.Run(context.Background(), "analyse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]string{}
+	for _, r := range rep.Results {
+		status[r.TaskID] = r.Status
+	}
+	ran := 0
+	for _, id := range []string{"t1", "t2", "t3"} {
+		if status[id] == "ok" {
+			ran++
+		}
+	}
+	if ran != 1 || status["t4"] != "skipped" || rep.Markdown == "" {
+		t.Fatalf("statuts %v, rapport %q", status, rep.Markdown)
+	}
+}
+
+func TestTriageEndsOnEstablishedCause(t *testing.T) {
+	o, _ := newOrch(t, nil, nil)
+	if o.causeEstablished() != "" {
+		t.Fatal("tri terminé sans cause")
+	}
+	_, _ = o.Memory.Put(memory.Entry{Key: "cause/t0/1", Content: "c", Kind: "lead", Task: "t0", Tags: []string{"cause", "probable"}})
+	_, _ = o.Memory.Put(memory.Entry{Key: "cause/t1/1", Content: "c", Kind: "lead", Task: "t1", Tags: []string{"cause", "established"}})
+	if o.causeEstablished() != "" {
+		t.Fatal("tri terminé sur une cause probable ou d'une autre tâche")
+	}
+	_, _ = o.Memory.Put(memory.Entry{Key: "cause/t0/2", Content: "c", Kind: "lead", Task: "t0", Tags: []string{"cause", "established"}})
+	if o.causeEstablished() != triageDone {
+		t.Fatal("tri non terminé sur une cause établie")
 	}
 }

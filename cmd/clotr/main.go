@@ -31,6 +31,7 @@ import (
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/httpx"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/lead"
 	"github.com/agardenat/clotr/internal/llm"
 	"github.com/agardenat/clotr/internal/markdown"
 	"github.com/agardenat/clotr/internal/memory"
@@ -78,6 +79,7 @@ type options struct {
 	chat         bool
 	withEvidence bool
 	raw          bool
+	incident     bool
 }
 
 type app struct {
@@ -97,6 +99,7 @@ type app struct {
 	instanceEnv map[string][]string
 	webTools    []string
 	evidence    *evidence.Store
+	leads       *lead.Store
 	closers     []func()
 }
 
@@ -108,11 +111,35 @@ func (r *app) close() {
 
 func main() {
 	httpx.UserAgent = "clotr/" + version
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+	go watchInterrupts(ctx, cancel, sigs, &interruptHook)
 	if err := newRoot().ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "erreur:", err)
 		os.Exit(1)
+	}
+}
+
+var interruptHook atomic.Pointer[func()]
+
+func watchInterrupts(ctx context.Context, cancel context.CancelFunc, sigs <-chan os.Signal, hook *atomic.Pointer[func()]) {
+	hooked := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case sig := <-sigs:
+			if f := hook.Load(); f != nil && !hooked && sig == os.Interrupt {
+				hooked = true
+				(*f)()
+				continue
+			}
+			cancel()
+			return
+		}
 	}
 }
 
@@ -221,6 +248,7 @@ Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal,
 	run.Flags().BoolVar(&o.chat, "chat", false, "mode conversation plein écran: réponse affichée en direct, r pour répondre, c pour copier en Markdown, q pour quitter")
 	run.Flags().BoolVar(&o.raw, "raw", false, "rapport en Markdown brut, sans mise en forme pour le terminal")
 	run.Flags().BoolVar(&o.withEvidence, "with-evidence", false, "annexer au rapport la sortie complète de chaque preuve citée (Markdown brut)")
+	run.Flags().BoolVar(&o.incident, "incident", false, "investigation d'un dysfonctionnement: tri avant le plan, causes affichées dès qu'un agent les signale, premier ctrl+c pour conclure tout de suite")
 
 	sessionsCmd := &cobra.Command{
 		Use:   "sessions",
@@ -598,6 +626,10 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	rt.registry.Add(rt.memory.Tools()...)
 	if rt.evidence != nil {
 		rt.registry.Add(rt.evidence.Tool(), rt.evidence.SearchTool())
+		if o.incident {
+			rt.leads = lead.New(rt.memory, rt.evidence, rt.audit)
+			rt.registry.Add(rt.leads.Tool())
+		}
 	}
 	rt.environment = strings.Join(envLines, "\n")
 	if cfg.WebSearch.MCP != "" {
@@ -702,6 +734,10 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		ConcludeNotes:   rt.memory.TaskNotes,
 		Budget:          rt.budget,
 	}
+	if rt.leads != nil {
+		rt.leads.Events = events
+		runner.Inbox = rt.leads.Inbox
+	}
 	return &orchestrator.Orchestrator{
 		Cfg:         rt.cfg,
 		Router:      rt.router,
@@ -713,6 +749,7 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		Memory:      rt.memory,
 		Language:    rt.lang,
 		WebTools:    rt.webTools,
+		Incident:    rt.leads != nil,
 	}
 }
 
@@ -1052,7 +1089,12 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	if o.direct != "" {
 		report, runErr = orch.Direct(ctx, request, o.directRole())
 	} else {
+		if orch.Incident {
+			conclude := orch.ConcludeNow
+			interruptHook.Store(&conclude)
+		}
 		report, runErr = orch.Run(ctx, request)
+		interruptHook.Store(nil)
 	}
 	used := rt.usedModels(report)
 	costs := rt.budget.Summary()
@@ -1090,6 +1132,9 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 }
 
 func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
+	if o.incident && (o.chat || o.direct != "") {
+		return errors.New("--incident: incompatible avec --chat et --direct (le mode incident repose sur le tri et le plan)")
+	}
 	if o.chat {
 		return cmdChat(ctx, o, args)
 	}
@@ -1116,7 +1161,11 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	}
 	md := o.fullReport(report.Markdown, sess.Dir())
 	if o.json {
-		out, _ := json.MarshalIndent(map[string]any{"plan": report.Plan, "results": report.Results, "report": md, "model": report.Model, "models_used": res.used, "costs": res.costs, "memory": rt.memory.All()}, "", "  ")
+		doc := map[string]any{"plan": report.Plan, "results": report.Results, "report": md, "model": report.Model, "models_used": res.used, "costs": res.costs, "memory": rt.memory.All()}
+		if rt.leads != nil {
+			doc["leads"] = rt.leads.Leads()
+		}
+		out, _ := json.MarshalIndent(doc, "", "  ")
 		return writeReport(w, o.output, append(out, '\n'), runErr)
 	}
 	if md == "" {

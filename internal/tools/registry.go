@@ -199,14 +199,14 @@ func (r *Registry) Call(ctx context.Context, allowed []string, name, args string
 	if !json.Valid([]byte(args)) {
 		return "", fmt.Errorf("arguments JSON invalides pour %s", name)
 	}
-	out, err := t.Call(ctx, json.RawMessage(args))
-	if err != nil {
-		return "", err
-	}
-	return Truncate(out, r.maxChars), nil
+	return t.Call(ctx, json.RawMessage(args))
 }
 
-func Truncate(s string, max int) string {
+func (r *Registry) Clip(out, evidence string) string {
+	return Truncate(out, r.maxChars, evidence)
+}
+
+func Truncate(s string, max int, evidence string) string {
 	if max <= 0 || len(s) <= max {
 		return s
 	}
@@ -215,7 +215,11 @@ func Truncate(s string, max int) string {
 		cut--
 	}
 	rest := s[cut:]
-	return s[:cut] + fmt.Sprintf("\n[truncated: %d octets / %d lignes omis — affiner la requête]", len(rest), strings.Count(rest, "\n")+1)
+	omitted := fmt.Sprintf("%d octets / %d lignes omis", len(rest), strings.Count(rest, "\n")+1)
+	if evidence == "" {
+		return s[:cut] + fmt.Sprintf("\n[truncated: %s — affiner la requête]", omitted)
+	}
+	return s[:cut] + fmt.Sprintf("\n[truncated: %s à partir de la ligne %d — sortie complète archivée : evidence_read id=%s avec pattern ou offset, sans refaire l'appel]", omitted, strings.Count(s[:cut], "\n")+1, evidence)
 }
 
 func Decode[T any](args json.RawMessage) (T, error) {
