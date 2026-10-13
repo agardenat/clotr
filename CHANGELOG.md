@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-13
+
 ### Ajouté
 - Templates : les entrées `allow` et `deny` de `ssh_paths` sont rendues avec les paramètres de l'instance, comme les chemins de `files` (une entrée rendue vide est ignorée, `..` refusé), pour autoriser un répertoire dont l'emplacement dépend de l'installation ; la description des outils SSH donne les chemins rendus.
 - Outils SSH (`ssh_read`, `ssh_tail`, `ssh_grep`, `log_stats`) et primitives `ssh.read`, `ssh.tail`, `ssh.grep`, `ssh.stat_tail` : un fichier `.gz` est décompressé à la lecture, après vérification par `gzip -t` ; auparavant, une recherche y renvoyait 0 sans erreur. En récursif, les fichiers compressés restent ignorés.
