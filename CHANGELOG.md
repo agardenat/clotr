@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-13
+
 ### Ajouté
 - Avertissement au démarrage quand `-t` écarte une instance que la demande cite (nom, mot-clé, cible ou IP comprise dans ses `networks`), avec ce qui a été reconnu ; l'instance reste écartée.
 
