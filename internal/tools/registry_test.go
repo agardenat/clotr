@@ -30,8 +30,14 @@ func TestRegistry(t *testing.T) {
 		t.Fatal("outil hors scope accepté")
 	}
 	out, err := r.Call(context.Background(), []string{"fs_read"}, "fs_read", "")
-	if err != nil || !strings.Contains(out, "[truncated") || !strings.HasPrefix(out, strings.Repeat("é", 25)) {
-		t.Fatalf("troncature: %q %v", out, err)
+	if err != nil || out != strings.Repeat("é", 100) {
+		t.Fatalf("sortie complète attendue: %q %v", out, err)
+	}
+	if c := r.Clip(out, ""); !strings.Contains(c, "[truncated") || !strings.Contains(c, "affiner la requête") || !strings.HasPrefix(c, strings.Repeat("é", 25)) {
+		t.Fatalf("troncature: %q", c)
+	}
+	if c := r.Clip("a\nb\n"+strings.Repeat("x", 100), "E007"); !strings.Contains(c, "à partir de la ligne 3") || !strings.Contains(c, "evidence_read id=E007") {
+		t.Fatalf("troncature avec preuve: %q", c)
 	}
 	if _, err := r.Call(context.Background(), []string{"fs_read"}, "fs_read", "{bad"); err == nil {
 		t.Fatal("JSON invalide accepté")

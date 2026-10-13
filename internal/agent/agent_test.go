@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -347,6 +349,112 @@ func TestEvidencePrefix(t *testing.T) {
 	}
 	if !strings.HasPrefix(seen, "[E001] pods:") || r.Evidence.Len() != 1 {
 		t.Fatalf("sortie d'outil: %q", seen)
+	}
+}
+
+func TestEvidenceKeepsFullOutput(t *testing.T) {
+	full := strings.Repeat("ligne\n", 300) + "StandardNVADSA10v5Family"
+	reg := tools.NewRegistry(1000)
+	reg.Add(testutil.FakeTool{ToolName: "az_get", Fn: func(context.Context, json.RawMessage) (string, error) { return full, nil }})
+	var seen string
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		last := req.Messages[len(req.Messages)-1]
+		if last.Role == "user" {
+			return testutil.Reply("", testutil.Call("az_get", map[string]string{"id": "x"})), nil
+		}
+		seen = last.Content
+		return testutil.Reply(`{"findings":["ok [E001]"]}`), nil
+	}}
+	r := runner(chat, reg)
+	dir := t.TempDir()
+	r.Evidence = evidence.Open(dir, 1)
+	if _, err := r.Run(context.Background(), Spec{TaskID: "t1", System: "s", User: "u", Tools: []string{"az_get"}, Candidates: models}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(seen, "StandardNVADSA10v5Family") || !strings.Contains(seen, "evidence_read id=E001") {
+		t.Fatalf("sortie vue par le modèle: %q", seen)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "E001.txt"))
+	if err != nil || !strings.HasSuffix(string(data), full) {
+		t.Fatalf("preuve tronquée: %v", err)
+	}
+}
+
+func TestInboxDeliveredAtNextStep(t *testing.T) {
+	var cur, peak int32
+	var got []string
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		last := req.Messages[len(req.Messages)-1]
+		if len(req.Messages) == 2 {
+			return testutil.Reply("", testutil.Call("k8s_list", map[string]string{"ns": "a"})), nil
+		}
+		got = append(got, last.Content)
+		return testutil.Reply(`{"findings":["ok [E001]"]}`), nil
+	}}
+	r := runner(chat, registry(&cur, &peak))
+	r.Evidence = evidence.Open(t.TempDir(), 1)
+	calls := 0
+	r.Inbox = func(c tools.Caller) string {
+		calls++
+		if c.Task != "t1" || c.Model != "p/a" {
+			t.Errorf("lecteur: %+v", c)
+		}
+		if calls == 1 {
+			return "- t9 : [cause établie] AllocationFailed [E001]"
+		}
+		return ""
+	}
+	if _, err := r.Run(context.Background(), Spec{TaskID: "t1", System: "s", User: "u", Tools: []string{"k8s_list"}, Candidates: models}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(got) != 1 || !strings.Contains(got[0], "AllocationFailed") || !strings.Contains(got[0], "Ne refais pas leur collecte") {
+		t.Fatalf("boîte de réception: %d appels, %q", calls, got)
+	}
+}
+
+func TestConcludeNowEndsTask(t *testing.T) {
+	var cur, peak int32
+	var r *Runner
+	var final llm.Request
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		if len(req.Messages) == 2 {
+			r.ConcludeNow()
+			return testutil.Reply("", testutil.Call("k8s_list", map[string]string{"ns": "a"})), nil
+		}
+		final = req
+		return testutil.Reply(`{"findings":["ok [E001]"]}`), nil
+	}}
+	r = runner(chat, registry(&cur, &peak))
+	r.MaxSteps = 10
+	r.Evidence = evidence.Open(t.TempDir(), 1)
+	out, err := r.Run(context.Background(), Spec{TaskID: "t1", System: "s", User: "u", Tools: []string{"k8s_list"}, Candidates: models})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(final.Tools) != 0 || !strings.Contains(final.Messages[len(final.Messages)-1].Content, "conclure maintenant") || !out.Limited || out.Limit != "interrupted" || out.Steps != 2 {
+		t.Fatalf("conclusion: tools=%d limit=%q steps=%d", len(final.Tools), out.Limit, out.Steps)
+	}
+}
+
+func TestReachedEndsTaskWithoutLimit(t *testing.T) {
+	var cur, peak int32
+	var final llm.Request
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		if len(req.Messages) == 2 {
+			return testutil.Reply("", testutil.Call("k8s_list", map[string]string{"ns": "a"})), nil
+		}
+		final = req
+		return testutil.Reply(`{"findings":["ok [E001]"]}`), nil
+	}}
+	r := runner(chat, registry(&cur, &peak))
+	r.MaxSteps = 10
+	r.Evidence = evidence.Open(t.TempDir(), 1)
+	out, err := r.Run(context.Background(), Spec{TaskID: "t0", System: "s", User: "u", Tools: []string{"k8s_list"}, Candidates: models, Reached: func() string { return "objectif atteint, conclus" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(final.Tools) != 0 || final.Messages[len(final.Messages)-1].Content != "objectif atteint, conclus" || out.Limited || out.Steps != 2 {
+		t.Fatalf("fin sur objectif: tools=%d limited=%v steps=%d", len(final.Tools), out.Limited, out.Steps)
 	}
 }
 

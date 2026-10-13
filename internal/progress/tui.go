@@ -25,6 +25,7 @@ var (
 	stDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	stFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	stWarn    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	stLead    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
 )
 
 const (
@@ -32,6 +33,7 @@ const (
 	statusRunning = "running"
 	statusDone    = "done"
 	statusFailed  = "failed"
+	statusSkipped = "skipped"
 	barWidth      = 10
 )
 
@@ -94,6 +96,12 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		if m.Task == "budget" {
 			return b, b.println(stWarn.Render(ansi.Truncate(i18n.T("budget.prefix", m.Model, m.Detail), max(b.width-1, 20), "…")))
+		}
+		switch m.Kind {
+		case "lead":
+			return b, b.println(stLead.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
+		case "concluding":
+			return b, b.println(stWarn.Render(ansi.Wrap(m.Detail, max(b.width-1, 20), "")))
 		}
 		b.apply(Event(m))
 	case logMsg:
@@ -180,7 +188,7 @@ func (b *board) apply(e Event) {
 		r.tools++
 		b.toolCalls++
 		r.detail = i18n.T("tool", e.Detail)
-	case "limit", "time_limit", "stall_limit":
+	case "limit", "time_limit", "stall_limit", "interrupted":
 		r.limited, r.warn = true, true
 		r.detail = e.Detail
 		if e.Step > 0 {
@@ -189,6 +197,8 @@ func (b *board) apply(e Event) {
 		switch e.Kind {
 		case "time_limit":
 			r.stop = i18n.T("stopped.time")
+		case "interrupted":
+			r.stop = i18n.T("stopped.user")
 		case "stall_limit":
 			r.stop = i18n.T("stopped.stall")
 		default:
@@ -208,6 +218,8 @@ func (b *board) apply(e Event) {
 		r.cost = e.Cost
 	case "failed":
 		r.status, r.end, r.detail = statusFailed, now, e.Detail
+	case "skipped":
+		r.status, r.detail = statusSkipped, e.Detail
 	}
 }
 
@@ -262,6 +274,8 @@ func (b *board) line(r *row) string {
 		icon = stDone.Render("✓")
 	case statusFailed:
 		icon = stFailed.Render("✗")
+	case statusSkipped:
+		icon = stFaint.Render("–")
 	default:
 		icon = stFaint.Render("·")
 	}

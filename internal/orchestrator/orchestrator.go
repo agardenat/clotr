@@ -19,6 +19,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/lead"
 	"github.com/agardenat/clotr/internal/memory"
 	"github.com/agardenat/clotr/internal/progress"
 	"github.com/agardenat/clotr/internal/tools"
@@ -90,7 +91,15 @@ type Orchestrator struct {
 	AfterTask       func(ctx context.Context)
 	Language        string
 	OnAnswer        func(text string)
+	Incident        bool
+	triaged         *Result
 }
+
+const (
+	triageID   = "t0"
+	triageGoal = "Tri d'incident, avant toute planification : localise le composant en échec désigné par la demande (ressource, cible, hôte), puis lis son message d'erreur exact (opération en échec, code, sous-code, détails) et sa configuration effective. Dès qu'une sortie d'outil montre une cause, signale-la avec cause_report, avant toute autre recherche ; si la même sortie en montre plusieurs, signale-les toutes dans la même étape. Le tri se termine dès qu'une cause établie est signalée : l'explication détaillée des codes d'erreur et la recherche du correctif seront confiées aux tâches planifiées ensuite, qui partiront de ton résultat."
+	triageDone = "Une cause établie est signalée : l'objectif du tri est atteint. Conclus maintenant, au format demandé, sans appeler d'outil : localisation du composant, message d'erreur exact et configuration utile, avec leurs preuves. Indique dans gaps ce qui reste à expliquer ou à corriger, pour les tâches suivantes."
+)
 
 func (o *Orchestrator) langDirective() string {
 	switch o.Language {
@@ -115,16 +124,60 @@ func (o *Orchestrator) withHistory(request string) string {
 	return fmt.Sprintf("Nouvelle demande (affinage d'une session existante):\n%s\n\nContexte de la session:\n%s\nLa mémoire partagée contient les faits établis aux tours précédents (memory_search).", request, o.History)
 }
 
-func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error) {
-	plan, err := o.Plan(ctx, request)
+func (o *Orchestrator) ConcludeNow() {
+	o.Runner.ConcludeNow()
+	o.Audit.Log("conclude_requested", map[string]any{})
+	o.Events.Emit(progress.Event{Kind: "concluding", Detail: i18n.T("concluding")})
+}
+
+func (o *Orchestrator) triage(ctx context.Context, request string) Result {
+	role, err := o.DirectRole("")
 	if err != nil {
-		return nil, err
+		return Result{TaskID: triageID, Goal: triageGoal, Status: "failed", Error: err.Error()}
 	}
-	results := o.Execute(ctx, request, plan)
+	t := Task{ID: triageID, Role: role, Goal: triageGoal, Tools: o.Tools.Names()}
+	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: t.ID, Role: t.Role, Goal: i18n.T("triage")}}})
+	o.Audit.Log("triage", map[string]any{"role": role})
+	return o.runTask(ctx, request, t, nil, o.causeEstablished)
+}
+
+func (o *Orchestrator) causeEstablished() string {
+	for _, e := range o.Memory.All() {
+		if e.Kind == lead.Kind && e.Task == triageID && slices.Contains(e.Tags, lead.Established) {
+			return triageDone
+		}
+	}
+	return ""
+}
+
+func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error) {
+	var results []Result
+	if o.Incident {
+		t := o.triage(ctx, request)
+		results = append(results, t)
+		if t.Status == "ok" {
+			o.triaged = &t
+		}
+		if ctx.Err() != nil {
+			return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
+		}
+	}
+	plan := &Plan{}
+	if !o.Runner.Concluding() {
+		var err error
+		if plan, err = o.Plan(ctx, request); err != nil {
+			return nil, err
+		}
+		results = append(results, o.Execute(ctx, request, plan)...)
+	}
 	if ctx.Err() != nil {
 		return &Report{Plan: plan, Results: results}, ctx.Err()
 	}
-	o.Verify(ctx, results)
+	if o.Runner.Concluding() {
+		o.Audit.Log("verify_skipped", map[string]any{"reason": "conclusion demandée"})
+	} else {
+		o.Verify(ctx, results)
+	}
 	if ctx.Err() != nil {
 		return &Report{Plan: plan, Results: results}, ctx.Err()
 	}
@@ -316,7 +369,7 @@ func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) 
 	if err != nil {
 		return nil, err
 	}
-	user := o.withHistory(request)
+	user := o.planInput(request)
 	var lastErr error
 	for attempt := 1; attempt <= 2; attempt++ {
 		o.Events.Emit(progress.Event{Task: "planner", Kind: "start", Model: o.Runner.First(cands)})
@@ -345,9 +398,17 @@ func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) 
 			return &plan, nil
 		}
 		o.Audit.Log("plan_invalid", map[string]any{"attempt": attempt, "error": lastErr.Error(), "content": out.Content})
-		user = fmt.Sprintf("%s\n\nTa réponse précédente était invalide:\n%s\n\nErreur: %s\nCorrige et renvoie uniquement le JSON.", o.withHistory(request), out.Content, lastErr)
+		user = fmt.Sprintf("%s\n\nTa réponse précédente était invalide:\n%s\n\nErreur: %s\nCorrige et renvoie uniquement le JSON.", o.planInput(request), out.Content, lastErr)
 	}
 	return nil, fmt.Errorf("plan invalide: %w", lastErr)
+}
+
+func (o *Orchestrator) planInput(request string) string {
+	user := o.withHistory(request)
+	if o.triaged == nil {
+		return user
+	}
+	return user + "\n\nRésultat du tri d'incident (tâche " + triageID + ", déjà exécutée ; son résultat est transmis à chaque tâche, qui n'a pas à relocaliser le composant):" + synthInput([]Result{*o.triaged}) + "\nNe replanifie pas ce que le tri a établi. Si la cause est établie par une preuve, ne planifie que la vérification de cette cause et la recherche du correctif durable; sinon, découpe l'investigation à partir de ce qu'il a trouvé. L'id " + triageID + " est réservé: ne l'utilise pas."
 }
 
 func (o *Orchestrator) Validate(p *Plan) error {
@@ -363,6 +424,12 @@ func (o *Orchestrator) Validate(p *Plan) error {
 		t := &p.Tasks[i]
 		if t.ID == "" || ids[t.ID] {
 			return fmt.Errorf("tâche %d: id vide ou dupliqué %q", i, t.ID)
+		}
+		if o.triaged != nil && t.ID == triageID {
+			return fmt.Errorf("tâche %d: id %s réservé au tri d'incident", i, triageID)
+		}
+		if o.triaged != nil {
+			t.DependsOn = slices.DeleteFunc(t.DependsOn, func(d string) bool { return d == triageID })
 		}
 		ids[t.ID] = true
 		if !slices.Contains(workers, t.Role) {
@@ -398,7 +465,7 @@ func (o *Orchestrator) Validate(p *Plan) error {
 				}
 			}
 		}
-		extra := append([]string{evidence.ToolName, evidence.SearchName}, o.WebTools...)
+		extra := append([]string{evidence.ToolName, evidence.SearchName, lead.ToolName}, o.WebTools...)
 		for _, n := range extra {
 			if !slices.Contains(expanded, n) && slices.Contains(o.Tools.Names(), n) {
 				expanded = append(expanded, n)
@@ -504,19 +571,27 @@ func (o *Orchestrator) Execute(ctx context.Context, request string, p *Plan) []R
 			}
 			if err := sem.Acquire(ctx, 1); err != nil {
 				res.Status, res.Error = "failed", err.Error()
+			} else if o.Runner.Concluding() {
+				sem.Release(1)
+				res.Status, res.Gaps = "skipped", []string{"tâche non lancée: conclusion demandée par l'utilisateur"}
+				o.Events.Emit(progress.Event{Task: t.ID, Kind: "skipped", Detail: i18n.T("task.skipped")})
+				o.Audit.Log("task_skipped", map[string]any{"task": t.ID})
 			} else {
 				mu.Lock()
 				var deps []Result
+				if o.triaged != nil {
+					deps = append(deps, *o.triaged)
+				}
 				for _, d := range t.DependsOn {
 					deps = append(deps, results[d])
 				}
 				mu.Unlock()
-				res = o.runTask(ctx, request, t, deps)
-				for n := 2; n <= o.continuations()+1 && ctx.Err() == nil && needsContinuation(res); n++ {
+				res = o.runTask(ctx, request, t, deps, nil)
+				for n := 2; n <= o.continuations()+1 && ctx.Err() == nil && !o.Runner.Concluding() && needsContinuation(res); n++ {
 					c := continuationTask(t, n)
 					o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: c.ID, Role: c.Role, Goal: i18n.T("continuation", t.ID, t.Goal)}}})
 					o.Audit.Log("continuation", map[string]any{"task": t.ID, "id": c.ID, "limited": res.Limited, "error": res.Error})
-					next := o.runTask(ctx, request, c, append(append([]Result(nil), deps...), res))
+					next := o.runTask(ctx, request, c, append(append([]Result(nil), deps...), res), nil)
 					res = mergeResults(res, next)
 				}
 				if res.Limited && res.Status == "ok" {
@@ -537,7 +612,7 @@ func (o *Orchestrator) Execute(ctx context.Context, request string, p *Plan) []R
 	return out
 }
 
-func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps []Result) Result {
+func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps []Result, reached func() string) Result {
 	start := time.Now()
 	res := Result{TaskID: t.ID, Role: t.Role, Goal: t.Goal}
 	finish := func() Result {
@@ -572,7 +647,7 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 		tctx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
-	out, err := o.Runner.Run(tctx, agent.Spec{
+	spec := agent.Spec{
 		TaskID:     t.ID,
 		Role:       t.Role,
 		System:     o.workerPrompt(t.Role),
@@ -581,7 +656,9 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 		Candidates: cands,
 		Deadline:   deadline,
 		Check:      checkWorker(o.Runner.Evidence),
-	})
+		Reached:    reached,
+	}
+	out, err := o.Runner.Run(tctx, spec)
 	if out != nil {
 		res.Model, res.Steps, res.ToolCalls, res.Cost, res.Limited, res.Limit = out.Model, out.Steps, out.ToolCalls, out.Cost, out.Limited, out.Limit
 	}
@@ -640,6 +717,15 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 	}
 	if len(notes) > 0 {
 		user += "\n\nNotes de la mémoire partagée (faits enregistrés par les agents):\n" + memory.Format(notes)
+	}
+	var leads []memory.Entry
+	for _, e := range o.Memory.All() {
+		if e.Kind == lead.Kind {
+			leads = append(leads, e)
+		}
+	}
+	if len(leads) > 0 {
+		user += "\n\nCauses signalées par les agents en cours de run (à confirmer par les preuves citées et les constats):\n" + memory.Format(leads)
 	}
 	o.Events.Emit(progress.Event{Task: "synthesizer", Kind: "start", Model: o.Runner.First(cands)})
 	out, err := o.Runner.Run(ctx, agent.Spec{
@@ -873,7 +959,8 @@ Environnement:
 Règles:
 - un sous-agent travaille tant qu'il progresse (nouveaux appels d'outils) et conclut quand il n'apprend plus rien, avec un plafond de sécurité de %d étapes; %d sous-agents s'exécutent en même temps;
 - une tâche = un périmètre cohérent, jamais un simple appel d'outil;
-- au plus %d tâches; pour une demande ciblée simple, 2 ou 3 tâches suffisent; une tâche de collecte détaillée ne couvre qu'une cible (cluster, contexte, cible de template), deux au plus; pour une investigation (cause d'une anomalie, volume de logs, incident), découper davantage: par cible ou par hôte, et séparer configuration, logs, volumétrie/disque, métriques et événements;
+- au plus %d tâches; pour une demande ciblée simple, 2 ou 3 tâches suffisent; une tâche de collecte détaillée ne couvre qu'une cible (cluster, contexte, cible de template), deux au plus; pour une investigation (cause d'une anomalie, volume de logs, incident), découper par périmètre disjoint (cible, hôte, ressource, composant), jamais par type de donnée sur un même composant: des tâches « configuration », « journal », « santé » d'un même composant suivent la même piste et relisent les mêmes ressources; séparer logs, disque et métriques seulement quand ce sont des sources distinctes qu'une seule tâche ne lirait pas;
+- chaque objectif nomme les ressources dont la tâche a la charge, et une ressource n'apparaît que dans un objectif; si la cible doit d'abord être retrouvée (nom donné par l'utilisateur, ressource à localiser), la localisation et l'investigation du composant vont dans la même tâche, pas dans des tâches parallèles qui la referaient chacune;
 - prévoir une tâche d'analyse (depends_on vers les collectes) quand il faut recouper des résultats;
 - pour un problème ou un incident, la demande vise une solution de fond: prévoir des tâches qui cherchent la cause racine et le correctif durable (configuration effective et valeurs par défaut, dimensionnement, documentation de l'éditeur, cause en amont), pas seulement l'état actuel; ne pas replanifier ce que la demande présente comme déjà connu ou déjà fait;
 - l'environnement ci-dessus est déjà connu: ne pas créer de tâche pour le redécouvrir (lister les contextes, vérifier l'accès);
@@ -896,8 +983,8 @@ func (o *Orchestrator) workerPrompt(role string) string {
 Tu travailles en autonomie complète: ne pose aucune question, n'attends aucune confirmation.
 Tu ne modifies jamais rien; tes outils sont uniquement des outils de lecture.
 Reste factuel : chaque affirmation repose sur une sortie d'outil citée [Exxx]. N'invente jamais une valeur par défaut, un comportement de produit, la signification d'un message ou d'un paramètre, ni une chronologie.
-%s
-Avant de classer un constat comme anomalie, vérifie qu'il ne s'explique pas par un comportement attendu décrit dans l'environnement. Si ta tâche porte sur un problème, cherche ce qui le cause et ce qui l'empêcherait durablement (paramètre, mécanisme, documentation), pas seulement son état actuel. Un lien de cause à effet doit être appuyé par une preuve (message d'erreur, configuration, chronologie) ; sinon présente-le comme hypothèse dans gaps. Distingue valeurs par défaut et valeurs modifiées.
+%s%s
+Avant de classer un constat comme anomalie, vérifie qu'il ne s'explique pas par un comportement attendu décrit dans l'environnement. Si ta tâche porte sur un problème, cherche ce qui le cause et ce qui l'empêcherait durablement (paramètre, mécanisme, documentation), pas seulement son état actuel. Pour un échec d'opération, lis d'abord le message d'erreur exact (code, sous-code, détails) : il donne souvent la cause, avant tout parcours de l'historique par fenêtres successives. Un lien de cause à effet doit être appuyé par une preuve (message d'erreur, configuration, chronologie) ; sinon présente-le comme hypothèse dans gaps. Distingue valeurs par défaut et valeurs modifiées.
 Une erreur d'outil (paramètre ou nom refusé, réponse illisible, sortie tronquée) est une limite de ta collecte, pas un constat sur l'infrastructure : note-la dans gaps, jamais dans findings. Pour tout taux, ratio ou projection, écris l'opération avec les valeurs mesurées et leurs horodatages.
 Tu travailles tant que tu progresses : la tâche s'arrête d'elle-même quand tes appels n'apportent plus rien de nouveau. Ne relis pas une donnée déjà obtenue; si un outil renvoie une erreur de syntaxe ou de paramètre, corrige au plus une fois en t'appuyant sur sa description, puis passe à autre chose et note le manque dans gaps; si une sortie est tronquée, affine la requête (filtre, match, chemin précis) plutôt que de la répéter.
 Preuves déjà collectées : les sorties d'outils de tous les tours de la session sont archivées. Avant de collecter, cherche avec evidence_search si la donnée existe déjà (outil, hôte, chemin), relis-la avec evidence_read, et ne recollecte que ce qui a pu changer depuis son heure de collecte (taille, occupation, état courant, logs récents), en le disant. Cite les preuves existantes par leur identifiant.
@@ -909,7 +996,14 @@ Environnement:
 Quand tu as terminé, réponds UNIQUEMENT avec un objet JSON:
 {"findings":["[CRITIQUE|MAJEUR|MINEUR|INFO] constat [E012]"],"evidence":["[E012] outil + paramètres essentiels : extrait factuel"],"gaps":["ce qui n'a pas pu être vérifié et pourquoi"]}
 Chaque sortie d'outil commence par son identifiant de preuve [Exxx] (archivée en entier) : cite-le au début de chaque evidence et à la fin de chaque finding qu'il établit.
-%s`, role, r.Description, o.webRule(), o.Environment, o.langDirective())
+%s`, role, r.Description, o.webRule(), o.incidentRule(), o.Environment, o.langDirective())
+}
+
+func (o *Orchestrator) incidentRule() string {
+	if !o.Incident || !slices.Contains(o.Tools.Names(), lead.ToolName) {
+		return ""
+	}
+	return "\nMode incident : dès qu'une sortie d'outil montre ce qui cause le dysfonctionnement décrit dans la demande (message d'erreur exact, configuration fautive), appelle " + lead.ToolName + " avec la preuve, sans attendre ta conclusion, puis poursuis ta tâche (vérification de la cause, correctif durable). Une anomalie sans lien avec ce dysfonctionnement va dans tes constats, pas dans " + lead.ToolName + ". Les causes signalées par les autres tâches te sont transmises : ne refais pas leur collecte et ne les signale pas à nouveau."
 }
 
 func (o *Orchestrator) directPrompt(role string) string {

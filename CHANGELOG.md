@@ -4,6 +4,17 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- `run --incident` : tri d'incident `t0` avant le plan (composant en échec, message d'erreur exact, configuration), terminé dès qu'il signale une cause établie, dont le résultat guide le planner et est transmis à chaque tâche ; outil `cause_report` qui affiche une cause dès qu'un agent la signale avec une preuve, l'enregistre en mémoire et l'envoie aux autres tâches en cours ; premier Ctrl-C pour conclure tout de suite (tâches en cours conclues, tâches non lancées abandonnées, vérification sautée, rapport produit), second Ctrl-C pour interrompre. Incompatible avec `--direct` et `--chat`.
+
+### Modifié
+- Planner : une investigation est découpée par périmètre disjoint (cible, hôte, ressource, composant), plus par type de donnée sur un même composant ; chaque objectif nomme ses ressources, et la localisation d'une cible reste dans la tâche qui l'investigue.
+- Sous-agents : pour un échec d'opération, le message d'erreur exact (code, sous-code, détails) est lu avant tout parcours de l'historique.
+- `cause` devient un nom d'instance réservé.
+
+### Corrigé
+- Une sortie d'outil plus longue que `limits.tool_output_max_chars` est archivée en entier dans sa preuve ; seule la copie envoyée au modèle est tronquée, avec la ligne de coupure et l'appel `evidence_read` qui relit la suite. Auparavant la preuve gardait la sortie tronquée, et la partie coupée était perdue.
+
 ## [0.10.0] - 2026-10-12
 
 ### Ajouté
