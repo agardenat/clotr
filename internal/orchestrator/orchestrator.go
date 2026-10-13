@@ -1004,7 +1004,11 @@ func (o *Orchestrator) accessRule() string {
 	if !slices.Contains(o.Tools.Names(), dns.ToolName) {
 		return ""
 	}
-	return "\nIncident d'accès à une URL ou à un nom (inaccessible, erreur TLS ou de certificat, page ou authentification inattendue) : vérifie d'abord la chaîne d'accès de bout en bout, avant les logs applicatifs : résous le nom avec " + dns.ToolName + " et compare l'IP obtenue au point d'entrée attendu (adresse du load balancer de l'ingress ou du proxy, IP de la VM). Une IP inattendue est une cause en soi : signale-la telle quelle."
+	via := ""
+	if slices.ContainsFunc(o.Tools.Names(), func(n string) bool { return strings.HasSuffix(n, "_ssh_resolve") }) {
+		via = ", et aussi avec <instance>_ssh_resolve depuis un hôte du réseau concerné (vue DNS interne, à travers le proxy : un nom inconnu du poste peut exister dans le DNS interne)"
+	}
+	return "\nIncident d'accès à une URL ou à un nom (inaccessible, erreur TLS ou de certificat, page ou authentification inattendue) : vérifie d'abord la chaîne d'accès de bout en bout, avant les logs applicatifs : résous le nom avec " + dns.ToolName + via + ", et compare l'IP obtenue au point d'entrée attendu (adresse du load balancer de l'ingress ou du proxy, IP de la VM). Une IP inattendue est une cause en soi : signale-la telle quelle."
 }
 
 func (o *Orchestrator) incidentRule() string {

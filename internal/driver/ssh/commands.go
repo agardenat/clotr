@@ -144,6 +144,14 @@ func (b Builder) List(dir string, depth, limit int, sortBy string) string {
 	return fmt.Sprintf("%sfind %s -maxdepth %d -printf '%%y %%s %%TY-%%Tm-%%Td %%TH:%%TM %%p\\n' 2>&1%s | head -n %d", b.prefix(), Quote(dir), depth, sorter, limit)
 }
 
+func (b Builder) Resolve(name string, resolvConf bool) string {
+	cmd := "getent ahosts " + Quote(name) + `; echo "--- exit $?"`
+	if resolvConf {
+		cmd += "; echo '--- resolv.conf'; grep -E '^(nameserver|search|domain)' /etc/resolv.conf"
+	}
+	return cmd
+}
+
 func (b Builder) Disk(dir string, depth, limit int) string {
 	p, q := b.prefix(), Quote(dir)
 	return fmt.Sprintf("%sdf -hP -- %s; echo '--- du'; %sdu -xh --max-depth=%d -- %s 2>/dev/null | sort -rh | head -n %d; echo '--- files'; %sfind %s -xdev -type f 2>/dev/null | wc -l", p, q, p, depth, q, limit, p, q)

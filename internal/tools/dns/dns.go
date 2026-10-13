@@ -45,7 +45,7 @@ func (t Tool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	name := hostOf(a.Name)
+	name := HostOf(a.Name)
 	if name == "" {
 		return "", errors.New("name requis")
 	}
@@ -88,7 +88,7 @@ func (t Tool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
 	return b.String(), nil
 }
 
-func hostOf(s string) string {
+func HostOf(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.Index(s, "://"); i >= 0 {
 		s = s[i+3:]

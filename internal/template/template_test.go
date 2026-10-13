@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -758,6 +759,48 @@ targets:
 		ep, _, err := in.sshEndpoint(context.Background(), &Target{}, &c.h)
 		if err != nil || ep.Host != c.want {
 			t.Fatalf("%+v: %q %v", c.h, ep.Host, err)
+		}
+	}
+}
+
+func TestResolveOutput(t *testing.T) {
+	out := "192.0.2.10      STREAM lb.example.net\n192.0.2.10      DGRAM  \n192.0.2.10      RAW    \n2001:db8::1     STREAM \n--- exit 0\n--- resolv.conf\nnameserver 10.0.0.53\nsearch example.test\n"
+	got := resolveOutput("app.example.com", &Host{Name: "web1.example.test", IP: "10.0.0.7"}, out)
+	want := "app.example.com vu depuis web1.example.test (getent ahosts : /etc/hosts puis DNS selon nsswitch)\nnom canonique\tlb.example.net\nA\t192.0.2.10\nAAAA\t2001:db8::1\nrésolveur de l'hôte (/etc/resolv.conf) :\nnameserver 10.0.0.53\nsearch example.test\n"
+	if got != want {
+		t.Fatalf("sortie:\n%s", got)
+	}
+	if got := resolveOutput("absent.example.com", &Host{IP: "10.0.0.7"}, "--- exit 2\n"); !strings.Contains(got, "vu depuis 10.0.0.7") || !strings.Contains(got, "nom inconnu de l'hôte") {
+		t.Fatalf("nom inconnu: %q", got)
+	}
+}
+
+func TestSSHResolveTool(t *testing.T) {
+	tpl := writeTemplate(t, `name: x
+script: x.star
+connectors:
+  ssh: {driver: ssh, user: ops}
+tools:
+  - kind: ssh_resolve
+ssh_paths: {allow: [/var/log/**]}
+`, `
+def discover(ctx):
+    return {"targets": [{"name": "t", "kind": "hosts", "hosts": [{"name": "web1", "ip": "10.0.0.7"}]}]}
+`)
+	in, err := NewInstance("i", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Discover(context.Background(), "", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	tool := in.Tools()[0]
+	if tool.Name() != "i_ssh_resolve" {
+		t.Fatal(tool.Name())
+	}
+	for _, n := range []string{"a;reboot", "-x", "a b", "$(id)"} {
+		if _, err := tool.Call(context.Background(), json.RawMessage(`{"host":"web1","name":`+strconv.Quote(n)+`}`)); err == nil || !strings.Contains(err.Error(), "nom invalide") {
+			t.Fatalf("%q accepté: %v", n, err)
 		}
 	}
 }

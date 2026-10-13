@@ -566,6 +566,13 @@ func TestAccessRuleAndDNSToolWithTasks(t *testing.T) {
 	if !strings.Contains(o.workerPrompt("collector"), "chaîne d'accès de bout en bout") || !strings.Contains(o.directPrompt("collector"), dns.ToolName) {
 		t.Fatal("consigne d'accès absente")
 	}
+	if strings.Contains(o.workerPrompt("collector"), "_ssh_resolve") {
+		t.Fatal("ssh_resolve cité sans instance SSH")
+	}
+	o.Tools.Add(testutil.FakeTool{ToolName: "lab_ssh_resolve", Fn: func(context.Context, json.RawMessage) (string, error) { return "", nil }})
+	if !strings.Contains(o.workerPrompt("collector"), "<instance>_ssh_resolve depuis un hôte du réseau") {
+		t.Fatal("ssh_resolve absent de la consigne")
+	}
 	p := &Plan{Tasks: []Task{{ID: "t1", Role: "collector", Goal: "g", Tools: []string{"k8s"}}}}
 	if err := o.Validate(p); err != nil || !slices.Contains(p.Tasks[0].Tools, dns.ToolName) {
 		t.Fatalf("outil DNS non ajouté: %v %v", p.Tasks[0].Tools, err)
