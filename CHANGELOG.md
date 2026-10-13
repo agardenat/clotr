@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-13
+
 ### Ajouté
 - Outil intégré `dns_resolve` (CNAME, A, AAAA, par le résolveur du poste), proposé à toutes les tâches (`-x dns` l'écarte), et consigne pour les incidents d'accès à une URL : vérifier d'abord que le nom pointe vers le point d'entrée attendu, une IP inattendue étant une cause en soi.
 - Outil de template `ssh_resolve` : `getent ahosts` sur un hôte en SSH, donc à travers le proxy de l'instance et avec le DNS interne de son réseau, plus le résolveur configuré sur l'hôte (`/etc/resolv.conf` si `ssh_paths` l'autorise).
