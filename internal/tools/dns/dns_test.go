@@ -59,7 +59,7 @@ func TestRejected(t *testing.T) {
 
 func TestHostOf(t *testing.T) {
 	for in, want := range map[string]string{"app.example.com.": "app.example.com", "user@app.example.com:22": "app.example.com", "[2001:db8::1]:443": "2001:db8::1", " app.example.com/x ": "app.example.com"} {
-		if got := hostOf(in); got != want {
+		if got := HostOf(in); got != want {
 			t.Errorf("%q: %q", in, got)
 		}
 	}

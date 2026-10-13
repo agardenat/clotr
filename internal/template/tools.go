@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/tools"
+	"github.com/agardenat/clotr/internal/tools/dns"
 )
 
 type kind struct {
@@ -20,13 +24,14 @@ type kind struct {
 }
 
 var kinds = map[string]kind{
-	"inventory": {false, inventoryTool},
-	"ssh_list":  {true, sshListTool},
-	"ssh_read":  {true, sshReadTool},
-	"ssh_tail":  {true, sshTailTool},
-	"ssh_grep":  {true, sshGrepTool},
-	"ssh_disk":  {true, sshDiskTool},
-	"log_stats": {true, logStatsTool},
+	"inventory":   {false, inventoryTool},
+	"ssh_list":    {true, sshListTool},
+	"ssh_read":    {true, sshReadTool},
+	"ssh_tail":    {true, sshTailTool},
+	"ssh_grep":    {true, sshGrepTool},
+	"ssh_disk":    {true, sshDiskTool},
+	"ssh_resolve": {true, sshResolveTool},
+	"log_stats":   {true, logStatsTool},
 }
 
 type fnTool struct {
@@ -394,6 +399,84 @@ func sshDiskTool(in *Instance, name, desc string) tools.Tool {
 			return format(res)
 		},
 	}
+}
+
+var dnsName = regexp.MustCompile(`^[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9])?(\.[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9])?)*$`)
+
+func sshResolveTool(in *Instance, name, desc string) tools.Tool {
+	return fnTool{
+		name:   name,
+		desc:   withDesc(desc, "Résout un nom tel que le voit un hôte, en SSH (lecture seule) : getent ahosts sur l'hôte (fichier /etc/hosts puis DNS, selon nsswitch), donc à travers le proxy de l'instance et avec le DNS du réseau de l'hôte. Donne le nom canonique, les adresses et le résolveur configuré sur l'hôte. Pour un incident d'accès à une URL, comparer l'IP obtenue au point d'entrée attendu ; préférer cet outil à une résolution depuis le poste quand le nom n'existe que dans le DNS interne."),
+		schema: `{"type":"object","properties":{` + hostProps + `,"name":{"type":"string","description":"nom à résoudre, ex: app.example.com (un schéma, un port ou un chemin d'URL sont ignorés)"}},"required":["host","name"]}`,
+		call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			a, err := tools.Decode[struct {
+				Target, Host, Name string
+			}](raw)
+			if err != nil {
+				return "", err
+			}
+			n := dns.HostOf(a.Name)
+			if !dnsName.MatchString(n) || len(n) > 253 {
+				return "", fmt.Errorf("nom invalide : %q", a.Name)
+			}
+			t, h, err := in.findHost(a.Target, a.Host)
+			if err != nil {
+				return "", err
+			}
+			_, rerr := in.rules.Check("/etc/resolv.conf")
+			res, err := in.remote(ctx, name, t, h, func(b ssh.Builder) string { return b.Resolve(n, rerr == nil) }, maxRead)
+			if err != nil {
+				return "", err
+			}
+			return resolveOutput(n, h, res.Stdout), nil
+		},
+	}
+}
+
+func resolveOutput(name string, h *Host, out string) string {
+	host := h.Name
+	if host == "" {
+		host = h.IP
+	}
+	body, rest, _ := strings.Cut(out, "--- exit ")
+	code, conf, _ := strings.Cut(rest, "\n")
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s vu depuis %s (getent ahosts : /etc/hosts puis DNS selon nsswitch)\n", name, host)
+	var seen []string
+	canonical := ""
+	for _, l := range strings.Split(body, "\n") {
+		f := strings.Fields(l)
+		if len(f) == 0 || net.ParseIP(f[0]) == nil {
+			continue
+		}
+		if canonical == "" && len(f) >= 3 {
+			canonical = f[2]
+		}
+		if !slices.Contains(seen, f[0]) {
+			seen = append(seen, f[0])
+		}
+	}
+	switch strings.TrimSpace(code) {
+	case "0":
+		if canonical != "" && !strings.EqualFold(strings.TrimSuffix(canonical, "."), name) {
+			fmt.Fprintf(&b, "nom canonique\t%s\n", canonical)
+		}
+		for _, ip := range seen {
+			kind := "AAAA"
+			if net.ParseIP(ip).To4() != nil {
+				kind = "A"
+			}
+			fmt.Fprintf(&b, "%s\t%s\n", kind, ip)
+		}
+	case "2":
+		b.WriteString("aucune adresse : nom inconnu de l'hôte (ni /etc/hosts ni DNS)\n")
+	default:
+		fmt.Fprintf(&b, "getent a échoué (code %s) : %s\n", strings.TrimSpace(code), strings.TrimSpace(body))
+	}
+	if conf = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(conf), "--- resolv.conf")); conf != "" {
+		b.WriteString("résolveur de l'hôte (/etc/resolv.conf) :\n" + conf + "\n")
+	}
+	return b.String()
 }
 
 func logStatsTool(in *Instance, name, desc string) tools.Tool {

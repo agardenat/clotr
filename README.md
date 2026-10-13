@@ -109,7 +109,7 @@ Chaque entrée garde la tâche, le modèle et l'indicateur souverain de son aute
 
 ## Résolution DNS
 
-L'outil intégré `dns_resolve` résout un nom depuis le poste qui exécute clotr, par le résolveur du système : nom canonique (CNAME) et adresses IPv4/IPv6. Il est proposé à toutes les tâches, et `-x dns` l'écarte. Pour un incident d'accès à une URL (inaccessible, erreur TLS, authentification inattendue), la consigne des agents est de vérifier d'abord la chaîne d'accès : résoudre le nom et comparer l'IP obtenue au point d'entrée attendu (load balancer de l'ingress, proxy, VM) ; une IP inattendue est signalée comme cause. Le résultat reflète la vue DNS du poste : un nom résolu seulement par le DNS interne d'un autre réseau apparaît comme inexistant.
+L'outil intégré `dns_resolve` résout un nom depuis le poste qui exécute clotr, par le résolveur du système : nom canonique (CNAME) et adresses IPv4/IPv6. Il est proposé à toutes les tâches, et `-x dns` l'écarte. Pour un incident d'accès à une URL (inaccessible, erreur TLS, authentification inattendue), la consigne des agents est de vérifier d'abord la chaîne d'accès : résoudre le nom et comparer l'IP obtenue au point d'entrée attendu (load balancer de l'ingress, proxy, VM) ; une IP inattendue est signalée comme cause. Le résultat reflète la vue DNS du poste : un nom résolu seulement par le DNS interne d'un autre réseau apparaît comme inexistant. Pour la vue d'un réseau joint par un proxy, `<instance>_ssh_resolve` (templates SSH) résout le nom sur un hôte de ce réseau ; la consigne des agents le cite quand une instance le propose.
 
 ## Recherche web
 
@@ -148,7 +148,7 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
 - `targets` : cibles statiques. `foreach: <paramètre list>` crée une cible par élément ; un champ vide de l'élément hérite du paramètre de même nom. Les attributs `ssh_user`, `ssh_key_path` et `ssh_port` d'une cible remplacent ceux du connecteur ssh ;
 - `script` : fichier Starlark, chemin relatif au YAML ;
 - `files`, `env` : fichiers et variables d'environnement que le script peut lire ; les chemins de `files` sont rendus avec les paramètres (`"{{.config_path}}"`) ;
-- `tools` : outils génériques du moteur (`inventory`, `ssh_list`, `ssh_read`, `ssh_tail`, `ssh_grep`, `ssh_disk`, `log_stats`), avec `name` et `description` optionnels, et `when` : condition rendue avec les paramètres (`"{{.ssh}}"`), l'outil n'est créé que si elle vaut vrai (vide = faux, valeur non booléenne refusée) ;
+- `tools` : outils génériques du moteur (`inventory`, `ssh_list`, `ssh_read`, `ssh_tail`, `ssh_grep`, `ssh_disk`, `ssh_resolve`, `log_stats`), avec `name` et `description` optionnels, et `when` : condition rendue avec les paramètres (`"{{.ssh}}"`), l'outil n'est créé que si elle vaut vrai (vide = faux, valeur non booléenne refusée) ;
 - `companions` : outils ajoutés d'office à toute tâche qui utilise un outil de l'instance ;
 - `ssh_paths` : `allow` et `deny` (globs, `**` récursif) ;
 - `hints` : consignes transmises au planner et aux agents.
@@ -251,7 +251,7 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 
 ### Outils SSH
 
-- Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `grep -c -E -I` (comptage), `df -hP`, `du -xh`. Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
+- Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `grep -c -E -I` (comptage), `df -hP`, `du -xh`, `getent ahosts` (résolution d'un nom). Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
 - `host` doit appartenir à l'inventaire de l'instance (FQDN, nom court ou IP), ou être une IP comprise dans les `networks` d'une cible. Une IP de plage présente dans la demande fait proposer l'instance ;
 - `path` doit être absolu, sans `..`, couvert par `ssh_paths.allow` et par aucun `ssh_paths.deny` (keytabs, jceks, jks, clés, `*password*`…). En récursif, les motifs `deny` sont aussi passés en `--exclude` ;
 - `sudo -n` est ajouté si `sudo: true`. Si sudo exige un mot de passe et que le connecteur déclare `auth`, la commande est relancée avec `sudo -S` sous `sh -c` : le mot de passe passe par l'entrée standard, jamais dans la ligne de commande, et l'hôte reste en mode mot de passe pour le run. Un mot de passe refusé est oublié et redemandé à l'appel suivant ;
@@ -273,6 +273,8 @@ Les hôtes SSH peuvent être désignés par leur nom complet, leur IP, leur nom 
 `<instance>_ssh_grep` avec `count` renvoie le nombre exact de lignes correspondantes de chaque fichier, lu en entier, sans le plafond de `max_matches` (en récursif, seuls les fichiers avec au moins une correspondance sont listés). `ssh.grep(…, count=True)` fait de même dans un script.
 
 `<instance>_ssh_disk` donne `df`, les sous-répertoires les plus gros (`du`) et le nombre de fichiers d'un répertoire.
+
+`<instance>_ssh_resolve` résout un nom tel que le voit un hôte : `getent ahosts` sur l'hôte (sans sudo), donc à travers le proxy de l'instance et avec le DNS du réseau de l'hôte, `/etc/hosts` compris. Il donne le nom canonique, les adresses et, si `ssh_paths` autorise `/etc/resolv.conf`, les lignes `nameserver`/`search` de l'hôte. Le nom est validé (lettres, chiffres, `-`, `_`, `.`) avant d'être passé à la commande.
 
 ## Lecture seule
 

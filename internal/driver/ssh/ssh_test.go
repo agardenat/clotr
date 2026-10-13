@@ -229,3 +229,12 @@ func TestSudoWithPassword(t *testing.T) {
 		t.Fatal("détection du mot de passe sudo refusé")
 	}
 }
+
+func TestResolveCommand(t *testing.T) {
+	if got := (Builder{Sudo: true}).Resolve("app.example.com", true); got != `getent ahosts 'app.example.com'; echo "--- exit $?"; echo '--- resolv.conf'; grep -E '^(nameserver|search|domain)' /etc/resolv.conf` {
+		t.Fatal(got)
+	}
+	if got := (Builder{}).Resolve("app.example.com", false); strings.Contains(got, "resolv.conf") {
+		t.Fatal(got)
+	}
+}
