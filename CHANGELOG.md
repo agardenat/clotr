@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-13
+
 ### Ajouté
 - `run --incident` : tri d'incident `t0` avant le plan (composant en échec, message d'erreur exact, configuration), terminé dès qu'il signale une cause établie, dont le résultat guide le planner et est transmis à chaque tâche ; outil `cause_report` qui affiche une cause dès qu'un agent la signale avec une preuve, l'enregistre en mémoire et l'envoie aux autres tâches en cours ; premier Ctrl-C pour conclure tout de suite (tâches en cours conclues, tâches non lancées abandonnées, vérification sautée, rapport produit), second Ctrl-C pour interrompre. Incompatible avec `--direct` et `--chat`.
 
