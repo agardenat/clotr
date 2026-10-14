@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-14
+
 ### Ajouté
 - Clients : `vars` (codes client, projet…) remplacées par `{{.<clé>}}` dans les `params` du client et de ses instances, par exemple dans le chemin `password_vault` d'un secret ; une clé inconnue désactive l'instance avec un avertissement. Les références sont transmises aux agents avec le `context` du client.
 - Section `vault` (`addr`, `namespace`) : adresse Vault utilisée quand `VAULT_ADDR` n'est pas exporté (par exemple défini seulement dans une fonction du shell).
