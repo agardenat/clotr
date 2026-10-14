@@ -30,7 +30,8 @@ Cette liste ordonnée sert aussi de chaîne de fallback :
 - sur 400/404/422, on bascule directement ;
 - sur 401/403, l'exécution s'arrête ;
 - sur 403 lié au quota ou au budget (corps contenant quota, budget ou insufficient), la bascule est immédiate ;
-- sur 404, la bascule est immédiate et le modèle est écarté pour le reste du run.
+- sur 404, la bascule est immédiate et le modèle est écarté pour le reste du run ;
+- sortie épuisée sans réponse (limite de sortie atteinte pendant le raisonnement, sans texte ni appel d'outil) : bascule sur un modèle disponible qui n'a pas encore échoué ainsi pour cette étape ; s'il n'y en a plus, l'appel échoue aussitôt, sans demande de suite ni nouvel essai, qui reproduiraient le même raisonnement. Le `max_tokens` envoyé figure dans l'événement `llm_call` de l'audit.
 
 Les profils sont évalués dans l'ordre : le premier glob qui correspond à `model` ou `provider/model` (insensible à la casse) s'applique. `exclude: true` retire le modèle du catalogue. Un modèle sans profil reçoit `tier=balanced` et `tools=false`. Un profil final `match: "*"` avec `exclude: true` transforme la liste en liste blanche.
 

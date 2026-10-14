@@ -4,6 +4,10 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Modifié
+- Sortie épuisée sans réponse (modèle à raisonnement qui atteint sa limite de sortie sans texte) : un modèle qui a déjà échoué ainsi n'est plus rappelé pour la même étape, et sans autre modèle disponible l'appel échoue aussitôt. Auparavant clotr redemandait une suite puis relançait pour réponse vide, jusqu'à 7 appels identiques (45 min observées pour une synthèse).
+- Audit : `llm_call` enregistre le `max_tokens` envoyé.
+
 ### Corrigé
 - Ligne « Client » transmise aux agents : plus de double point quand le `context` se termine par un point.
 
