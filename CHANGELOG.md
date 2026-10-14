@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-14
+
 ### Ajouté
 - SSH : option `key_vault` du connecteur (et attribut `ssh_key_vault` d'une cible) : clé privée lue dans un secret Vault (`chemin[#champ]`, champ par défaut `private_key`), gardée en mémoire ; sans utilisateur fixé, le champ `username` du même secret est utilisé.
 
