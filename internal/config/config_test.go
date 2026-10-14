@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -102,5 +103,59 @@ func TestInstances(t *testing.T) {
 		if _, err := Parse([]byte(base + bad)); err == nil {
 			t.Errorf("accepté:\n%s", bad)
 		}
+	}
+}
+
+func TestClients(t *testing.T) {
+	base := "providers:\n  - name: a\n    base_url: http://x/v1\ninstances:\n  - {name: solo, template: x}\n"
+	load := func(clients map[string]string) (*Config, error) {
+		dir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dir, "clients"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range clients {
+			if err := os.WriteFile(filepath.Join(dir, "clients", name+".yaml"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		path := filepath.Join(dir, "config.yaml")
+		if err := os.WriteFile(path, []byte(base), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return Load(path)
+	}
+	c, err := load(map[string]string{
+		"acme": "name: acme\naliases: [acmecorp]\ncontext: client fictif\nparams: {proxy_url: socks5h://localhost:1080}\ninstances:\n  - {name: acme-lake, template: x}\n",
+		"beta": "name: beta\ninstances:\n  - {name: beta-lake, template: x}\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Instances) != 3 || c.Instances[0].Client != "" || c.Instances[1].Client != "acme" || c.Instances[2].Client != "beta" {
+		t.Fatalf("instances: %+v", c.Instances)
+	}
+	if cl, ok := c.Client("acme"); !ok || cl.Params["proxy_url"] != "socks5h://localhost:1080" || cl.Aliases[0] != "acmecorp" || cl.Instances != nil {
+		t.Fatalf("client: %+v", cl)
+	}
+	for name, bad := range map[string]map[string]string{
+		"nom différent du fichier": {"acme": "name: other\n"},
+		"nom d'instance":           {"solo": "name: solo\n"},
+		"nom réservé":              {"fs": "name: fs\n"},
+		"alias en double":          {"acme": "name: acme\naliases: [shared]\n", "beta": "name: beta\naliases: [Shared]\n"},
+		"alias vide":               {"acme": "name: acme\naliases: [\"\"]\n"},
+		"champ inconnu":            {"acme": "name: acme\nproxy: x\n"},
+		"instance en double":       {"acme": "name: acme\ninstances:\n  - {name: solo, template: x}\n"},
+	} {
+		if _, err := load(bad); err == nil {
+			t.Errorf("%s: accepté", name)
+		}
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(base), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(path); err != nil || len(c.Clients) != 0 {
+		t.Fatalf("sans répertoire clients: %v %+v", err, c)
 	}
 }

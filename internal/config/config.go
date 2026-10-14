@@ -59,6 +59,7 @@ type Config struct {
 	MCP       []MCPServer     `yaml:"mcp"`
 	Templates TemplatesConf   `yaml:"templates"`
 	Instances []Instance      `yaml:"instances"`
+	Clients   []Client        `yaml:"-"`
 	Routing   Routing         `yaml:"routing"`
 	Sessions  SessionsConf    `yaml:"sessions"`
 	Language  string          `yaml:"language"`
@@ -91,6 +92,24 @@ type Instance struct {
 	Template string         `yaml:"template"`
 	Enabled  *bool          `yaml:"enabled"`
 	Params   map[string]any `yaml:"params"`
+	Client   string         `yaml:"-"`
+}
+
+type Client struct {
+	Name      string         `yaml:"name"`
+	Aliases   []string       `yaml:"aliases"`
+	Context   string         `yaml:"context"`
+	Params    map[string]any `yaml:"params"`
+	Instances []Instance     `yaml:"instances"`
+}
+
+func (c *Config) Client(name string) (Client, bool) {
+	for _, cl := range c.Clients {
+		if cl.Name == name {
+			return cl, true
+		}
+	}
+	return Client{}, false
 }
 
 func (i Instance) IsEnabled() bool {
@@ -270,21 +289,64 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Parse(data)
+	return parse(data, ClientsDir(path))
+}
+
+func ClientsDir(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "clients")
 }
 
 func Parse(data []byte) (*Config, error) {
+	return parse(data, "")
+}
+
+func parse(data []byte, clientsDir string) (*Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	if clientsDir != "" {
+		if err := c.loadClients(clientsDir); err != nil {
+			return nil, err
+		}
+	}
 	c.applyDefaults()
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
 	return &c, nil
+}
+
+func (c *Config) loadClients(dir string) error {
+	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	if err != nil {
+		return err
+	}
+	slices.Sort(files)
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			return err
+		}
+		var cl Client
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		if err := dec.Decode(&cl); err != nil {
+			return fmt.Errorf("client %s: %w", f, err)
+		}
+		if base := strings.TrimSuffix(filepath.Base(f), ".yaml"); cl.Name != base {
+			return fmt.Errorf("client %s: name %q différent du nom du fichier (%s)", f, cl.Name, base)
+		}
+		for _, in := range cl.Instances {
+			in.Client = cl.Name
+			c.Instances = append(c.Instances, in)
+		}
+		cl.Instances = nil
+		c.Clients = append(c.Clients, cl)
+	}
+	return nil
 }
 
 func (c *Config) applyDefaults() {
@@ -525,6 +587,26 @@ func (c *Config) validate() error {
 		instNames[in.Name] = true
 		if in.Template == "" {
 			fail("instances[%d].template: requis", i)
+		}
+	}
+	terms := map[string]string{}
+	for _, cl := range c.Clients {
+		if !instanceName.MatchString(cl.Name) {
+			fail("client %q: nom invalide ([a-z][a-z0-9-]*)", cl.Name)
+		}
+		if slices.Contains(reservedPrefixes, cl.Name) || instNames[cl.Name] {
+			fail("client %q: nom déjà pris par une instance ou réservé", cl.Name)
+		}
+		for _, t := range append([]string{cl.Name}, cl.Aliases...) {
+			key := strings.ToLower(strings.TrimSpace(t))
+			if key == "" {
+				fail("client %s: alias vide", cl.Name)
+				continue
+			}
+			if other, dup := terms[key]; dup {
+				fail("client %s: %q déjà utilisé par le client %s", cl.Name, t, other)
+			}
+			terms[key] = cl.Name
 		}
 	}
 	if *c.Limits.Continuations < 0 || *c.Limits.Continuations > 3 {

@@ -230,7 +230,7 @@ tool(
 
 Au démarrage d'un run, une instance est seulement déclarée : ses outils et son environnement sont transmis au planner, sans identifiants ni appel réseau. L'environnement reprend l'inventaire en cache du même template, script et paramètres, quel que soit son âge. Sans cache, `discover` est exécuté hors ligne (10 s au plus, `http.request` et `ssh.*` refusés) : son résultat est retenu s'il n'a tenté aucun accès réseau, ce qui donne dès le départ les cibles et plages d'un template qui ne dépend que de ses paramètres ; sinon, les cibles statiques de la configuration. Une instance n'est activée qu'au premier appel de l'un de ses outils par une tâche. Un outil `inventory` lit l'inventaire en cache sans activer l'instance, s'il a déjà été découvert (sa date figure dans la réponse).
 
-Une instance n'est proposée aux agents (outils et environnement) que si la demande du tour ou une demande précédente de la session la mentionne : nom de l'instance, nom du template, nom d'une cible de l'inventaire ou l'un des `keywords` du template (mot entier, sans tenir compte de la casse). Une IP comprise dans les `networks` d'une cible compte comme mention. `-t <instance>` la force, y compris pour les tours suivants de la session (`run -s`), et une instance déjà activée dans le processus (tour précédent d'une conversation) reste proposée. Sinon, l'environnement indique seulement qu'elle existe et comment l'utiliser : une question sans rapport ne peut ni l'activer ni demander ses identifiants. Le choix est tracé dans l'audit (`instances_scope`).
+Une instance n'est proposée aux agents (outils et environnement) que si la demande du tour ou une demande précédente de la session la mentionne : nom de l'instance, nom du template, nom d'une cible de l'inventaire ou l'un des `keywords` du template (mot entier, sans tenir compte de la casse). Une IP comprise dans les `networks` d'une cible compte comme mention. Le nom ou un alias d'un client (voir Clients) mentionne toutes ses instances. Quand la demande nomme un client, le nom du template et les `keywords` ne suffisent plus pour les instances des autres clients ni pour celles sans client : seuls leur nom, une cible ou une IP de leurs `networks` les mentionnent. « pods en erreur sur k8s acme » propose donc l'instance k8s d'acme, pas celle d'un autre client. `-t <instance>` la force, y compris pour les tours suivants de la session (`run -s`), et une instance déjà activée dans le processus (tour précédent d'une conversation) reste proposée. Sinon, l'environnement indique seulement qu'elle existe et comment l'utiliser : une question sans rapport ne peut ni l'activer ni demander ses identifiants. Le choix est tracé dans l'audit (`instances_scope`).
 
 À l'activation :
 
@@ -368,10 +368,45 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `files` | `roots`, `max_file_bytes` |
 | `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true ; false : activée seulement par `-t <instance>`) |
+| `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
 | `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
 | `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true ; false : connecté seulement par `-t mcp_<serveur>`). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. |
 
 Une section absente désactive les outils correspondants. Un outil dont l'initialisation échoue est désactivé, avec un avertissement.
+
+### Clients
+
+Les instances d'un même client se déclarent dans `clients/<client>.yaml`, à côté du fichier de configuration (`~/.config/clotr/clients/` par défaut, ou à côté de `--config` / `$CLOTR_CONFIG`). Un fichier par client ; `name` doit être le nom du fichier sans `.yaml`.
+
+```yaml
+name: acme
+aliases: [acmecorp, lakehouse]
+context: "Acme, projet Lakehouse : plateforme de données et VM d'administration derrière le bastion du client"
+params:
+  proxy_url: socks5h://localhost:1080
+  ssh_user: admin
+  ssh_key_path: ~/.ssh/acme_ed25519
+instances:
+  - name: k8s-acme
+    template: k8s
+    params:
+      contexts: [{name: acme-prod}]
+  - name: vm-acme
+    template: ssh-hosts
+    params:
+      networks: [{cidr: 10.20.0.0/24}]
+      sudo: true
+```
+
+| Clé | Rôle |
+|---|---|
+| `name` | nom du client (`[a-z][a-z0-9-]*`), distinct des noms d'instances et des préfixes réservés |
+| `aliases` | autres termes qui désignent le client dans une demande ; un alias n'appartient qu'à un client |
+| `context` | description transmise aux agents avec les instances du client |
+| `params` | valeurs par défaut des paramètres de ses instances (proxy, compte et clé SSH…) : appliquées seulement aux paramètres que le template de l'instance déclare, la valeur de l'instance l'emporte |
+| `instances` | même format que `instances` du fichier principal ; les noms restent uniques sur toute la configuration |
+
+Nommer le client ou l'un de ses alias dans une demande propose toutes ses instances (voir Activation d'une instance). `-t <client>` et `-x <client>` valent pour toutes ses instances. Les instances du fichier principal n'ont pas de client et se comportent comme avant.
 
 ## Usage
 

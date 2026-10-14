@@ -96,6 +96,7 @@ templates:
   dir: ~/.config/clotr/templates
   cache_ttl: 15m
 
+# Instances sans client ; celles d'un client vont dans clients/<client>.yaml, à côté de ce fichier (voir le README).
 instances:
   - name: prod
     template: mon-template
