@@ -44,12 +44,14 @@ const (
 	maxChecks       = 2
 	maxEmptyRetries = 2
 	maxResumes      = 3
+	maxRoundPause   = 5 * time.Minute
 	maxOutputTokens = 32000
 )
 
 type Runner struct {
 	ConcludeReserve time.Duration
 	RoundPause      time.Duration
+	Persistent      func(provider string) bool
 	KeepSteps       int
 	ToolChars       int
 	StallSteps      int
@@ -373,19 +375,27 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 	}
 	var lastErr error
 	var skipped []string
-	for round := 0; round < rounds; round++ {
+	persistent := false
+	for round := 0; ; round++ {
 		if round > 0 {
-			if lastErr == nil || !llm.Transient(lastErr) {
+			if lastErr == nil || !llm.Transient(lastErr) || round >= rounds && !persistent {
 				break
 			}
-			r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[s.cur].Ref(), Detail: i18n.T("fallback.round", r.RoundPause)})
-			r.Audit.Log("retry_round", map[string]any{"task": s.spec.TaskID, "step": step, "pause": r.RoundPause.String(), "error": lastErr.Error()})
+			pause := r.RoundPause
+			if persistent {
+				pause = min(r.RoundPause<<min(round-1, 4), maxRoundPause)
+				if ra := llm.RetryAfter(lastErr); ra > pause {
+					pause = min(ra, maxRoundPause)
+				}
+			}
+			r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[s.cur].Ref(), Detail: i18n.T("fallback.round", pause)})
+			r.Audit.Log("retry_round", map[string]any{"task": s.spec.TaskID, "step": step, "round": round, "pause": pause.String(), "persistent": persistent, "error": lastErr.Error()})
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(r.RoundPause):
+			case <-time.After(pause):
 			}
-			lastErr, skipped = nil, nil
+			lastErr, skipped, persistent = nil, nil, false
 		}
 		for k := 0; k < len(cands); k++ {
 			i := (s.cur + k) % len(cands)
@@ -464,6 +474,9 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 				}
 			}
 			lastErr = err
+			if r.RoundPause > 0 && r.Persistent != nil && llm.Transient(err) && r.Persistent(m.Provider) {
+				persistent = true
+			}
 			if !llm.Failover(err) {
 				return nil, fmt.Errorf("%s: %w", m.Ref(), err)
 			}

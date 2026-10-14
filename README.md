@@ -26,7 +26,7 @@ Chaque modèle porte aussi un indicateur souverain : `sovereign` du provider, su
 - `require` : seuls les modèles souverains sont éligibles. Un `--model` non souverain est alors refusé.
 
 Cette liste ordonnée sert aussi de chaîne de fallback :
-- sur 408/425/429/5xx ou une erreur réseau, le même modèle est retenté une fois (backoff, ou `Retry-After` plafonné à 30 s), puis l'appel bascule sur le suivant. Le modèle reste candidat pour les appels suivants, y compris en cas de 429 quota ;
+- sur 408/425/429/5xx ou une erreur réseau, le même modèle est retenté une fois (backoff, ou `Retry-After` plafonné à 30 s), puis l'appel bascule sur le suivant. Le modèle reste candidat pour les appels suivants, y compris en cas de 429 quota. Si tous les candidats sont en échec temporaire, un second tour a lieu après 30 s ; avec `persistent_retry: true` sur le provider d'un modèle qui a échoué ainsi, les tours continuent jusqu'à une réponse ou une interruption (Ctrl-C), avec une pause doublée à chaque tour de 30 s à 5 min (`Retry-After` respecté dans cette limite) ;
 - sur 400/404/422, on bascule directement ;
 - sur 401/403, l'exécution s'arrête ;
 - sur 403 lié au quota ou au budget (corps contenant quota, budget ou insufficient), la bascule est immédiate ;
@@ -360,7 +360,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 
 | Section | Rôle |
 |---|---|
-| `providers` | endpoints OpenAI-compatibles : `name`, `base_url` (jusqu'à `/v1`), `api_key` (clé en clair ou `${VAR}`) ou `api_key_env` (nom de variable), `weight`, `sovereign`, `budget`, `session_header`, `stream` (défaut true), `max_concurrency`, `model_info`, `headers` |
+| `providers` | endpoints OpenAI-compatibles : `name`, `base_url` (jusqu'à `/v1`), `api_key` (clé en clair ou `${VAR}`) ou `api_key_env` (nom de variable), `weight`, `sovereign`, `budget`, `session_header`, `stream` (défaut true), `max_concurrency`, `model_info`, `headers`, `persistent_retry` (erreurs temporaires retentées sans limite de tours, voir Routage) |
 | `profiles` | `match` (glob), `tier`, `context`, `tools`, `priority`, `sovereign`, `exclude` |
 | `routing` | `sovereign` : `any`, `prefer` ou `require` |
 | `roles` | `tier`, `tools`, `min_context`, `sovereign`, `description`. `planner` et `synthesizer` obligatoires, plus au moins un rôle de travail. Défauts : `collector` (fast, outils) et `analyst` (balanced, outils, 32k) |

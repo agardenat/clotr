@@ -879,11 +879,15 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		Attempts:        2,
 		Backoff:         2 * time.Second,
 		RoundPause:      30 * time.Second,
-		StallSteps:      *rt.cfg.Limits.StallSteps,
-		KeepSteps:       *rt.cfg.Limits.HistoryKeepSteps,
-		ToolChars:       *rt.cfg.Limits.HistoryToolChars,
-		ConcludeNotes:   rt.memory.TaskNotes,
-		Budget:          rt.budget,
+		Persistent: func(provider string) bool {
+			p, ok := rt.cfg.Provider(provider)
+			return ok && p.PersistentRetry
+		},
+		StallSteps:    *rt.cfg.Limits.StallSteps,
+		KeepSteps:     *rt.cfg.Limits.HistoryKeepSteps,
+		ToolChars:     *rt.cfg.Limits.HistoryToolChars,
+		ConcludeNotes: rt.memory.TaskNotes,
+		Budget:        rt.budget,
 	}
 	if rt.leads != nil {
 		rt.leads.Events = events
