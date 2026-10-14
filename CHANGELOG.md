@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-14
+
 ### Ajouté
 - Clients : un fichier `clients/<client>.yaml` à côté du fichier de configuration regroupe les instances d'un client, avec `aliases`, un `context` transmis aux agents et des `params` par défaut pour ses instances (proxy, compte SSH…, appliqués aux seuls paramètres que le template déclare). Nommer le client ou un alias dans la demande propose toutes ses instances ; `-t <client>` et `-x <client>` valent pour toutes.
 
