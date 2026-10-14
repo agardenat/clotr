@@ -91,6 +91,9 @@ type Instance struct {
 
 	Activating func()
 
+	Client      string
+	ClientTerms []string
+
 	mu        sync.Mutex
 	inv       *Inventory
 	invValue  starlark.Value
@@ -396,7 +399,17 @@ func (in *Instance) Mentioned(text string) bool {
 }
 
 func (in *Instance) Mention(text string) string {
-	terms := append([]string{in.Name, in.T.Name}, in.T.Keywords...)
+	if why := in.MentionOwn(text); why != "" {
+		return why
+	}
+	if why := in.MentionClient(text); why != "" {
+		return why
+	}
+	return in.MentionGeneric(text)
+}
+
+func (in *Instance) MentionOwn(text string) string {
+	terms := []string{in.Name}
 	var networks []*Target
 	in.mu.Lock()
 	if in.inv != nil {
@@ -416,6 +429,21 @@ func (in *Instance) Mention(text string) string {
 			}
 		}
 	}
+	return MentionTerm(text, terms)
+}
+
+func (in *Instance) MentionClient(text string) string {
+	if MentionTerm(text, in.ClientTerms) == "" {
+		return ""
+	}
+	return "client " + in.Client
+}
+
+func (in *Instance) MentionGeneric(text string) string {
+	return MentionTerm(text, append([]string{in.T.Name}, in.T.Keywords...))
+}
+
+func MentionTerm(text string, terms []string) string {
 	for _, term := range terms {
 		if term = strings.TrimSpace(term); term == "" {
 			continue

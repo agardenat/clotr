@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
@@ -187,7 +188,7 @@ Détail des options : clotr run --help`,
 
 	addTaskFlags := func(c *cobra.Command) {
 		c.Flags().StringToStringVarP(&o.models, "model", "m", nil, "forcer un modèle par rôle: role=provider/model")
-		c.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance> (un serveur ou une instance cité par son nom est activé même avec enabled: false)")
+		c.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance>,<client> (un serveur ou une instance cité par son nom est activé même avec enabled: false ; un client vaut pour toutes ses instances)")
 		c.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, "exclure des outils par préfixe (mêmes préfixes que -t, prioritaire sur -t et enabled)")
 		c.Flags().StringVar(&o.web, "web", "", "recherche web pour ce run: yes|no (défaut: web_search.policy)")
 		c.Flags().IntVar(&o.maxAgents, "max-agents", 0, "sous-agents simultanés pour ce run (prioritaire sur limits.max_agents)")
@@ -289,7 +290,7 @@ Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal,
 			return cmdTools(cmd.Context(), o, cmd.OutOrStdout())
 		},
 	}
-	toolsCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance> (un serveur ou une instance cité par son nom est activé même avec enabled: false)")
+	toolsCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance>,<client> (un serveur ou une instance cité par son nom est activé même avec enabled: false ; un client vaut pour toutes ses instances)")
 	toolsCmd.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, "exclure des outils par préfixe (mêmes préfixes que -t, prioritaire sur -t et enabled)")
 
 	templatesCmd := &cobra.Command{
@@ -504,6 +505,45 @@ func (f toolFilter) active(prefix string, on bool) bool {
 	return on || slices.ContainsFunc(f.only, func(t string) bool { return toolGroup(t) == prefix })
 }
 
+func expandClients(cfg *config.Config, list []string) []string {
+	var out []string
+	for _, t := range list {
+		var names []string
+		for _, in := range cfg.Instances {
+			if in.Client != "" && in.Client == toolGroup(t) {
+				names = append(names, in.Name)
+			}
+		}
+		if len(names) == 0 {
+			names = []string{t}
+		}
+		out = append(out, names...)
+	}
+	return out
+}
+
+func newInstance(cfg *config.Config, ic config.Instance, t *template.Template) (*template.Instance, error) {
+	cl, _ := cfg.Client(ic.Client)
+	params := ic.Params
+	if len(cl.Params) > 0 {
+		params = map[string]any{}
+		for k, v := range cl.Params {
+			if _, declared := t.Params[k]; declared {
+				params[k] = v
+			}
+		}
+		maps.Copy(params, ic.Params)
+	}
+	in, err := template.NewInstance(ic.Name, t, params)
+	if err != nil {
+		return nil, err
+	}
+	if ic.Client != "" {
+		in.Client, in.ClientTerms = ic.Client, append([]string{cl.Name}, cl.Aliases...)
+	}
+	return in, nil
+}
+
 func checkToolGroups(cfg *config.Config, lists ...[]string) error {
 	groups := []string{"fs", "memory", "evidence", dns.Group}
 	for _, m := range cfg.MCP {
@@ -520,7 +560,7 @@ func checkToolGroups(cfg *config.Config, lists ...[]string) error {
 			if slices.Contains(groups, "mcp_"+toolGroup(t)) {
 				return fmt.Errorf("-t/-x %s: aucun groupe d'outils de ce nom (serveur MCP: mcp_%s)", t, toolGroup(t))
 			}
-			return fmt.Errorf("-t/-x %s: aucun groupe d'outils de ce nom (fs, mcp, mcp_<serveur>, <instance>)", t)
+			return fmt.Errorf("-t/-x %s: aucun groupe d'outils de ce nom (fs, mcp, mcp_<serveur>, <instance>, <client>)", t)
 		}
 	}
 	return nil
@@ -545,8 +585,8 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		fmt.Fprintln(os.Stderr, "avertissement: budget:", w)
 	}
 	rt.registry = tools.NewRegistry(cfg.Limits.ToolOutputMaxChars)
-	filter := toolFilter{only: o.tools, exclude: o.exclude}
-	if err := checkToolGroups(cfg, o.tools, o.exclude); err != nil {
+	filter := toolFilter{only: expandClients(cfg, o.tools), exclude: expandClients(cfg, o.exclude)}
+	if err := checkToolGroups(cfg, filter.only, filter.exclude); err != nil {
 		return nil, err
 	}
 	warn := func(format string, args ...any) {
@@ -676,7 +716,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		if !ok {
 			continue
 		}
-		in, err := template.NewInstance(ic.Name, t, ic.Params)
+		in, err := newInstance(cfg, ic, t)
 		if err == nil {
 			err = in.Defer(ctx, cfg.Templates.CacheDir, cfg.Templates.CacheTTL.Duration, false)
 		}
@@ -692,7 +732,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 			warn("instance %s: template %q introuvable (instance désactivée)", ic.Name, ic.Template)
 			continue
 		}
-		in, err := template.NewInstance(ic.Name, t, ic.Params)
+		in, err := newInstance(cfg, ic, t)
 		if err == nil {
 			in.Audit = rt.audit.Log
 			in.Warn = func(msg string) { warn("%s", msg) }
@@ -725,22 +765,52 @@ func (rt *app) warnFiltered(text string) {
 }
 
 func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
+	forced = expandClients(rt.cfg, forced)
 	env := append([]string(nil), rt.baseEnv...)
+	named := map[string]bool{}
+	var clients []string
+	for _, cl := range rt.cfg.Clients {
+		if template.MentionTerm(text, append([]string{cl.Name}, cl.Aliases...)) != "" {
+			named[cl.Name] = true
+			clients = append(clients, cl.Name)
+		}
+	}
 	var offered, hidden []string
+	offeredBy := map[string][]string{}
 	for _, in := range rt.instances {
 		explicit := slices.ContainsFunc(forced, func(t string) bool {
 			return toolGroup(t) == in.Name
 		})
-		if explicit || in.Activated() || in.Mentioned(text) {
+		generic := in.MentionGeneric(text) != ""
+		if explicit || in.Activated() || in.MentionOwn(text) != "" || named[in.Client] || generic && len(named) == 0 {
 			offered = append(offered, in.Name)
+			offeredBy[in.Client] = append(offeredBy[in.Client], in.Name)
 			env = append(env, rt.instanceEnv[in.Name]...)
 			continue
 		}
 		hidden = append(hidden, in.Name)
+		if generic {
+			env = append(env, fmt.Sprintf("- Instance %s (template %s) : non proposée, la demande cite le client %s et pas cette instance (la nommer, ou -t %s, pour l'utiliser).", in.Name, in.T.Name, strings.Join(clients, ", "), in.Name))
+			continue
+		}
 		env = append(env, fmt.Sprintf("- Instance %s (template %s) : non proposée pour cette demande, qui ne la mentionne pas (la nommer, ou -t %s, pour l'utiliser).", in.Name, in.T.Name, in.Name))
 	}
+	for _, cl := range rt.cfg.Clients {
+		names := offeredBy[cl.Name]
+		if len(names) == 0 {
+			continue
+		}
+		line := "- Client " + cl.Name
+		if len(cl.Aliases) > 0 {
+			line += " (" + strings.Join(cl.Aliases, ", ") + ")"
+		}
+		if cl.Context != "" {
+			line += " : " + cl.Context
+		}
+		env = append(env, line+". Instances de ce client : "+strings.Join(names, ", ")+".")
+	}
 	if len(rt.instances) > 0 {
-		rt.audit.Log("instances_scope", map[string]any{"offered": offered, "hidden": hidden})
+		rt.audit.Log("instances_scope", map[string]any{"offered": offered, "hidden": hidden, "clients": clients})
 	}
 	if len(hidden) == 0 {
 		return rt.registry, strings.Join(env, "\n")
