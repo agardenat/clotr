@@ -286,3 +286,33 @@ func TestResolveCommand(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestPoolKeyFromVault(t *testing.T) {
+	client, clientPEM := testutil.NewSSHKey(t)
+	host, _ := testutil.NewSSHKey(t)
+	srv := testutil.StartSSHServer(t, client.PublicKey(), host, func(string) (string, int) { return "ok\n", 0 })
+	h, p, _ := net.SplitHostPort(srv.Addr)
+	port, _ := strconv.Atoi(p)
+	var refs []string
+	pool, err := NewPool(Options{KnownHosts: filepath.Join(t.TempDir(), "known_hosts"), HostKey: AcceptNew, ReadVault: func(_ context.Context, ref string) (string, error) {
+		refs = append(refs, ref)
+		return string(clientPEM), nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	for _, cmd := range []string{"true", "id"} {
+		if res, err := pool.Exec(context.Background(), Endpoint{Host: h, Port: port, User: "admin", KeyVault: "kv/acme/adm"}, cmd, 10); err != nil || res.Stdout != "ok\n" {
+			t.Fatalf("%s: %+v %v", cmd, res, err)
+		}
+	}
+	if len(refs) != 1 || refs[0] != "kv/acme/adm#private_key" {
+		t.Fatalf("lectures Vault: %q", refs)
+	}
+	nov, _ := NewPool(Options{KnownHosts: filepath.Join(t.TempDir(), "known_hosts"), HostKey: AcceptNew})
+	defer nov.Close()
+	if _, err := nov.Exec(context.Background(), Endpoint{Host: h, Port: port, User: "admin", KeyVault: "kv/acme/adm#key"}, "true", 10); err == nil {
+		t.Fatal("clé Vault sans lecteur acceptée")
+	}
+}

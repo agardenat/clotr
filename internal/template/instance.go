@@ -94,6 +94,8 @@ type Instance struct {
 	Client      string
 	ClientTerms []string
 
+	vaultUsers sync.Map
+
 	mu        sync.Mutex
 	inv       *Inventory
 	invValue  starlark.Value
@@ -580,7 +582,7 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 	if kh == "" {
 		kh = filepath.Join(config.StateDir(), "clotr", "known_hosts")
 	}
-	p, err := ssh.NewPool(ssh.Options{Proxy: px, KnownHosts: config.ExpandHome(kh), HostKey: ssh.HostKeyPolicy(o.str("host_key")), MaxConns: maxConns})
+	p, err := ssh.NewPool(ssh.Options{Proxy: px, KnownHosts: config.ExpandHome(kh), HostKey: ssh.HostKeyPolicy(o.str("host_key")), MaxConns: maxConns, ReadVault: func(ctx context.Context, ref string) (string, error) { return creds.ReadVault(ctx, ref) }})
 	if err != nil {
 		return nil, err
 	}
@@ -624,7 +626,10 @@ func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.En
 	if host == "" {
 		host = h.Name
 	}
-	ep := ssh.Endpoint{Host: host, Port: port, User: pick("ssh_user", "user"), KeyPath: config.ExpandHome(pick("ssh_key_path", "key"))}
+	ep := ssh.Endpoint{Host: host, Port: port, User: pick("ssh_user", "user"), KeyPath: config.ExpandHome(pick("ssh_key_path", "key")), KeyVault: pick("ssh_key_vault", "key_vault")}
+	if ep.User == "" && ep.KeyVault != "" {
+		ep.User = in.vaultUser(ctx, ep.KeyVault)
+	}
 	a := o.sub("auth")
 	if len(a) == 0 {
 		return ep, nil, nil
@@ -641,6 +646,19 @@ func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.En
 	}
 	ep.Password = l.password
 	return ep, l, nil
+}
+
+func (in *Instance) vaultUser(ctx context.Context, ref string) string {
+	path, _, _ := strings.Cut(ref, "#")
+	if u, ok := in.vaultUsers.Load(path); ok {
+		return u.(string)
+	}
+	u, err := creds.ReadVault(ctx, path+"#username")
+	if err != nil {
+		return ""
+	}
+	in.vaultUsers.Store(path, u)
+	return u
 }
 
 func (in *Instance) sudoNeedsPassword(ep ssh.Endpoint) bool {

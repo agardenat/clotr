@@ -34,13 +34,14 @@ type Endpoint struct {
 	Port     int
 	User     string
 	KeyPath  string
+	KeyVault string
 	Password func(ctx context.Context) (string, error)
 }
 
 var ErrAuth = errors.New("authentification SSH refusée")
 
 func (e Endpoint) key() string {
-	return e.User + "@" + net.JoinHostPort(e.Host, strconv.Itoa(e.Port)) + "#" + e.KeyPath
+	return e.User + "@" + net.JoinHostPort(e.Host, strconv.Itoa(e.Port)) + "#" + e.KeyPath + "#" + e.KeyVault
 }
 
 type Options struct {
@@ -49,6 +50,7 @@ type Options struct {
 	HostKey    HostKeyPolicy
 	MaxConns   int
 	Timeout    time.Duration
+	ReadVault  func(ctx context.Context, ref string) (string, error)
 }
 
 type Pool struct {
@@ -91,15 +93,35 @@ func (p *Pool) Close() {
 	}
 }
 
-func (p *Pool) signer(path string) (gossh.Signer, error) {
+func (p *Pool) signer(ctx context.Context, e Endpoint) (gossh.Signer, error) {
+	path := e.KeyPath
+	if e.KeyVault != "" {
+		path = "vault:" + e.KeyVault
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if s, ok := p.signers[path]; ok {
 		return s, nil
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("clé SSH: %w", err)
+	var data []byte
+	if e.KeyVault != "" {
+		if p.opts.ReadVault == nil {
+			return nil, errors.New("clé SSH dans Vault: lecture Vault non disponible")
+		}
+		ref := e.KeyVault
+		if !strings.Contains(ref, "#") {
+			ref += "#private_key"
+		}
+		pem, err := p.opts.ReadVault(ctx, ref)
+		if err != nil {
+			return nil, fmt.Errorf("clé SSH dans Vault %s: %w", ref, err)
+		}
+		data = []byte(pem)
+	} else {
+		var err error
+		if data, err = os.ReadFile(path); err != nil {
+			return nil, fmt.Errorf("clé SSH: %w", err)
+		}
 	}
 	s, err := gossh.ParsePrivateKey(data)
 	if err != nil {
@@ -164,11 +186,11 @@ func (p *Pool) client(ctx context.Context, e Endpoint) (*gossh.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if e.KeyPath == "" && e.Password == nil {
-		return nil, errors.New("aucune clé SSH (ssh_key_path) ni mot de passe (auth) configuré")
+	if e.KeyPath == "" && e.KeyVault == "" && e.Password == nil {
+		return nil, errors.New("aucune clé SSH (ssh_key_path, ssh_key_vault) ni mot de passe (auth) configuré")
 	}
-	if e.KeyPath != "" {
-		signer, err := p.signer(e.KeyPath)
+	if e.KeyPath != "" || e.KeyVault != "" {
+		signer, err := p.signer(ctx, e)
 		if err != nil {
 			return nil, err
 		}
