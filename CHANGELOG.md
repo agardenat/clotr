@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-14
+
 ### Ajouté
 - `providers[].persistent_retry` : quand tous les candidats sont en échec temporaire (429, 5xx, réseau, flux coupé) et que l'un d'eux appartient à ce provider, les tours de nouvel essai continuent jusqu'à une réponse ou une interruption, avec une pause doublée de 30 s à 5 min. Sans l'option, deux tours comme avant.
 
