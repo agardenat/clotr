@@ -846,8 +846,8 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 		if len(cl.Aliases) > 0 {
 			line += " (" + strings.Join(cl.Aliases, ", ") + ")"
 		}
-		if cl.Context != "" {
-			line += " : " + cl.Context
+		if ctx := strings.TrimRight(strings.TrimSpace(cl.Context), "."); ctx != "" {
+			line += " : " + ctx
 		}
 		if len(cl.Vars) > 0 {
 			var refs []string

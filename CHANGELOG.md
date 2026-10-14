@@ -4,6 +4,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Corrigé
+- Ligne « Client » transmise aux agents : plus de double point quand le `context` se termine par un point.
+
 ## [0.18.0] - 2026-10-14
 
 ### Ajouté
