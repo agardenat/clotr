@@ -96,6 +96,12 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		if err := ctx.Err(); err != nil {
 			return Pair{}, err
 		}
+		if vaultErr == nil && p.User == "" {
+			path, _, _ := strings.Cut(passVault, "#")
+			if u, err := ReadVault(ctx, path+"#username"); err == nil {
+				p.User = u
+			}
+		}
 		if vaultErr == nil && p.User != "" {
 			cache[key] = p
 			cache[userKey(label, p.User)] = p
