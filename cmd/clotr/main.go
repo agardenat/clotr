@@ -510,7 +510,7 @@ func expandClients(cfg *config.Config, list []string) []string {
 	for _, t := range list {
 		var names []string
 		for _, in := range cfg.Instances {
-			if in.Client != "" && in.Client == toolGroup(t) {
+			if in.Client != "" && in.Client == toolGroup(t) && in.IsEnabled() {
 				names = append(names, in.Name)
 			}
 		}
