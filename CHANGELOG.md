@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-14
+
 ### Corrigé
 - `-t <client>` forçait aussi les instances `enabled: false` du client ; il ne vaut plus que pour ses instances activées, une instance désactivée se force toujours par son nom.
 
