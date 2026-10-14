@@ -336,11 +336,25 @@ func outputExhausted(resp *llm.Response) bool {
 
 func (s *session) switchIfOutputExhausted(ctx context.Context, step int, req llm.Request, resp *llm.Response) (*llm.Response, error) {
 	cands := s.spec.Candidates
-	for tries := 1; outputExhausted(resp) && tries < len(cands); tries++ {
-		from := cands[s.cur].Ref()
-		s.cur = (s.cur + 1) % len(cands)
-		s.r.Audit.Log("output_exhausted", map[string]any{"task": s.spec.TaskID, "step": step, "model": from, "next": cands[s.cur].Ref()})
-		s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[s.cur].Ref(), Detail: i18n.T("fallback.exhausted", from)})
+	tried := map[string]bool{}
+	for outputExhausted(resp) {
+		from := s.model.Ref()
+		tried[from] = true
+		next := -1
+		for k := 1; k < len(cands); k++ {
+			i := (s.cur + k) % len(cands)
+			if !tried[cands[i].Ref()] && s.r.unavailable(cands[i]) == "" {
+				next = i
+				break
+			}
+		}
+		if next < 0 {
+			s.r.Audit.Log("output_exhausted", map[string]any{"task": s.spec.TaskID, "step": step, "model": from, "completion_tokens": resp.Usage.CompletionTokens, "next": ""})
+			return nil, fmt.Errorf("%s a épuisé sa limite de sortie (%d tokens) en raisonnant, sans produire de réponse ; aucun autre modèle disponible pour ce rôle (le relancer ne changerait rien)", from, resp.Usage.CompletionTokens)
+		}
+		s.cur = next
+		s.r.Audit.Log("output_exhausted", map[string]any{"task": s.spec.TaskID, "step": step, "model": from, "completion_tokens": resp.Usage.CompletionTokens, "next": cands[next].Ref()})
+		s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[next].Ref(), Detail: i18n.T("fallback.exhausted", from)})
 		var err error
 		if resp, err = s.chat(ctx, step, req); err != nil {
 			return nil, err
@@ -394,7 +408,7 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 				t0 := time.Now()
 				var resp *llm.Response
 				resp, err = r.Chat.Chat(ctx, m.Provider, sent)
-				rec := map[string]any{"task": s.spec.TaskID, "role": s.spec.Role, "model": m.Ref(), "step": step, "attempt": attempt, "duration_ms": time.Since(t0).Milliseconds(), "tools_offered": len(req.Tools)}
+				rec := map[string]any{"task": s.spec.TaskID, "role": s.spec.Role, "model": m.Ref(), "step": step, "attempt": attempt, "duration_ms": time.Since(t0).Milliseconds(), "tools_offered": len(req.Tools), "max_tokens": sent.MaxTokens}
 				if err == nil && !resp.Cost.Reported && (m.InputCost > 0 || m.OutputCost > 0) && resp.Usage.PromptTokens+resp.Usage.CompletionTokens > 0 {
 					resp.Cost.Response = float64(resp.Usage.PromptTokens)*m.InputCost + float64(resp.Usage.CompletionTokens)*m.OutputCost
 					resp.Cost.Reported, resp.Cost.Estimated = true, true

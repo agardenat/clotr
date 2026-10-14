@@ -649,3 +649,29 @@ func TestLeakedToolCalls(t *testing.T) {
 		t.Fatalf("texte de constat converti: %+v", got)
 	}
 }
+
+func TestOutputExhaustedWithoutAlternativeFailsFast(t *testing.T) {
+	var models []string
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		models = append(models, req.Model)
+		resp := testutil.Reply("<think>long raisonnement</think>")
+		resp.Choices[0].FinishReason = "length"
+		resp.Usage.CompletionTokens = 16384
+		return resp, nil
+	}}
+	var cur, peak int32
+	r := runner(chat, registry(&cur, &peak))
+	for _, cands := range [][]catalog.ModelInfo{
+		{{Provider: "p", ID: "thinker", MaxOutput: 16384}},
+		{{Provider: "p", ID: "thinker", MaxOutput: 16384}, {Provider: "p", ID: "other", MaxOutput: 16384}},
+	} {
+		models = nil
+		_, err := r.Run(context.Background(), Spec{TaskID: "synthesizer", System: "s", User: "u", Candidates: cands})
+		if err == nil || !strings.Contains(err.Error(), "16384 tokens") {
+			t.Fatalf("%d candidats : erreur attendue, %v", len(cands), err)
+		}
+		if len(models) != len(cands) {
+			t.Fatalf("%d candidats : appels %v, un par modèle attendu", len(cands), models)
+		}
+	}
+}
