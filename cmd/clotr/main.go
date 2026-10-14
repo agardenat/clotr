@@ -349,6 +349,7 @@ func loadConfig(o *options) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	applyVaultEnv(cfg.Vault)
 	for _, l := range []struct {
 		flag string
 		v    int
@@ -522,19 +523,60 @@ func expandClients(cfg *config.Config, list []string) []string {
 	return out
 }
 
+func applyVaultEnv(v config.VaultConf) {
+	for env, val := range map[string]string{"VAULT_ADDR": v.Addr, "VAULT_NAMESPACE": v.Namespace} {
+		if val != "" && os.Getenv(env) == "" {
+			os.Setenv(env, val)
+		}
+	}
+}
+
+func renderVars(v any, vars map[string]any) (any, error) {
+	switch x := v.(type) {
+	case string:
+		return template.Render(x, vars)
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			r, err := renderVars(e, vars)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = r
+		}
+		return out, nil
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			r, err := renderVars(e, vars)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", k, err)
+			}
+			out[k] = r
+		}
+		return out, nil
+	}
+	return v, nil
+}
+
 func newInstance(cfg *config.Config, ic config.Instance, t *template.Template) (*template.Instance, error) {
 	cl, _ := cfg.Client(ic.Client)
-	params := ic.Params
-	if len(cl.Params) > 0 {
-		params = map[string]any{}
-		for k, v := range cl.Params {
-			if _, declared := t.Params[k]; declared {
-				params[k] = v
-			}
+	params := map[string]any{}
+	for k, v := range cl.Params {
+		if _, declared := t.Params[k]; declared {
+			params[k] = v
 		}
-		maps.Copy(params, ic.Params)
 	}
-	in, err := template.NewInstance(ic.Name, t, params)
+	maps.Copy(params, ic.Params)
+	vars := map[string]any{}
+	for k, v := range cl.Vars {
+		vars[k] = v
+	}
+	rendered, err := renderVars(params, vars)
+	if err != nil {
+		return nil, fmt.Errorf("instance %s: params.%w", ic.Name, err)
+	}
+	in, err := template.NewInstance(ic.Name, t, rendered.(map[string]any))
 	if err != nil {
 		return nil, err
 	}
@@ -806,6 +848,13 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 		}
 		if cl.Context != "" {
 			line += " : " + cl.Context
+		}
+		if len(cl.Vars) > 0 {
+			var refs []string
+			for _, k := range slices.Sorted(maps.Keys(cl.Vars)) {
+				refs = append(refs, k+"="+cl.Vars[k])
+			}
+			line += ". Références : " + strings.Join(refs, ", ")
 		}
 		env = append(env, line+". Instances de ce client : "+strings.Join(names, ", ")+".")
 	}
