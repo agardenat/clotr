@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -673,5 +674,37 @@ func TestOutputExhaustedWithoutAlternativeFailsFast(t *testing.T) {
 		if len(models) != len(cands) {
 			t.Fatalf("%d candidats : appels %v, un par modèle attendu", len(cands), models)
 		}
+	}
+}
+
+func TestPersistentRetryOnTransientErrors(t *testing.T) {
+	for _, persistent := range []bool{false, true} {
+		var calls atomic.Int32
+		chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+			if calls.Add(1) <= 7 {
+				return nil, &llm.APIError{Status: 429, Body: "INSUFFICIENT QUOTA"}
+			}
+			return testutil.Reply("# Rapport"), nil
+		}}
+		r := runner(chat, tools.NewRegistry(100))
+		r.Attempts, r.RoundPause = 1, time.Millisecond
+		r.Persistent = func(p string) bool { return persistent && p == "sov" }
+		out, err := r.Run(context.Background(), Spec{TaskID: "synthesizer", System: "s", User: "u", Candidates: []catalog.ModelInfo{{Provider: "sov", ID: "m"}}})
+		switch {
+		case persistent && (err != nil || out.Content != "# Rapport" || calls.Load() != 8):
+			t.Fatalf("persistent_retry : %v %q, %d appels", err, out.Content, calls.Load())
+		case !persistent && (err == nil || calls.Load() != 2):
+			t.Fatalf("sans persistent_retry : 2 tours attendus, %v, %d appels", err, calls.Load())
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	chat := &testutil.FakeChat{Fn: func(context.Context, string, llm.Request) (*llm.Response, error) {
+		cancel()
+		return nil, &llm.APIError{Status: 503}
+	}}
+	r := runner(chat, tools.NewRegistry(100))
+	r.RoundPause, r.Persistent = time.Hour, func(string) bool { return true }
+	if _, err := r.Run(ctx, Spec{TaskID: "t", System: "s", User: "u", Candidates: models}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interruption pendant la pause: %v", err)
 	}
 }

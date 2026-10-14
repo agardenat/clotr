@@ -144,18 +144,19 @@ func ValidSovereignPolicy(p string) bool {
 }
 
 type Provider struct {
-	Name           string            `yaml:"name"`
-	BaseURL        string            `yaml:"base_url"`
-	Key            string            `yaml:"api_key"`
-	Weight         int               `yaml:"weight"`
-	Sovereign      bool              `yaml:"sovereign"`
-	Budget         *Budget           `yaml:"budget"`
-	SessionHeader  string            `yaml:"session_header"`
-	Stream         *bool             `yaml:"stream"`
-	APIKeyEnv      string            `yaml:"api_key_env"`
-	MaxConcurrency int               `yaml:"max_concurrency"`
-	ModelInfo      bool              `yaml:"model_info"`
-	Headers        map[string]string `yaml:"headers"`
+	Name            string            `yaml:"name"`
+	BaseURL         string            `yaml:"base_url"`
+	Key             string            `yaml:"api_key"`
+	Weight          int               `yaml:"weight"`
+	Sovereign       bool              `yaml:"sovereign"`
+	Budget          *Budget           `yaml:"budget"`
+	SessionHeader   string            `yaml:"session_header"`
+	Stream          *bool             `yaml:"stream"`
+	APIKeyEnv       string            `yaml:"api_key_env"`
+	MaxConcurrency  int               `yaml:"max_concurrency"`
+	PersistentRetry bool              `yaml:"persistent_retry"`
+	ModelInfo       bool              `yaml:"model_info"`
+	Headers         map[string]string `yaml:"headers"`
 }
 
 type Budget struct {
