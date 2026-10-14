@@ -43,3 +43,31 @@ func TestResolveVault(t *testing.T) {
 		t.Fatalf("échec Vault non signalé: %v", err)
 	}
 }
+
+func TestResolveVaultUsername(t *testing.T) {
+	readVault := ReadVault
+	ReadVault = func(_ context.Context, ref string) (string, error) {
+		switch ref {
+		case "kv/adm#password", "kv/adm":
+			return "fromvault", nil
+		case "kv/adm#username":
+			return "adm", nil
+		}
+		return "", errors.New("introuvable")
+	}
+	OpenTTY = func() (*Console, error) { return nil, errors.New("pas de terminal") }
+	t.Cleanup(func() { ReadVault, OpenTTY = readVault, openConsole })
+	ctx := context.Background()
+	if p, err := Resolve(ctx, "", "", "kv/adm#password", "vm (SSH)"); err != nil || p.User != "adm" || p.Pass != "fromvault" {
+		t.Fatalf("utilisateur du secret: %+v %v", p, err)
+	}
+	if p, err := Resolve(ctx, "", "", "kv/adm", "vm2 (SSH)"); err != nil || p.User != "adm" {
+		t.Fatalf("sans champ: %+v %v", p, err)
+	}
+	if p, err := ResolveUser(ctx, "ops", "", "kv/adm#password", "vm3 (SSH)"); err != nil || p.User != "ops" {
+		t.Fatalf("utilisateur fixé prioritaire: %+v %v", p, err)
+	}
+	if _, err := Resolve(ctx, "", "", "kv/nouser#password", "vm4 (SSH)"); err == nil {
+		t.Fatal("secret sans username et sans terminal accepté")
+	}
+}

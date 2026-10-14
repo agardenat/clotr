@@ -4,6 +4,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Vault : quand l'utilisateur n'est pas fixé (`ssh_user` vide, pas de `user_env`), il est lu dans le champ `username` du secret `password_vault`, au lieu d'être saisi.
+
 ## [0.16.0] - 2026-10-14
 
 ### Ajouté

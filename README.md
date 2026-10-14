@@ -247,6 +247,7 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 - adresse : `VAULT_ADDR` (variable exportée ; une fonction ou un alias du shell n'est pas visible), sinon `vault.addr` de la configuration ;
 - jeton : `VAULT_TOKEN`, sinon `~/.vault-token` écrit par `vault login` (un `token_helper` n'est pas pris en charge) ; `VAULT_NAMESPACE` si défini, sinon `vault.namespace` ;
 - moteur KV v1 ou v2, détecté comme le fait `vault kv get` (`sys/internal/ui/mounts`) ;
+- utilisateur non fixé (`ssh_user` vide, ou `user_env` absent pour un connecteur `http`) : lu dans le champ `username` du même secret, sinon saisi ;
 - lecture seulement quand le mot de passe est nécessaire, une fois par utilisateur. Vide, l'option est ignorée. Un secret illisible (variable absente, jeton expiré, accès refusé, champ absent) est signalé sur le terminal et le mot de passe est saisi ; un mot de passe Vault refusé par SSH ou sudo est oublié et le suivant est saisi.
 
 Le secret est lu par clotr et n'est jamais transmis aux modèles ni archivé dans les preuves. Ne pas faire lire un secret par un outil MCP : sa réponse irait au modèle et dans les preuves. Le chemin peut reprendre les `vars` du client (voir Clients).
@@ -402,7 +403,7 @@ instances:
     params:
       networks: [{cidr: 10.20.0.0/24}]
       sudo: true
-      ssh_user: adm-acme
+      ssh_user: ""
       password_vault: "kv/{{.cmp}}/{{.project}}/adm-acme"
 ```
 
