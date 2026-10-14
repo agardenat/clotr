@@ -406,7 +406,7 @@ instances:
 | `params` | valeurs par défaut des paramètres de ses instances (proxy, compte et clé SSH…) : appliquées seulement aux paramètres que le template de l'instance déclare, la valeur de l'instance l'emporte |
 | `instances` | même format que `instances` du fichier principal ; les noms restent uniques sur toute la configuration |
 
-Nommer le client ou l'un de ses alias dans une demande propose toutes ses instances (voir Activation d'une instance). `-t <client>` et `-x <client>` valent pour toutes ses instances. Les instances du fichier principal n'ont pas de client et se comportent comme avant.
+Nommer le client ou l'un de ses alias dans une demande propose toutes ses instances (voir Activation d'une instance). `-t <client>` et `-x <client>` valent pour toutes ses instances activées ; une instance `enabled: false` d'un client ne se force que par son nom. Les instances du fichier principal n'ont pas de client et se comportent comme avant.
 
 ## Usage
 

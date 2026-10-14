@@ -89,7 +89,7 @@ func TestScopeClients(t *testing.T) {
 	files := map[string]string{
 		"templates/acme.yaml": "name: acme\nkeywords: [widget]\nparams:\n  region: {type: string, default: none}\n  zone: {type: string, default: none}\ntargets:\n  - {kind: k, name: lake}\ntools:\n  - kind: inventory\n",
 		"clients/north.yaml":  "name: north\naliases: [northcorp]\ncontext: client fictif du nord\nparams: {region: eu, zone: z1, unknown_param: x}\ninstances:\n  - {name: north-widget, template: acme, params: {zone: z9}}\n",
-		"clients/south.yaml":  "name: south\ninstances:\n  - {name: south-widget, template: acme}\n",
+		"clients/south.yaml":  "name: south\ninstances:\n  - {name: south-widget, template: acme}\n  - {name: south-off, template: acme, enabled: false}\n",
 		"config.yaml":         "providers:\n  - {name: p, base_url: http://x}\nroles:\n  planner: {tier: deep}\n  collector: {tier: fast, tools: true}\n  synthesizer: {tier: deep}\ntemplates: {dir: " + tdir + "}\ninstances:\n  - {name: solo-widget, template: acme}\n",
 	}
 	for name, body := range files {
