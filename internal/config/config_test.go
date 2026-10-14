@@ -125,7 +125,7 @@ func TestClients(t *testing.T) {
 		return Load(path)
 	}
 	c, err := load(map[string]string{
-		"acme": "name: acme\naliases: [acmecorp]\ncontext: client fictif\nparams: {proxy_url: socks5h://localhost:1080}\ninstances:\n  - {name: acme-lake, template: x}\n",
+		"acme": "name: acme\naliases: [acmecorp]\ncontext: client fictif\nvars: {cmp: CMP-0000, project_code: PRJ-0000}\nparams: {proxy_url: socks5h://localhost:1080}\ninstances:\n  - {name: acme-lake, template: x}\n",
 		"beta": "name: beta\ninstances:\n  - {name: beta-lake, template: x}\n",
 	})
 	if err != nil {
@@ -134,7 +134,7 @@ func TestClients(t *testing.T) {
 	if len(c.Instances) != 3 || c.Instances[0].Client != "" || c.Instances[1].Client != "acme" || c.Instances[2].Client != "beta" {
 		t.Fatalf("instances: %+v", c.Instances)
 	}
-	if cl, ok := c.Client("acme"); !ok || cl.Params["proxy_url"] != "socks5h://localhost:1080" || cl.Aliases[0] != "acmecorp" || cl.Instances != nil {
+	if cl, ok := c.Client("acme"); !ok || cl.Params["proxy_url"] != "socks5h://localhost:1080" || cl.Aliases[0] != "acmecorp" || cl.Instances != nil || cl.Vars["project_code"] != "PRJ-0000" {
 		t.Fatalf("client: %+v", cl)
 	}
 	for name, bad := range map[string]map[string]string{
@@ -145,6 +145,8 @@ func TestClients(t *testing.T) {
 		"alias vide":               {"acme": "name: acme\naliases: [\"\"]\n"},
 		"champ inconnu":            {"acme": "name: acme\nproxy: x\n"},
 		"instance en double":       {"acme": "name: acme\ninstances:\n  - {name: solo, template: x}\n"},
+		"variable invalide":        {"acme": "name: acme\nvars: {Cmp: x}\n"},
+		"variable vide":            {"acme": "name: acme\nvars: {cmp: \" \"}\n"},
 	} {
 		if _, err := load(bad); err == nil {
 			t.Errorf("%s: accepté", name)
@@ -157,5 +159,16 @@ func TestClients(t *testing.T) {
 	}
 	if c, err := Load(path); err != nil || len(c.Clients) != 0 {
 		t.Fatalf("sans répertoire clients: %v %+v", err, c)
+	}
+}
+
+func TestVaultConf(t *testing.T) {
+	base := "providers:\n  - name: a\n    base_url: http://x/v1\n"
+	c, err := Parse([]byte(base + "vault: {addr: https://vault.example.com, namespace: team}\n"))
+	if err != nil || c.Vault.Addr != "https://vault.example.com" || c.Vault.Namespace != "team" {
+		t.Fatalf("vault: %v %+v", err, c)
+	}
+	if _, err := Parse([]byte(base + "vault: {addr: vault.example.com}\n")); err == nil {
+		t.Error("vault.addr sans schéma accepté")
 	}
 }

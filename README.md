@@ -244,10 +244,12 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 
 `password_vault` (connecteurs `http` et `ssh`, option `auth`) désigne un secret Vault sous la forme `chemin[#champ]`, comme `vault kv get -field=<champ> <chemin>` ; le champ par défaut est `password`. clotr utilise la configuration du poste, sans appeler le binaire `vault` :
 
-- adresse : `VAULT_ADDR` (variable exportée ; une fonction ou un alias du shell n'est pas visible) ;
-- jeton : `VAULT_TOKEN`, sinon `~/.vault-token` écrit par `vault login` (un `token_helper` n'est pas pris en charge) ; `VAULT_NAMESPACE` si défini ;
+- adresse : `VAULT_ADDR` (variable exportée ; une fonction ou un alias du shell n'est pas visible), sinon `vault.addr` de la configuration ;
+- jeton : `VAULT_TOKEN`, sinon `~/.vault-token` écrit par `vault login` (un `token_helper` n'est pas pris en charge) ; `VAULT_NAMESPACE` si défini, sinon `vault.namespace` ;
 - moteur KV v1 ou v2, détecté comme le fait `vault kv get` (`sys/internal/ui/mounts`) ;
 - lecture seulement quand le mot de passe est nécessaire, une fois par utilisateur. Vide, l'option est ignorée. Un secret illisible (variable absente, jeton expiré, accès refusé, champ absent) est signalé sur le terminal et le mot de passe est saisi ; un mot de passe Vault refusé par SSH ou sudo est oublié et le suivant est saisi.
+
+Le secret est lu par clotr et n'est jamais transmis aux modèles ni archivé dans les preuves. Ne pas faire lire un secret par un outil MCP : sa réponse irait au modèle et dans les preuves. Le chemin peut reprendre les `vars` du client (voir Clients).
 
 ### Outils SSH
 
@@ -368,6 +370,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `files` | `roots`, `max_file_bytes` |
 | `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true ; false : activée seulement par `-t <instance>`) |
+| `vault` | `addr`, `namespace` : adresse et namespace Vault utilisés quand `VAULT_ADDR` / `VAULT_NAMESPACE` ne sont pas définis, voir Secrets Vault |
 | `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
 | `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
 | `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true ; false : connecté seulement par `-t mcp_<serveur>`). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. |
@@ -382,6 +385,9 @@ Les instances d'un même client se déclarent dans `clients/<client>.yaml`, à c
 name: acme
 aliases: [acmecorp, lakehouse]
 context: "Acme, projet Lakehouse : plateforme de données et VM d'administration derrière le bastion du client"
+vars:
+  cmp: CMP-0000
+  project: PRJ-0000
 params:
   proxy_url: socks5h://localhost:1080
   ssh_user: admin
@@ -396,6 +402,8 @@ instances:
     params:
       networks: [{cidr: 10.20.0.0/24}]
       sudo: true
+      ssh_user: adm-acme
+      password_vault: "kv/{{.cmp}}/{{.project}}/adm-acme"
 ```
 
 | Clé | Rôle |
@@ -403,6 +411,7 @@ instances:
 | `name` | nom du client (`[a-z][a-z0-9-]*`), distinct des noms d'instances et des préfixes réservés |
 | `aliases` | autres termes qui désignent le client dans une demande ; un alias n'appartient qu'à un client |
 | `context` | description transmise aux agents avec les instances du client |
+| `vars` | références du client (codes client, projet…), clés `[a-z][a-z0-9_]*` : `{{.<clé>}}` est remplacé dans les valeurs des `params` du client et de ses instances (une clé inconnue désactive l'instance, avec un avertissement), et les références sont transmises aux agents avec le `context`, pour les outils qui les attendent (serveurs MCP de tickets ou d'inventaire) |
 | `params` | valeurs par défaut des paramètres de ses instances (proxy, compte et clé SSH…) : appliquées seulement aux paramètres que le template de l'instance déclare, la valeur de l'instance l'emporte |
 | `instances` | même format que `instances` du fichier principal ; les noms restent uniques sur toute la configuration |
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -87,9 +88,9 @@ func TestScopeClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"templates/acme.yaml": "name: acme\nkeywords: [widget]\nparams:\n  region: {type: string, default: none}\n  zone: {type: string, default: none}\ntargets:\n  - {kind: k, name: lake}\ntools:\n  - kind: inventory\n",
-		"clients/north.yaml":  "name: north\naliases: [northcorp]\ncontext: client fictif du nord\nparams: {region: eu, zone: z1, unknown_param: x}\ninstances:\n  - {name: north-widget, template: acme, params: {zone: z9}}\n",
-		"clients/south.yaml":  "name: south\ninstances:\n  - {name: south-widget, template: acme}\n  - {name: south-off, template: acme, enabled: false}\n",
+		"templates/acme.yaml": "name: acme\nkeywords: [widget]\nparams:\n  region: {type: string, default: none}\n  zone: {type: string, default: none}\n  secret: {type: string, default: \"\"}\n  items: {type: list, item: {name: string}}\ntargets:\n  - {kind: k, name: lake}\ntools:\n  - kind: inventory\n",
+		"clients/north.yaml":  "name: north\naliases: [northcorp]\ncontext: client fictif du nord\nvars: {cmp: CMP-0000, project: PRJ-0000}\nparams: {region: eu, zone: z1, unknown_param: x}\ninstances:\n  - {name: north-widget, template: acme, params: {zone: z9, secret: \"kv/{{.cmp}}/{{.project}}/admin#password\", items: [{name: \"{{.cmp}}-a\"}]}}\n",
+		"clients/south.yaml":  "name: south\ninstances:\n  - {name: south-widget, template: acme}\n  - {name: south-off, template: acme, enabled: false}\n  - {name: south-bad, template: acme, params: {secret: \"kv/{{.cmp}}\"}}\n",
 		"config.yaml":         "providers:\n  - {name: p, base_url: http://x}\nroles:\n  planner: {tier: deep}\n  collector: {tier: fast, tools: true}\n  synthesizer: {tier: deep}\ntemplates: {dir: " + tdir + "}\ninstances:\n  - {name: solo-widget, template: acme}\n",
 	}
 	for name, body := range files {
@@ -102,12 +103,16 @@ func TestScopeClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt := &app{cfg: cfg, registry: tools.NewRegistry(100), audit: audit.Nop()}
-	rt.setupInstances(context.Background(), &options{quiet: true}, toolFilter{}, func(f string, a ...any) { t.Errorf(f, a...) })
-	if len(rt.instances) != 3 {
-		t.Fatalf("instances: %d", len(rt.instances))
+	var warnings []string
+	rt.setupInstances(context.Background(), &options{quiet: true}, toolFilter{}, func(f string, a ...any) { warnings = append(warnings, fmt.Sprintf(f, a...)) })
+	if len(rt.instances) != 3 || len(warnings) != 1 || !strings.Contains(warnings[0], "south-bad") || !strings.Contains(warnings[0], "params.secret") {
+		t.Fatalf("instances: %d, avertissements: %q", len(rt.instances), warnings)
 	}
-	if p := rt.instances[1].Params(); p["region"] != "eu" || p["zone"] != "z9" {
+	if p := rt.instances[1].Params(); p["region"] != "eu" || p["zone"] != "z9" || p["secret"] != "kv/CMP-0000/PRJ-0000/admin#password" {
 		t.Fatalf("params du client: %v", p)
+	}
+	if items, _ := rt.instances[1].Params()["items"].([]map[string]any); len(items) != 1 || items[0]["name"] != "CMP-0000-a" {
+		t.Fatalf("liste rendue: %v", rt.instances[1].Params()["items"])
 	}
 	if p := rt.instances[2].Params(); p["region"] != "none" {
 		t.Fatalf("params d'un autre client: %v", p)
@@ -139,13 +144,22 @@ func TestScopeClients(t *testing.T) {
 		}
 	}
 	_, env := rt.scope(nil, "le widget de north")
-	if !strings.Contains(env, "- Client north (northcorp) : client fictif du nord. Instances de ce client : north-widget.") || !strings.Contains(env, "la demande cite le client north") {
+	if !strings.Contains(env, "- Client north (northcorp) : client fictif du nord. Références : cmp=CMP-0000, project=PRJ-0000. Instances de ce client : north-widget.") || !strings.Contains(env, "la demande cite le client north") {
 		t.Fatalf("environnement:\n%s", env)
 	}
-	if got := expandClients(cfg, []string{"fs", "south", "north-widget"}); strings.Join(got, ",") != "fs,south-widget,north-widget" {
+	if got := expandClients(cfg, []string{"fs", "south", "north-widget"}); strings.Join(got, ",") != "fs,south-widget,south-bad,north-widget" {
 		t.Fatalf("expandClients: %v", got)
 	}
 	if why := rt.instances[1].Mention("souci chez NorthCorp"); why != "client north" {
 		t.Fatalf("Mention: %q", why)
+	}
+}
+
+func TestApplyVaultEnv(t *testing.T) {
+	t.Setenv("VAULT_ADDR", "")
+	t.Setenv("VAULT_NAMESPACE", "team-env")
+	applyVaultEnv(config.VaultConf{Addr: "https://vault.example.com", Namespace: "team-conf"})
+	if os.Getenv("VAULT_ADDR") != "https://vault.example.com" || os.Getenv("VAULT_NAMESPACE") != "team-env" {
+		t.Fatalf("VAULT_ADDR=%q VAULT_NAMESPACE=%q", os.Getenv("VAULT_ADDR"), os.Getenv("VAULT_NAMESPACE"))
 	}
 }

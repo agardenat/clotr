@@ -64,6 +64,12 @@ type Config struct {
 	Sessions  SessionsConf    `yaml:"sessions"`
 	Language  string          `yaml:"language"`
 	WebSearch WebSearch       `yaml:"web_search"`
+	Vault     VaultConf       `yaml:"vault"`
+}
+
+type VaultConf struct {
+	Addr      string `yaml:"addr"`
+	Namespace string `yaml:"namespace"`
 }
 
 type WebSearch struct {
@@ -96,11 +102,12 @@ type Instance struct {
 }
 
 type Client struct {
-	Name      string         `yaml:"name"`
-	Aliases   []string       `yaml:"aliases"`
-	Context   string         `yaml:"context"`
-	Params    map[string]any `yaml:"params"`
-	Instances []Instance     `yaml:"instances"`
+	Name      string            `yaml:"name"`
+	Aliases   []string          `yaml:"aliases"`
+	Context   string            `yaml:"context"`
+	Vars      map[string]string `yaml:"vars"`
+	Params    map[string]any    `yaml:"params"`
+	Instances []Instance        `yaml:"instances"`
 }
 
 func (c *Config) Client(name string) (Client, bool) {
@@ -117,6 +124,8 @@ func (i Instance) IsEnabled() bool {
 }
 
 var instanceName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+var varName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 var reservedPrefixes = []string{"fs", "mcp", "memory", "evidence", "web", "cause", "dns"}
 
@@ -607,6 +616,19 @@ func (c *Config) validate() error {
 				fail("client %s: %q déjà utilisé par le client %s", cl.Name, t, other)
 			}
 			terms[key] = cl.Name
+		}
+		for k, v := range cl.Vars {
+			if !varName.MatchString(k) {
+				fail("client %s: vars.%s invalide ([a-z][a-z0-9_]*)", cl.Name, k)
+			}
+			if strings.TrimSpace(v) == "" {
+				fail("client %s: vars.%s vide", cl.Name, k)
+			}
+		}
+	}
+	if c.Vault.Addr != "" {
+		if u, err := url.Parse(c.Vault.Addr); err != nil || u.Scheme == "" || u.Host == "" {
+			fail("vault.addr: URL invalide %q", c.Vault.Addr)
 		}
 	}
 	if *c.Limits.Continuations < 0 || *c.Limits.Continuations > 3 {
