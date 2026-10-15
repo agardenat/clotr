@@ -3,6 +3,7 @@ package lead
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -64,7 +65,7 @@ func TestReportAndInbox(t *testing.T) {
 	if got := s.Inbox(tools.Caller{Task: "t1", Sovereign: true}); got != "" {
 		t.Fatalf("piste renvoyée à sa propre tâche: %q", got)
 	}
-	if got := s.Inbox(tools.Caller{Task: "t2", Sovereign: true}); got != "- t1 : [cause établie] AllocationFailed : capacité insuffisante [E001]" {
+	if got := s.Inbox(tools.Caller{Task: "t2", Sovereign: true}); got != "- t1 #1 : [cause établie] AllocationFailed : capacité insuffisante [E001]" {
 		t.Fatalf("boîte de réception: %q", got)
 	}
 	if got := s.Inbox(tools.Caller{Task: "t2", Sovereign: true}); got != "" {
@@ -75,6 +76,47 @@ func TestReportAndInbox(t *testing.T) {
 	}
 	if mem.Stats().ExposedToForeign != 0 {
 		t.Fatal("croisement de souveraineté")
+	}
+}
+
+func TestReplaces(t *testing.T) {
+	mem := memory.NewStore()
+	ev := evidence.Open(t.TempDir(), 1)
+	old := ev.Add("t1", "az_activity_log", "{}", "VMExtensionProvisioningError", nil)
+	recent := ev.Add("t1", "az_activity_log", "{}", "AllocationFailed", nil)
+	s := New(mem, ev, audit.Nop())
+	events := &sink{}
+	s.Events = events
+	tool := s.Tool()
+	t1 := tools.WithCaller(context.Background(), tools.Caller{Task: "t1", Sovereign: true})
+	if _, err := tool.Call(t1, json.RawMessage(`{"summary":"extension en échec, pas de capacité en cause","evidence":["`+old+`"],"status":"established"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Inbox(tools.Caller{Task: "t2", Sovereign: true}); !strings.HasPrefix(got, "- t1 #1 : ") {
+		t.Fatalf("boîte de réception: %q", got)
+	}
+	if _, err := tool.Call(t1, json.RawMessage(`{"summary":"x","evidence":["`+recent+`"],"status":"established","replaces":7}`)); err == nil || !strings.Contains(err.Error(), "#7 inconnue") {
+		t.Fatalf("remplacement d'une cause inconnue accepté: %v", err)
+	}
+	out, err := tool.Call(t1, json.RawMessage(`{"summary":"AllocationFailed le plus récent","evidence":["`+recent+`"],"status":"established","replaces":1}`))
+	if err != nil || !strings.Contains(out, "#2") {
+		t.Fatalf("remplacement: %q %v", out, err)
+	}
+	leads := s.Leads()
+	if len(leads) != 2 || leads[0].Content != "[remplacée par #2] [cause établie] extension en échec, pas de capacité en cause [E001]" || !slices.Contains(leads[0].Tags, Superseded) || slices.Contains(leads[0].Tags, Established) {
+		t.Fatalf("cause remplacée: %+v", leads)
+	}
+	if leads[1].Content != "[cause établie] AllocationFailed le plus récent [E002] (corrige #1)" {
+		t.Fatalf("cause de remplacement: %+v", leads[1])
+	}
+	if got := s.Inbox(tools.Caller{Task: "t2", Sovereign: true}); got != "- t1 #2 : [cause établie] AllocationFailed le plus récent [E002] (corrige #1)" {
+		t.Fatalf("correction transmise: %q", got)
+	}
+	if len(events.events) != 2 || !strings.Contains(events.events[1].Detail, "#2") || !strings.Contains(events.events[1].Detail, "#1") {
+		t.Fatalf("événements: %+v", events.events)
+	}
+	if _, err := tool.Call(t1, json.RawMessage(`{"summary":"y","evidence":["`+recent+`"],"status":"probable","replaces":1}`)); err == nil || !strings.Contains(err.Error(), "déjà remplacée") {
+		t.Fatalf("double remplacement accepté: %v", err)
 	}
 }
 
