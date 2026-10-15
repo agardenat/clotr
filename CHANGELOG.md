@@ -4,6 +4,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- `run --incident` : `cause_report` accepte `replaces` (numéro `#N` d'une cause signalée plus tôt dans le run) pour corriger ou infirmer une cause : l'ancienne est marquée remplacée, l'affichage indique la correction et les autres tâches reçoivent la cause corrigée. Les causes affichées et transmises portent leur numéro. Auparavant une cause infirmée par une preuve plus récente restait affichée comme établie à côté de celle qui la contredisait.
+
 ## [0.20.0] - 2026-10-14
 
 ### Ajouté
