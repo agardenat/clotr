@@ -4,6 +4,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Corrigé
+- `run --incident` : un premier Ctrl-C pendant la vérification des constats abandonne les vérifications en cours, y compris celles en attente de nouvel essai, et produit le rapport. Auparavant elles continuaient jusqu'à leur fin, et il fallait un second Ctrl-C qui interrompait le run sans rapport.
+
 ## [0.21.0] - 2026-10-15
 
 ### Ajouté
