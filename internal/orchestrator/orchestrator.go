@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -94,6 +95,7 @@ type Orchestrator struct {
 	OnAnswer        func(text string)
 	Incident        bool
 	triaged         *Result
+	stopVerify      atomic.Pointer[context.CancelFunc]
 }
 
 const (
@@ -127,6 +129,9 @@ func (o *Orchestrator) withHistory(request string) string {
 
 func (o *Orchestrator) ConcludeNow() {
 	o.Runner.ConcludeNow()
+	if stop := o.stopVerify.Load(); stop != nil {
+		(*stop)()
+	}
 	o.Audit.Log("conclude_requested", map[string]any{})
 	o.Events.Emit(progress.Event{Kind: "concluding", Detail: i18n.T("concluding")})
 }

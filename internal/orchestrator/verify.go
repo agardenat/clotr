@@ -75,6 +75,13 @@ func (o *Orchestrator) Verify(ctx context.Context, results []Result) {
 	if err != nil {
 		return
 	}
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	o.stopVerify.Store(&stop)
+	defer o.stopVerify.Store(nil)
+	if o.Runner.Concluding() {
+		return
+	}
 	sem := semaphore.NewWeighted(int64(max(o.Cfg.Limits.MaxAgents, 1)))
 	var wg sync.WaitGroup
 	for i := range results {
@@ -129,6 +136,12 @@ func (o *Orchestrator) verifyTask(ctx context.Context, id, role string, tools []
 	}
 	if err == nil {
 		err = ExtractJSON(out.Content, &parsed)
+	}
+	if err != nil && ctx.Err() != nil && o.Runner.Concluding() {
+		done.Kind, done.Detail = "skipped", i18n.T("verify.abandoned")
+		o.Events.Emit(done)
+		o.Audit.Log("verify_end", map[string]any{"task": r.TaskID, "abandoned": "conclusion demandée"})
+		return
 	}
 	if err != nil {
 		done.Kind, done.Detail = "failed", err.Error()

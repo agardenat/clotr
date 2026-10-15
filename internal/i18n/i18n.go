@@ -84,6 +84,7 @@ var msgs = map[string]msg{
 	"fallback.round":       {"all models failed temporarily, new round in %s", "tous les modèles en échec temporaire, nouveau tour dans %s"},
 	"raw.output":           {"unstructured output", "sortie non structurée"},
 	"verify.goal":          {"verify the critical and major findings of %s against their evidence", "vérifier les constats critiques et majeurs de %s contre leurs preuves"},
+	"verify.abandoned":     {"abandoned: conclusion requested", "abandonnée : conclusion demandée"},
 	"verify.done":          {"%d confirmed, %d partial, %d unsupported", "%d confirmés, %d partiels, %d non étayés"},
 	"answer.rejected":      {"answer rejected by the check, new attempt", "réponse refusée par le contrôle, nouvelle tentative"},
 	"session.resynth":      {"session: %s (turn %d) · regenerating the report · connectors: %s", "session : %s (tour %d) · régénération du rapport · connecteurs : %s"},

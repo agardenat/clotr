@@ -395,6 +395,42 @@ func TestVerifyMarksFindings(t *testing.T) {
 	}
 }
 
+func TestConcludeNowAbandonsVerification(t *testing.T) {
+	o, _ := newOrch(t, nil, nil)
+	ev := evidence.Open(t.TempDir(), 1)
+	id := ev.Add("t1", "prod_ssh_disk", `{}`, "/var 77%", nil)
+	o.Runner.Evidence = ev
+	o.Tools.Add(ev.Tool(), ev.SearchTool())
+	started := make(chan struct{}, 1)
+	o.Runner.Chat = &testutil.FakeChat{Fn: func(ctx context.Context, _ string, _ llm.Request) (*llm.Response, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	results := []Result{{TaskID: "t1", Status: "ok", Goal: "g", Findings: []string{"[MAJEUR] /var à 77 % [" + id + "]"}}}
+	go func() {
+		<-started
+		o.ConcludeNow()
+	}()
+	done := make(chan struct{})
+	go func() {
+		o.Verify(context.Background(), results)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("vérification non abandonnée après la demande de conclusion")
+	}
+	if results[0].Findings[0] != "[MAJEUR] /var à 77 % ["+id+"]" {
+		t.Fatalf("constat modifié: %q", results[0].Findings[0])
+	}
+	if o.stopVerify.Load() != nil {
+		t.Fatal("annulation des vérifications restée enregistrée")
+	}
+	o.Verify(context.Background(), results)
+}
+
 func TestCheckVerdicts(t *testing.T) {
 	if p := checkVerdicts(`{"verdicts":[{"n":1,"verdict":"Confirmée"},{"n":2,"verdict":"partielle","raison":"x"},{"n":3,"verdict":"non etayé"}]}`, 3); p != "" {
 		t.Fatalf("variantes refusées: %s", p)
