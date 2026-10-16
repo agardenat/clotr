@@ -128,3 +128,31 @@ func TestLeadsOfEarlierTurnsIgnored(t *testing.T) {
 		t.Fatal("piste d'un tour précédent reprise")
 	}
 }
+
+func TestClueThenEstablished(t *testing.T) {
+	mem := memory.NewStore()
+	ev := evidence.Open(t.TempDir(), 1)
+	install := ev.Add("t0", "ssh_grep", "{}", "--forwarder 192.0.2.11", nil)
+	config := ev.Add("t0", "ssh_read", "{}", "forwarders { 192.0.2.11; };", nil)
+	s := New(mem, ev, audit.Nop())
+	events := &sink{}
+	s.Events = events
+	tool := s.Tool()
+	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0", Sovereign: true})
+	if _, err := tool.Call(ctx, json.RawMessage(`{"summary":"192.0.2.11 posé comme forwarder à l'installation","evidence":["`+install+`"],"status":"clue"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tool.Call(ctx, json.RawMessage(`{"summary":"forwarders du serveur encore sur 192.0.2.11","evidence":["`+config+`"],"status":"established","replaces":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	leads := s.Leads()
+	if len(leads) != 2 || leads[0].Content != "[remplacée par #2] [piste] 192.0.2.11 posé comme forwarder à l'installation [E001]" || !slices.Contains(leads[1].Tags, Established) {
+		t.Fatalf("piste puis cause: %+v", leads)
+	}
+	if len(events.events) != 2 || !strings.Contains(events.events[0].Detail, "#1") || strings.Contains(events.events[0].Detail, "cause") {
+		t.Fatalf("affichage de la piste: %+v", events.events)
+	}
+	if _, err := tool.Call(ctx, json.RawMessage(`{"summary":"z","evidence":["`+config+`"],"status":"hint"}`)); err == nil {
+		t.Fatal("status inconnu accepté")
+	}
+}

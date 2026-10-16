@@ -100,7 +100,7 @@ type Orchestrator struct {
 
 const (
 	triageID   = "t0"
-	triageGoal = "Tri d'incident, avant toute planification : localise le composant en échec désigné par la demande (ressource, cible, hôte) ; pour un accès à une URL ou à un nom, vérifie d'abord vers quelle IP il pointe et si c'est le point d'entrée attendu. Lis ensuite son message d'erreur exact (opération en échec, code, sous-code, détails) et sa configuration effective. Dès qu'une sortie d'outil montre une cause, signale-la avec cause_report, avant toute autre recherche ; si la même sortie en montre plusieurs, signale-les toutes dans la même étape. Le tri se termine dès qu'une cause établie est signalée : l'explication détaillée des codes d'erreur et la recherche du correctif seront confiées aux tâches planifiées ensuite, qui partiront de ton résultat."
+	triageGoal = "Tri d'incident, avant toute planification : localise le composant en échec désigné par la demande (ressource, cible, hôte) ; pour un accès à une URL ou à un nom, vérifie d'abord vers quelle IP il pointe et si c'est le point d'entrée attendu. Lis ensuite son message d'erreur exact (opération en échec, code, sous-code, détails) et sa configuration effective. Dès qu'une sortie d'outil montre une cause, signale-la avec cause_report, avant toute autre recherche ; si la même sortie en montre plusieurs, signale-les toutes dans la même étape. Une piste sérieuse (élément précis de la demande, comme une IP, un nom ou un code, retrouvé dans une configuration ou un log) se signale aussi aussitôt, en status clue, puis se vérifie. Le tri se termine dès qu'une cause établie est signalée : l'explication détaillée des codes d'erreur et la recherche du correctif seront confiées aux tâches planifiées ensuite, qui partiront de ton résultat."
 	triageDone = "Une cause établie est signalée : l'objectif du tri est atteint. Conclus maintenant, au format demandé, sans appeler d'outil : localisation du composant, message d'erreur exact et configuration utile, avec leurs preuves. Indique dans gaps ce qui reste à expliquer ou à corriger, pour les tâches suivantes."
 )
 
@@ -731,7 +731,7 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 		}
 	}
 	if len(leads) > 0 {
-		user += "\n\nCauses signalées par les agents en cours de run (à confirmer par les preuves citées et les constats):\n" + memory.Format(leads)
+		user += "\n\nCauses et pistes signalées par les agents en cours de run (à confirmer par les preuves citées et les constats ; une piste non établie se présente comme telle):\n" + memory.Format(leads)
 	}
 	o.Events.Emit(progress.Event{Task: "synthesizer", Kind: "start", Model: o.Runner.First(cands)})
 	out, err := o.Runner.Run(ctx, agent.Spec{
@@ -1020,7 +1020,7 @@ func (o *Orchestrator) incidentRule() string {
 	if !o.Incident || !slices.Contains(o.Tools.Names(), lead.ToolName) {
 		return ""
 	}
-	return "\nMode incident : dès qu'une sortie d'outil montre ce qui cause le dysfonctionnement décrit dans la demande (message d'erreur exact, configuration fautive), appelle " + lead.ToolName + " avec la preuve, sans attendre ta conclusion, puis poursuis ta tâche (vérification de la cause, correctif durable). Une anomalie sans lien avec ce dysfonctionnement va dans tes constats, pas dans " + lead.ToolName + ". Les causes signalées par les autres tâches te sont transmises : ne refais pas leur collecte et ne les signale pas à nouveau."
+	return "\nMode incident : dès qu'une sortie d'outil montre ce qui cause le dysfonctionnement décrit dans la demande (message d'erreur exact, configuration fautive), appelle " + lead.ToolName + " avec la preuve, sans attendre ta conclusion, puis poursuis ta tâche (vérification de la cause, correctif durable). Une piste sérieuse se signale de même, en status clue, dès qu'une preuve contient un élément précis de la demande (IP, nom, identifiant, code d'erreur) ou coïncide nettement avec la panne : l'utilisateur peut la reconnaître avant que tu l'aies établie. Une anomalie sans lien avec ce dysfonctionnement va dans tes constats, pas dans " + lead.ToolName + ". Les causes signalées par les autres tâches te sont transmises : ne refais pas leur collecte et ne les signale pas à nouveau."
 }
 
 func (o *Orchestrator) directPrompt(role string) string {
