@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-16
+
 ### Ajouté
 - `run --incident` : `cause_report` accepte `status: clue` pour une piste sérieuse, c'est-à-dire un élément précis de la demande (IP, nom, identifiant, code d'erreur) retrouvé dans une configuration, un log ou un historique d'installation, sans preuve encore que c'est la cause actuelle. Elle est affichée aussitôt (« piste sérieuse #N »), transmise aux autres tâches, n'arrête pas le tri, et se remplace (`replaces`) par la cause établie ou réfutée. Auparavant seule une cause établie ou probable était signalée : une piste que l'utilisateur aurait reconnue restait invisible jusqu'au rapport.
 
