@@ -203,6 +203,7 @@ func TestStreamTiming(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		time.Sleep(30 * time.Millisecond)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		w.(http.Flusher).Flush()
@@ -220,11 +221,11 @@ func TestStreamTiming(t *testing.T) {
 	if _, err := pool.Chat(context.Background(), "p", Request{Model: "m", Timing: &tm}); err != nil {
 		t.Fatal(err)
 	}
-	if tm.Headers <= 0 || tm.Headers >= 80*time.Millisecond || tm.FirstChunk < 80*time.Millisecond {
+	if tm.Headers < 20*time.Millisecond || tm.FirstChunk < tm.Headers+60*time.Millisecond {
 		t.Fatalf("délais: %+v", tm)
 	}
 	tm = Timing{}
-	if _, err := pool.Chat(context.Background(), "p", Request{Model: "silent", Timing: &tm}); err == nil || tm.Headers <= 0 || tm.FirstChunk != 0 {
+	if _, err := pool.Chat(context.Background(), "p", Request{Model: "silent", Timing: &tm}); err == nil || tm.Headers < 20*time.Millisecond || tm.FirstChunk != 0 {
 		t.Fatalf("en-têtes sans flux: %v %+v", err, tm)
 	}
 }
