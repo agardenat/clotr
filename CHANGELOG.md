@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-16
+
 ### Ajouté
 - Audit : chaque `llm_call` enregistre, quand elles sont mesurées, l'attente d'une place auprès du provider (`queue_ms`, limite de requêtes simultanées), l'arrivée des en-têtes HTTP (`headers_ms`) et celle du premier morceau du flux (`first_chunk_ms`), y compris quand l'appel échoue. `queue_ms` absent : pas d'attente ; `headers_ms` ou `first_chunk_ms` absent : étape non atteinte. `headers_ms` sans `first_chunk_ms` sur un échec « aucune donnée reçue » indique un modèle qui accepte la requête sans rien envoyer.
 
