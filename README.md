@@ -368,7 +368,8 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `catalog` | `cache_ttl` |
 | `audit` | `dir` (défaut `~/.local/state/clotr/audit`), utilisé par `plan`. L'audit d'un `run` est écrit dans le tour de sa session. |
 | `sessions` | `dir` (défaut `~/.local/state/clotr/sessions`) |
-| `language` | `auto` (défaut), `fr` ou `en` : langue de sortie, voir ci-dessous |
+| `language` | `auto` (défaut), `fr` ou `en` : langue des réponses et rapports, voir Langues |
+| `ui_language` | `en` (défaut) ou `fr` : langue de l'interface, voir Langues |
 | `files` | `roots`, `max_file_bytes` |
 | `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true ; false : activée seulement par `-t <instance>`) |
@@ -460,7 +461,8 @@ clotr run --chat --direct
 | `-m, --model role=provider/model` | force le modèle d'un rôle |
 | `--sovereign any\|prefer\|require` | politique souveraine pour l'exécution |
 | `--confidential` | run confidentiel, équivalent de `--sovereign require` |
-| `--lang auto\|fr\|en` | langue de sortie (prioritaire sur `language`) |
+| `--lang auto\|fr\|en` | langue des réponses et rapports (prioritaire sur `language`) |
+| `--ui-lang en\|fr` | langue de l'interface (prioritaire sur `ui_language`) |
 | `-t, --tools` | restreint les groupes d'outils (`fs`, `mcp`, `mcp_<serveur>`, `<instance>`) ; sans `-t`, tous sont proposés au planner, et une instance n'est activée que si une tâche l'utilise. Un serveur ou une instance cité par son nom (`-t mcp_<serveur>`, `-t <instance>`) est activé même avec `enabled: false` ; `-t mcp` respecte `enabled`. Un nom qui ne correspond à aucun groupe est refusé. Une instance activée que `-t` écarte alors que la demande la cite (nom, mot-clé, cible, IP dans ses `networks`) fait l'objet d'un avertissement au démarrage, avec ce qui a été reconnu (audit `instance_filtered`) ; elle reste écartée. |
 | `-x, --exclude` | exclut des groupes d'outils, mêmes préfixes que `-t` ; prioritaire sur `-t` et `enabled`. Exclure le serveur de `web_search.mcp` désactive la recherche web, ou la reporte sur `web_search.model` s'il est défini. |
 | `-o, --output` | écrit le rapport dans un fichier |
@@ -488,7 +490,7 @@ Si stderr est un terminal, `plan` et `run` affichent un tableau dynamique, rafra
   - colonne steps : `step N` en cours, `N steps` une fois terminé, `max!` si la limite `max_steps` a forcé la conclusion ;
   - texte de l'étape en cours : objectif, `thinking…`, `tool <nom> <arguments>`, `fallback to …`, `waiting for …`, puis résumé (`N findings, M tool calls`) et coût une fois la tâche terminée.
 
-Les libellés suivent la langue d'interface (voir Langue de sortie). Tant que le tableau est affiché, tout ce qui est écrit sur stderr par une bibliothèque est capturé et réaffiché au-dessus du tableau, pour ne pas le décaler.
+Les libellés suivent la langue de l'interface (voir Langues). Tant que le tableau est affiché, tout ce qui est écrit sur stderr par une bibliothèque est capturé et réaffiché au-dessus du tableau, pour ne pas le décaler.
 
 Le tableau final reste affiché au-dessus du bilan, et le rapport est écrit sur stdout. Hors terminal (redirection, CI) ou avec `--plain`, la progression est écrite ligne par ligne. `-q` la supprime.
 
@@ -527,17 +529,25 @@ Pendant un tour, le tableau de progression s'affiche sous la demande, puis la r�
 
 `--chat` exige un terminal et n'accepte ni `--json` ni `-o`.
 
-## Langue de sortie
+## Langues
 
-`language` (config) ou `--lang` règle deux choses :
+Deux réglages indépendants :
 
-| Valeur | Rapport, constats, objectifs (modèles) | Interface (tableau, bilan, `models`, `tools`, `plan`, `sessions`) |
-|---|---|---|
-| `auto` | langue de la demande | anglais |
-| `fr` | français, consigne explicite aux modèles | français |
-| `en` | anglais, consigne explicite aux modèles | anglais |
+- **Réponses et rapports** : `language` (config) ou `--lang`.
 
-Une session mémorise sa langue : un tour d'affinage sans `--lang` reprend celle de la session. Les messages d'erreur et d'avertissement, ainsi que l'aide des commandes, restent en français.
+  | Valeur | Rapport, constats, objectifs (modèles) |
+  |---|---|
+  | `auto` | langue de la demande |
+  | `fr` | français, consigne explicite aux modèles |
+  | `en` | anglais, consigne explicite aux modèles |
+
+  Une session mémorise cette langue : un tour d'affinage sans `--lang` reprend celle de la session. Les titres ajoutés par clotr au rapport (annexe des preuves) suivent ce réglage, en anglais pour `auto`.
+
+- **Interface** : `ui_language` (config) ou `--ui-lang`, `en` (défaut) ou `fr`. Elle couvre tout ce que clotr affiche lui-même : aide des commandes, tableau de progression, bilan, `models`, `tools`, `plan`, `sessions`, `templates`, mode conversation, saisie des identifiants, erreurs et avertissements. Les messages sont regroupés dans `internal/i18n`.
+
+Restent dans leur langue d'origine : les consignes envoyées aux modèles et ce qu'ils lisent (description et sortie des outils, environnement affiché par `clotr tools`), les textes de la configuration et des templates (contextes, hints, messages des scripts), et les erreurs des fournisseurs et des systèmes interrogés.
+
+Une assertion de test de template qui porte sur un message du moteur (garde-fou http, chemin refusé…) dépend de la langue de l'interface : viser une partie commune aux deux langues (valeur citée, liste entre parenthèses).
 
 ## Streaming
 

@@ -18,6 +18,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
+	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/netx"
 )
 
@@ -38,7 +39,7 @@ type Endpoint struct {
 	Password func(ctx context.Context) (string, error)
 }
 
-var ErrAuth = errors.New("authentification SSH refusée")
+var ErrAuth error = i18n.Key("ssh.auth")
 
 func (e Endpoint) key() string {
 	return e.User + "@" + net.JoinHostPort(e.Host, strconv.Itoa(e.Port)) + "#" + e.KeyPath + "#" + e.KeyVault
@@ -79,7 +80,7 @@ func NewPool(o Options) (*Pool, error) {
 		o.HostKey = AcceptNew
 	case AcceptNew, Strict, Insecure:
 	default:
-		return nil, fmt.Errorf("host_key %q invalide (accept-new|strict|insecure)", o.HostKey)
+		return nil, i18n.E("ssh.host_key", o.HostKey)
 	}
 	return &Pool{opts: o, dialer: d, sem: make(chan struct{}, o.MaxConns), clients: map[string]*gossh.Client{}, signers: map[string]gossh.Signer{}}, nil
 }
@@ -106,7 +107,7 @@ func (p *Pool) signer(ctx context.Context, e Endpoint) (gossh.Signer, error) {
 	var data []byte
 	if e.KeyVault != "" {
 		if p.opts.ReadVault == nil {
-			return nil, errors.New("clé SSH dans Vault: lecture Vault non disponible")
+			return nil, i18n.E("ssh.vault_unavailable")
 		}
 		ref := e.KeyVault
 		if !strings.Contains(ref, "#") {
@@ -114,22 +115,22 @@ func (p *Pool) signer(ctx context.Context, e Endpoint) (gossh.Signer, error) {
 		}
 		pem, err := p.opts.ReadVault(ctx, ref)
 		if err != nil {
-			return nil, fmt.Errorf("clé SSH dans Vault %s: %w", ref, err)
+			return nil, i18n.E("ssh.vault_key", ref, err)
 		}
 		data = []byte(pem)
 	} else {
 		var err error
 		if data, err = os.ReadFile(path); err != nil {
-			return nil, fmt.Errorf("clé SSH: %w", err)
+			return nil, i18n.E("ssh.key", err)
 		}
 	}
 	s, err := gossh.ParsePrivateKey(data)
 	if err != nil {
 		var pp *gossh.PassphraseMissingError
 		if errors.As(err, &pp) {
-			return nil, fmt.Errorf("clé SSH %s protégée par une passphrase: non supporté", path)
+			return nil, i18n.E("ssh.passphrase", path)
 		}
-		return nil, fmt.Errorf("clé SSH %s: %w", path, err)
+		return nil, i18n.E("ssh.key_path", path, err)
 	}
 	p.signers[path] = s
 	return s, nil
@@ -168,7 +169,7 @@ func (p *Pool) hostKeyCallback() (gossh.HostKeyCallback, error) {
 			return ferr
 		}
 		if errors.As(err, &ke) && len(ke.Want) > 0 {
-			return fmt.Errorf("clé d'hôte SSH de %s différente de celle enregistrée dans %s (réinstallation de la VM ? supprimer la ligne pour accepter la nouvelle)", hostname, path)
+			return i18n.E("ssh.host_changed", hostname, path)
 		}
 		return err
 	}, nil
@@ -187,7 +188,7 @@ func (p *Pool) client(ctx context.Context, e Endpoint) (*gossh.Client, error) {
 		return nil, err
 	}
 	if e.KeyPath == "" && e.KeyVault == "" && e.Password == nil {
-		return nil, errors.New("aucune clé SSH (ssh_key_path, ssh_key_vault) ni mot de passe (auth) configuré")
+		return nil, i18n.E("ssh.no_auth")
 	}
 	if e.KeyPath != "" || e.KeyVault != "" {
 		signer, err := p.signer(ctx, e)
@@ -235,7 +236,7 @@ func (p *Pool) connect(ctx context.Context, e Endpoint, hk gossh.HostKeyCallback
 	defer cancel()
 	conn, err := p.dialer.DialContext(dctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("connexion SSH %s: %w", addr, err)
+		return nil, i18n.E("ssh.connect", addr, err)
 	}
 	if dl, ok := dctx.Deadline(); ok {
 		_ = conn.SetDeadline(dl)
@@ -249,9 +250,9 @@ func (p *Pool) connect(ctx context.Context, e Endpoint, hk gossh.HostKeyCallback
 	if err != nil {
 		conn.Close()
 		if strings.Contains(err.Error(), "unable to authenticate") {
-			return nil, fmt.Errorf("handshake SSH %s@%s: %w (%v)", e.User, addr, ErrAuth, err)
+			return nil, i18n.E("ssh.handshake_auth", e.User, addr, ErrAuth, err)
 		}
-		return nil, fmt.Errorf("handshake SSH %s@%s: %w", e.User, addr, err)
+		return nil, i18n.E("ssh.handshake", e.User, addr, err)
 	}
 	_ = conn.SetDeadline(time.Time{})
 	return gossh.NewClient(cc, chans, reqs), nil

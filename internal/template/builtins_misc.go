@@ -26,6 +26,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/driver/ssh"
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 func runJQ(expr string, doc any) ([]any, error) {
@@ -61,7 +62,7 @@ func builtinJQ(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwa
 	var doc any
 	if s, ok := data.(starlark.String); ok {
 		if err := json.Unmarshal([]byte(s), &doc); err != nil {
-			return nil, fmt.Errorf("jq: JSON illisible: %w", err)
+			return nil, i18n.E("tpl.jq_json", err)
 		}
 	} else {
 		raw, err := starlarkJSON(data)
@@ -113,7 +114,7 @@ func builtinSign(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	}
 	data, ok := asText(msg)
 	if !ok {
-		return nil, fmt.Errorf("crypto.sign: msg doit être str ou bytes")
+		return nil, i18n.E("tpl.sign.msg")
 	}
 	method, sig, err := sign(key, []byte(data))
 	if err != nil {
@@ -141,7 +142,7 @@ func sign(key string, msg []byte) (string, []byte, error) {
 	}
 	block, _ := pem.Decode([]byte(key))
 	if block == nil {
-		return "", nil, fmt.Errorf("crypto.sign: clé non reconnue (graine ed25519 en base64 ou clé PKCS#8 PEM attendue)")
+		return "", nil, i18n.E("tpl.sign.key")
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
@@ -155,7 +156,7 @@ func sign(key string, msg []byte) (string, []byte, error) {
 		sig, err := rsa.SignPKCS1v15(rand.Reader, k, crypto.SHA256, h[:])
 		return "rsa-sha256", sig, err
 	}
-	return "", nil, fmt.Errorf("crypto.sign: type de clé %T non supporté (ed25519, RSA)", parsed)
+	return "", nil, i18n.E("tpl.sign.key_type", parsed)
 }
 
 var base64Module = &starlarkstruct.Module{
@@ -181,7 +182,7 @@ func builtinB64Encode(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tup
 	}
 	s, ok := asText(data)
 	if !ok {
-		return nil, fmt.Errorf("base64.encode: str ou bytes attendu")
+		return nil, i18n.E("tpl.base64")
 	}
 	return starlark.String(b64Encoding(urlSafe).EncodeToString([]byte(s))), nil
 }
@@ -216,7 +217,7 @@ func (in *Instance) fileAllowed(p string) (string, error) {
 			return want, nil
 		}
 	}
-	return "", fmt.Errorf("fichier %q non déclaré dans files du template", p)
+	return "", i18n.E("tpl.file_undeclared", p)
 }
 
 func (in *Instance) fileModule() *starlarkstruct.Module {
@@ -260,7 +261,7 @@ func (in *Instance) builtinEnv(_ *starlark.Thread, b *starlark.Builtin, args sta
 		return nil, err
 	}
 	if !slices.Contains(in.T.Env, name) {
-		return nil, fmt.Errorf("variable %q non déclarée dans env du template", name)
+		return nil, i18n.E("tpl.env_undeclared", name)
 	}
 	return starlark.String(in.getenv(name)), nil
 }
@@ -296,7 +297,7 @@ func builtinParallel(thread *starlark.Thread, b *starlark.Builtin, args starlark
 			if in != nil {
 				out, err = in.call(ctx, threadTool(thread), fn, v)
 			} else {
-				err = fmt.Errorf("parallel: instance absente")
+				err = i18n.E("tpl.parallel")
 			}
 			fields := map[string]any{"value": out, "error": ""}
 			if err != nil {
@@ -321,7 +322,7 @@ func builtinSprintf(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple
 	}
 	format, ok := starlark.AsString(args[0])
 	if !ok {
-		return nil, fmt.Errorf("sprintf: format doit être un texte")
+		return nil, i18n.E("tpl.sprintf")
 	}
 	var goArgs []any
 	for _, a := range args[1:] {
@@ -452,7 +453,7 @@ var urlModule = &starlarkstruct.Module{
 		"parse_query": strFn("url.parse_query", func(s string) (starlark.Value, error) {
 			q, err := url.ParseQuery(s)
 			if err != nil {
-				return nil, fmt.Errorf("query invalide: %w", err)
+				return nil, i18n.E("tpl.query", err)
 			}
 			d := map[string]string{}
 			for k := range q {
@@ -463,7 +464,7 @@ var urlModule = &starlarkstruct.Module{
 		"parse": strFn("url.parse", func(s string) (starlark.Value, error) {
 			u, err := url.Parse(s)
 			if err != nil {
-				return nil, fmt.Errorf("URL invalide: %w", err)
+				return nil, i18n.E("tpl.url", err)
 			}
 			return makeStruct(map[string]any{"scheme": u.Scheme, "host": u.Host, "hostname": u.Hostname(), "port": u.Port(), "path": u.Path, "query": u.RawQuery})
 		}),

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/memory"
 )
 
@@ -96,12 +97,12 @@ func Open(root, name string) (*Session, error) {
 			return nil, err
 		}
 		if len(all) == 0 {
-			return nil, errors.New("aucune session")
+			return nil, i18n.E("session.none")
 		}
 		return all[0], nil
 	}
 	if !validName.MatchString(name) {
-		return nil, fmt.Errorf("nom de session invalide %q", name)
+		return nil, i18n.E("session.invalid_name", name)
 	}
 	return load(filepath.Join(root, name))
 }
@@ -110,7 +111,7 @@ func load(dir string) (*Session, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "session.json"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("session %s introuvable", filepath.Base(dir))
+			return nil, i18n.E("session.not_found", filepath.Base(dir))
 		}
 		return nil, err
 	}

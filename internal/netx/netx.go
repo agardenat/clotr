@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"golang.org/x/net/proxy"
+
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 func ProxyURL(raw string, port int) (*url.URL, error) {
@@ -25,18 +27,18 @@ func ProxyURL(raw string, port int) (*url.URL, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("proxy invalide %q: %w", raw, err)
+		return nil, i18n.E("netx.proxy", raw, err)
 	}
 	if u.Port() == "" {
 		if port == 0 {
-			return nil, fmt.Errorf("proxy sans port: %q", raw)
+			return nil, i18n.E("netx.proxy_port", raw)
 		}
 		u.Host = net.JoinHostPort(u.Hostname(), strconv.Itoa(port))
 	}
 	switch u.Scheme {
 	case "socks5", "socks5h", "http", "https":
 	default:
-		return nil, fmt.Errorf("proxy %q: schéma %q non supporté (socks5, socks5h, http, https)", raw, u.Scheme)
+		return nil, i18n.E("netx.proxy_scheme", raw, u.Scheme)
 	}
 	return u, nil
 }
@@ -66,14 +68,14 @@ func TransportTLS(proxyURL *url.URL, o TLS) (*http.Transport, error) {
 	if len(ca) > 0 {
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(ca) {
-			return nil, fmt.Errorf("autorité de certification : aucun certificat PEM valide")
+			return nil, i18n.E("netx.ca")
 		}
 		tlsCfg.RootCAs = pool
 	}
 	if len(o.CertPEM) > 0 || len(o.KeyPEM) > 0 {
 		cert, err := tls.X509KeyPair(o.CertPEM, o.KeyPEM)
 		if err != nil {
-			return nil, fmt.Errorf("certificat client : %w", err)
+			return nil, i18n.E("netx.client_cert", err)
 		}
 		tlsCfg.Certificates = []tls.Certificate{cert}
 	}
@@ -95,7 +97,7 @@ func Dialer(proxyURL *url.URL) (ContextDialer, error) {
 		return direct, nil
 	}
 	if proxyURL.Scheme != "socks5" && proxyURL.Scheme != "socks5h" {
-		return nil, fmt.Errorf("proxy %s: seul SOCKS5 est supporté pour SSH", proxyURL.Redacted())
+		return nil, i18n.E("netx.ssh_socks", proxyURL.Redacted())
 	}
 	var auth *proxy.Auth
 	if proxyURL.User != nil {
@@ -108,7 +110,7 @@ func Dialer(proxyURL *url.URL) (ContextDialer, error) {
 	}
 	cd, ok := d.(ContextDialer)
 	if !ok {
-		return nil, fmt.Errorf("dialer SOCKS5 sans DialContext")
+		return nil, i18n.E("netx.dialer")
 	}
 	return cd, nil
 }

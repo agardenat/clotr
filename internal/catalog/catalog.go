@@ -17,6 +17,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/httpx"
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 type ModelInfo struct {
@@ -117,7 +118,7 @@ func Load(ctx context.Context, cfg *config.Config, hc *http.Client, cachePath st
 		for _, s := range snaps {
 			errs = append(errs, fmt.Errorf("%s: %s", s.Provider, s.Error))
 		}
-		return nil, fmt.Errorf("aucun provider joignable: %w", errors.Join(errs...))
+		return nil, i18n.E("catalog.unreachable", errors.Join(errs...))
 	}
 	now := time.Now()
 	if failed == 0 && cachePath != "" {
@@ -255,7 +256,7 @@ func Build(cfg *config.Config, snaps []Snapshot) *Catalog {
 	var unprofiled []string
 	for _, s := range snaps {
 		if s.Error != "" {
-			cat.Warnings = append(cat.Warnings, fmt.Sprintf("provider %s injoignable: %s", s.Provider, s.Error))
+			cat.Warnings = append(cat.Warnings, i18n.T("catalog.provider_down", s.Provider, s.Error))
 			continue
 		}
 		for _, raw := range s.Models {
@@ -296,9 +297,9 @@ func Build(cfg *config.Config, snaps []Snapshot) *Catalog {
 		shown := unprofiled
 		suffix := ""
 		if len(shown) > 5 {
-			shown, suffix = shown[:5], fmt.Sprintf(", … (+%d, SOURCE≠profile dans clotr models)", len(unprofiled)-5)
+			shown, suffix = shown[:5], i18n.T("catalog.more", len(unprofiled)-5)
 		}
-		cat.Warnings = append(cat.Warnings, fmt.Sprintf("%d modèles sans profil (tier=balanced par défaut): %s%s", len(unprofiled), strings.Join(shown, ", "), suffix))
+		cat.Warnings = append(cat.Warnings, i18n.T("catalog.unprofiled", len(unprofiled), strings.Join(shown, ", "), suffix))
 	}
 	sort.SliceStable(cat.Models, func(i, j int) bool {
 		a, b := cat.Models[i], cat.Models[j]

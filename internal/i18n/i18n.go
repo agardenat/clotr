@@ -1,25 +1,51 @@
 package i18n
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
 
-var lang = "en"
+var (
+	ui, report = "en", "en"
+	uiSet      bool
+)
 
-func Set(l string) {
+func norm(l string) string {
 	if l == "fr" {
-		lang = "fr"
-		return
+		return "fr"
 	}
-	lang = "en"
+	return "en"
 }
 
-func Lang() string {
-	return lang
+func SetUI(l string) {
+	ui, uiSet = norm(l), true
+}
+
+func DefaultUI(l string) {
+	if !uiSet {
+		ui = norm(l)
+	}
+}
+
+func SetReport(l string) {
+	report = norm(l)
+}
+
+func UI() string {
+	return ui
 }
 
 type msg struct{ en, fr string }
+
+func add(m map[string]msg) {
+	for k, v := range m {
+		if _, dup := msgs[k]; dup {
+			panic("i18n: duplicate key " + k)
+		}
+		msgs[k] = v
+	}
+}
 
 var msgs = map[string]msg{
 	"state.running":        {"running", "en cours"},
@@ -34,10 +60,6 @@ var msgs = map[string]msg{
 	"fallback.after":       {"after error on %s: %s", "après erreur sur %s : %s"},
 	"fallback.exhausted":   {"%s used its whole output limit without answering", "%s a épuisé sa limite de sortie sans répondre"},
 	"limit":                {"%d-step limit reached, forced conclusion", "limite de %d étapes atteinte, conclusion forcée"},
-	"evidence.title":       {"Appendix — cited evidence", "Annexe — preuves citées"},
-	"evidence.full":        {"Appendix — cited evidence (full outputs)", "Annexe — preuves citées (sorties complètes)"},
-	"evidence.missing":     {"not found in the session archive (invented identifier?)", "absente de l'archive de la session (identifiant inventé ?)"},
-	"evidence.unknown":     {"not found in this turn's archive (earlier turn or invented identifier)", "absente de l'archive de ce tour (tour précédent ou identifiant inventé)"},
 	"evidence.line":        {"evidence: %d tool outputs archived in %s (clotr session %s --evidence <id>)", "preuves : %d sorties d'outils archivées dans %s (clotr session %s --evidence <id>)"},
 	"stopped.steps":        {"step limit", "limite d'étapes"},
 	"stopped.stall":        {"no more progress", "plus de progression"},
@@ -121,8 +143,6 @@ var msgs = map[string]msg{
 	"instances.enabled":    {"enabled", "active"},
 	"instances.disabled":   {"disabled", "désactivée"},
 	"instances.missing":    {"template not found", "template introuvable"},
-	"followup":             {"follow-up round %d: planning…", "tour de complément %d : planification…"},
-	"followup.none":        {"no follow-up needed", "aucun complément nécessaire"},
 	"tools.env":            {"ENVIRONMENT", "ENVIRONNEMENT"},
 	"tools.exposed":        {"EXPOSED TOOLS", "OUTILS EXPOSÉS"},
 	"tools.skipped":        {"MCP %s — skipped (no readOnlyHint nor allow, or denied):", "MCP %s — écartés (ni readOnlyHint ni allow, ou deny) :"},
@@ -143,6 +163,41 @@ var msgs = map[string]msg{
 	"chat.report":          {"report: %s", "rapport : %s"},
 }
 
+var kinds = map[string]msg{
+	"kind.budget":       {"budget", "budget"},
+	"kind.concluding":   {"concluding", "conclusion"},
+	"kind.done":         {"done", "terminé"},
+	"kind.dropped":      {"dropped", "écarté"},
+	"kind.failed":       {"failed", "échec"},
+	"kind.fallback":     {"fallback", "bascule"},
+	"kind.finding":      {"finding", "constat"},
+	"kind.interrupted":  {"interrupted", "interrompu"},
+	"kind.lead":         {"lead", "cause"},
+	"kind.limit":        {"limit", "limite"},
+	"kind.note":         {"note", "note"},
+	"kind.plan":         {"plan", "plan"},
+	"kind.retry":        {"retry", "relance"},
+	"kind.skipped":      {"skipped", "non lancée"},
+	"kind.stall_limit":  {"stall_limit", "stagnation"},
+	"kind.start":        {"start", "début"},
+	"kind.step":         {"step", "étape"},
+	"kind.time_limit":   {"time_limit", "délai"},
+	"kind.tool":         {"tool", "outil"},
+	"kind.verification": {"verification", "vérification"},
+}
+
+func init() {
+	add(kinds)
+}
+
+var reportMsgs = map[string]msg{
+	"evidence.error":   {"error", "erreur"},
+	"evidence.title":   {"Appendix — cited evidence", "Annexe — preuves citées"},
+	"evidence.full":    {"Appendix — cited evidence (full outputs)", "Annexe — preuves citées (sorties complètes)"},
+	"evidence.missing": {"not found in the session archive (invented identifier?)", "absente de l'archive de la session (identifiant inventé ?)"},
+	"evidence.unknown": {"not found in this turn's archive (earlier turn or invented identifier)", "absente de l'archive de ce tour (tour précédent ou identifiant inventé)"},
+}
+
 var plurals = map[string]msg{
 	"task":      {"task|tasks", "tâche|tâches"},
 	"step":      {"step|steps", "étape|étapes"},
@@ -152,15 +207,23 @@ var plurals = map[string]msg{
 	"entry":     {"entry|entries", "entrée|entrées"},
 }
 
-func pick(m msg) string {
-	if lang == "fr" {
+func pick(m msg, l string) string {
+	if l == "fr" {
 		return m.fr
 	}
 	return m.en
 }
 
+func R(key string) string {
+	m, ok := reportMsgs[key]
+	if !ok {
+		return key
+	}
+	return pick(m, report)
+}
+
 func All(key string) []string {
-	m, ok := msgs[key]
+	m, ok := reportMsgs[key]
 	if !ok {
 		return nil
 	}
@@ -173,9 +236,23 @@ func T(key string, args ...any) string {
 		return key
 	}
 	if len(args) == 0 {
-		return pick(m)
+		return pick(m, ui)
 	}
-	return fmt.Sprintf(pick(m), args...)
+	return fmt.Sprintf(pick(m, ui), args...)
+}
+
+func E(key string, args ...any) error {
+	m, ok := msgs[key]
+	if !ok {
+		return errors.New(key)
+	}
+	return fmt.Errorf(pick(m, ui), args...)
+}
+
+type Key string
+
+func (k Key) Error() string {
+	return T(string(k))
 }
 
 func N(n int, key string) string {
@@ -183,8 +260,8 @@ func N(n int, key string) string {
 	if !ok {
 		return fmt.Sprintf("%d %s", n, key)
 	}
-	one, many, _ := strings.Cut(pick(m), "|")
-	if n == 1 || (lang == "fr" && n == 0) {
+	one, many, _ := strings.Cut(pick(m, ui), "|")
+	if n == 1 || (ui == "fr" && n == 0) {
 		return fmt.Sprintf("%d %s", n, one)
 	}
 	return fmt.Sprintf("%d %s", n, many)

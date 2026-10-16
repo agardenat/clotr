@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -406,7 +405,7 @@ func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) 
 		o.Audit.Log("plan_invalid", map[string]any{"attempt": attempt, "error": lastErr.Error(), "content": out.Content})
 		user = fmt.Sprintf("%s\n\nTa réponse précédente était invalide:\n%s\n\nErreur: %s\nCorrige et renvoie uniquement le JSON.", o.planInput(request), out.Content, lastErr)
 	}
-	return nil, fmt.Errorf("plan invalide: %w", lastErr)
+	return nil, i18n.E("orch.plan_invalid", lastErr)
 }
 
 func (o *Orchestrator) planInput(request string) string {
@@ -419,35 +418,35 @@ func (o *Orchestrator) planInput(request string) string {
 
 func (o *Orchestrator) Validate(p *Plan) error {
 	if len(p.Tasks) == 0 {
-		return errors.New("aucune tâche")
+		return i18n.E("orch.no_task")
 	}
 	if len(p.Tasks) > o.Cfg.Limits.MaxTasks {
-		return fmt.Errorf("%d tâches, maximum %d", len(p.Tasks), o.Cfg.Limits.MaxTasks)
+		return i18n.E("orch.too_many", len(p.Tasks), o.Cfg.Limits.MaxTasks)
 	}
 	workers := o.Cfg.WorkerRoles()
 	ids := map[string]bool{}
 	for i := range p.Tasks {
 		t := &p.Tasks[i]
 		if t.ID == "" || ids[t.ID] {
-			return fmt.Errorf("tâche %d: id vide ou dupliqué %q", i, t.ID)
+			return i18n.E("orch.task_id", i, t.ID)
 		}
 		if o.triaged != nil && t.ID == triageID {
-			return fmt.Errorf("tâche %d: id %s réservé au tri d'incident", i, triageID)
+			return i18n.E("orch.task_triage_id", i, triageID)
 		}
 		if o.triaged != nil {
 			t.DependsOn = slices.DeleteFunc(t.DependsOn, func(d string) bool { return d == triageID })
 		}
 		ids[t.ID] = true
 		if !slices.Contains(workers, t.Role) {
-			return fmt.Errorf("tâche %s: rôle %q invalide (valides: %s)", t.ID, t.Role, strings.Join(workers, ", "))
+			return i18n.E("orch.task_role", t.ID, t.Role, strings.Join(workers, ", "))
 		}
 		if strings.TrimSpace(t.Goal) == "" {
-			return fmt.Errorf("tâche %s: goal vide", t.ID)
+			return i18n.E("orch.task_goal", t.ID)
 		}
 		role := o.Cfg.Roles[t.Role]
 		if !role.Tools {
 			if len(t.Tools) > 0 {
-				return fmt.Errorf("tâche %s: le rôle %s n'utilise pas d'outils", t.ID, t.Role)
+				return i18n.E("orch.task_no_tools", t.ID, t.Role)
 			}
 			continue
 		}
@@ -457,7 +456,7 @@ func (o *Orchestrator) Validate(p *Plan) error {
 		}
 		expanded, err := o.Tools.Expand(t.Tools)
 		if err != nil {
-			return fmt.Errorf("tâche %s: %w", t.ID, err)
+			return i18n.E("orch.task_err", t.ID, err)
 		}
 		for _, n := range append(o.Tools.GroupMembers(expanded), o.Tools.Companions(expanded)...) {
 			if !slices.Contains(expanded, n) {
@@ -482,7 +481,7 @@ func (o *Orchestrator) Validate(p *Plan) error {
 	for _, t := range p.Tasks {
 		for _, d := range t.DependsOn {
 			if d == t.ID || !ids[d] {
-				return fmt.Errorf("tâche %s: dépendance invalide %q", t.ID, d)
+				return i18n.E("orch.task_dep", t.ID, d)
 			}
 		}
 	}
@@ -549,7 +548,7 @@ func checkCycles(tasks []Task) error {
 		}
 	}
 	if seen != len(tasks) {
-		return errors.New("cycle dans depends_on")
+		return i18n.E("orch.cycle")
 	}
 	return nil
 }
@@ -705,7 +704,7 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 		}
 	}
 	if ok == 0 {
-		return "", "", fmt.Errorf("toutes les tâches ont échoué:\n%s", strings.Join(errs, "\n"))
+		return "", "", i18n.E("orch.all_failed", strings.Join(errs, "\n"))
 	}
 	cands, err := o.Router.Candidates(config.RoleSynthesizer)
 	if err != nil {
@@ -758,7 +757,7 @@ func (o *Orchestrator) finalize(content string) string {
 	if n > 0 {
 		o.Audit.Log("note_only_lines", map[string]any{"count": n})
 	}
-	return content + o.Runner.Evidence.Annex(content, i18n.T("evidence.title"), i18n.T("evidence.unknown"), o.displayPath)
+	return content + o.Runner.Evidence.Annex(content, i18n.R("evidence.title"), i18n.R("evidence.unknown"), o.displayPath)
 }
 
 const DirectTask = "direct"
@@ -767,7 +766,7 @@ func (o *Orchestrator) DirectRole(role string) (string, error) {
 	workers := o.Cfg.WorkerRoles()
 	if role != "" {
 		if !slices.Contains(workers, role) {
-			return "", fmt.Errorf("--direct: rôle %q invalide (valides: %s)", role, strings.Join(workers, ", "))
+			return "", i18n.E("orch.direct_role", role, strings.Join(workers, ", "))
 		}
 		return role, nil
 	}
@@ -782,7 +781,7 @@ func (o *Orchestrator) DirectRole(role string) (string, error) {
 		}
 	}
 	if best == "" {
-		return "", errors.New("--direct: aucun rôle outillé dans la configuration")
+		return "", i18n.E("orch.direct_none")
 	}
 	return best, nil
 }
@@ -844,7 +843,7 @@ func ExtractJSON(s string, v any) error {
 	}
 	start := strings.IndexByte(s, '{')
 	if start < 0 {
-		return errors.New("aucun objet JSON trouvé")
+		return i18n.E("orch.no_json")
 	}
 	var candidates []string
 	if end := strings.LastIndexByte(s, '}'); end > start {
@@ -861,7 +860,7 @@ func ExtractJSON(s string, v any) error {
 			first = err
 		}
 	}
-	return fmt.Errorf("JSON invalide: %w", first)
+	return i18n.E("orch.json_invalid", first)
 }
 
 func repairJSON(s string) string {

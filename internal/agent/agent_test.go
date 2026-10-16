@@ -222,7 +222,7 @@ func TestBudgetExhaustion(t *testing.T) {
 		t.Fatalf("modèles %v, appels p=%d", models, calls.Load())
 	}
 	_, err = run.Run(context.Background(), Spec{TaskID: "t", Candidates: cands[:1]})
-	if err == nil || !strings.Contains(err.Error(), "aucun modèle disponible") {
+	if err == nil || !strings.Contains(err.Error(), "no model available") {
 		t.Fatalf("err=%v", err)
 	}
 }

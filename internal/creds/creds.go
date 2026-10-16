@@ -108,9 +108,9 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 			return p, nil
 		}
 	}
-	missing := fmt.Sprintf("%s: identifiants absents (variables %s / %s) et aucun terminal pour les saisir", label, orNone(userEnv), orNone(passEnv))
+	missing := i18n.T("creds.missing", label, orNone(userEnv), orNone(passEnv))
 	if vaultErr != nil {
-		missing += fmt.Sprintf(" ; Vault %s : %v", passVault, vaultErr)
+		missing += i18n.T("creds.vault", passVault, vaultErr)
 	}
 	tty, err := OpenTTY()
 	if err != nil {
@@ -149,7 +149,7 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		p.Pass = pass
 	}
 	if p.User == "" || p.Pass == "" {
-		return Pair{}, fmt.Errorf("%s: identifiants vides", label)
+		return Pair{}, i18n.E("creds.empty", label)
 	}
 	cache[key] = p
 	cache[userKey(label, p.User)] = p
@@ -193,7 +193,7 @@ func Confirm(question string) (bool, error) {
 	}
 	defer tty.Close()
 	if !term.IsTerminal(tty.In.Fd()) {
-		return false, fmt.Errorf("aucun terminal")
+		return false, i18n.E("creds.notty")
 	}
 	fmt.Fprint(tty.Out, question)
 	line, err := bufio.NewReader(tty.In).ReadString('\n')

@@ -173,7 +173,7 @@ func TestPoolExecAndKnownHosts(t *testing.T) {
 	os.WriteFile(kh, []byte(strings.Replace(string(data), "]:"+p, "]:"+p2, 1)), 0o600)
 	pool2, _ := NewPool(Options{KnownHosts: kh, HostKey: AcceptNew})
 	defer pool2.Close()
-	if _, err := pool2.Exec(context.Background(), Endpoint{Host: h, Port: port2, User: "admin", KeyPath: keyPath}, "true", 10); err == nil || !strings.Contains(err.Error(), "différente") {
+	if _, err := pool2.Exec(context.Background(), Endpoint{Host: h, Port: port2, User: "admin", KeyPath: keyPath}, "true", 10); err == nil || !strings.Contains(err.Error(), "differs from the one recorded") {
 		t.Fatalf("clé d'hôte changée acceptée: %v", err)
 	}
 	strict, _ := NewPool(Options{KnownHosts: filepath.Join(dir, "empty"), HostKey: Strict})
@@ -252,7 +252,7 @@ func TestPoolPasswordFallbackAndStdin(t *testing.T) {
 		t.Fatalf("ErrAuth attendu: %v", err)
 	}
 	noKey := Endpoint{Host: h, Port: port, User: "ops"}
-	if _, err := pool2.Exec(context.Background(), noKey, "true", 100); err == nil || !strings.Contains(err.Error(), "ni mot de passe") {
+	if _, err := pool2.Exec(context.Background(), noKey, "true", 100); err == nil || !strings.Contains(err.Error(), "nor password") {
 		t.Fatalf("absence de clé et de mot de passe: %v", err)
 	}
 }

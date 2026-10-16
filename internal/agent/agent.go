@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -122,7 +121,7 @@ func (r *Runner) unavailable(m catalog.ModelInfo) string {
 		return "budget " + m.Provider + ": " + reason
 	}
 	if _, down := r.down.Load(m.Ref()); down {
-		return "écarté pour ce run"
+		return i18n.T("agent.down")
 	}
 	return ""
 }
@@ -133,7 +132,7 @@ func (r *Runner) First(cands []catalog.ModelInfo) string {
 			return c.Ref()
 		}
 	}
-	return "aucun modèle disponible"
+	return i18n.T("agent.none")
 }
 
 type session struct {
@@ -148,7 +147,7 @@ type session struct {
 
 func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 	if len(spec.Candidates) == 0 {
-		return nil, fmt.Errorf("%s: aucun modèle candidat", spec.TaskID)
+		return nil, i18n.E("agent.no_candidate", spec.TaskID)
 	}
 	s := &session{r: r, spec: spec, out: &Output{}, id: newSessionID()}
 	msgs := []llm.Message{{Role: "system", Content: spec.System}, {Role: "user", Content: spec.User}}
@@ -238,7 +237,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 				content = strings.TrimSpace(thinkBlock.ReplaceAllString(resp.Choices[0].Message.Content, ""))
 			}
 			if content == "" {
-				return s.out, errors.New("réponse finale vide")
+				return s.out, i18n.E("agent.empty_final")
 			}
 			if spec.Check != nil && checks < maxChecks {
 				if problem := spec.Check(content); problem != "" {
@@ -352,7 +351,7 @@ func (s *session) switchIfOutputExhausted(ctx context.Context, step int, req llm
 		}
 		if next < 0 {
 			s.r.Audit.Log("output_exhausted", map[string]any{"task": s.spec.TaskID, "step": step, "model": from, "completion_tokens": resp.Usage.CompletionTokens, "next": ""})
-			return nil, fmt.Errorf("%s a épuisé sa limite de sortie (%d tokens) en raisonnant, sans produire de réponse ; aucun autre modèle disponible pour ce rôle (le relancer ne changerait rien)", from, resp.Usage.CompletionTokens)
+			return nil, i18n.E("agent.exhausted", from, resp.Usage.CompletionTokens)
 		}
 		s.cur = next
 		s.r.Audit.Log("output_exhausted", map[string]any{"task": s.spec.TaskID, "step": step, "model": from, "completion_tokens": resp.Usage.CompletionTokens, "next": cands[next].Ref()})
@@ -501,9 +500,9 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 		}
 	}
 	if lastErr == nil {
-		return nil, fmt.Errorf("aucun modèle disponible: %s", strings.Join(skipped, ", "))
+		return nil, i18n.E("agent.none_list", strings.Join(skipped, ", "))
 	}
-	return nil, fmt.Errorf("tous les modèles candidats ont échoué, dernière erreur: %w", lastErr)
+	return nil, i18n.E("agent.all_failed", lastErr)
 }
 
 func (s *session) execTools(ctx context.Context, step int, calls []llm.ToolCall) []llm.Message {

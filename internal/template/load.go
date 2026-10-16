@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 type Set struct {
@@ -21,7 +23,7 @@ func Load(dir string) (*Set, error) {
 		return s, nil
 	}
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
-		s.Warnings = append(s.Warnings, fmt.Sprintf("répertoire des templates %s absent : y installer les templates (make install dans le dépôt des templates)", dir))
+		s.Warnings = append(s.Warnings, i18n.T("tpl.dir_missing", dir))
 		return s, nil
 	} else if err != nil {
 		return nil, err
@@ -41,11 +43,11 @@ func Load(dir string) (*Set, error) {
 		}
 		t, err := Parse(data, f)
 		if err != nil {
-			s.Warnings = append(s.Warnings, err.Error()+" (ignoré)")
+			s.Warnings = append(s.Warnings, err.Error()+i18n.T("tpl.ignored"))
 			continue
 		}
 		if prev, ok := s.byName[t.Name]; ok {
-			s.Warnings = append(s.Warnings, fmt.Sprintf("template %s: nom %q déjà défini par %s (ignoré)", f, t.Name, prev.Source))
+			s.Warnings = append(s.Warnings, i18n.T("tpl.name_dup", f, t.Name, prev.Source))
 			continue
 		}
 		s.byName[t.Name] = t

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 const (
@@ -42,7 +44,7 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	}
 	v, err := time.ParseDuration(s)
 	if err != nil {
-		return fmt.Errorf("line %d: invalid duration %q", n.Line, s)
+		return i18n.E("config.duration", n.Line, s)
 	}
 	d.Duration = v
 	return nil
@@ -63,6 +65,7 @@ type Config struct {
 	Routing   Routing         `yaml:"routing"`
 	Sessions  SessionsConf    `yaml:"sessions"`
 	Language  string          `yaml:"language"`
+	UILang    string          `yaml:"ui_language"`
 	WebSearch WebSearch       `yaml:"web_search"`
 	Vault     VaultConf       `yaml:"vault"`
 }
@@ -85,6 +88,24 @@ func ValidWebPolicy(p string) bool {
 
 func ValidLanguage(l string) bool {
 	return l == "auto" || l == "fr" || l == "en"
+}
+
+func ValidUILanguage(l string) bool {
+	return l == "en" || l == "fr"
+}
+
+func PeekUILanguage(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var c struct {
+		UILang string `yaml:"ui_language"`
+	}
+	if yaml.Unmarshal(data, &c) != nil {
+		return ""
+	}
+	return c.UILang
 }
 
 type TemplatesConf struct {
@@ -169,7 +190,7 @@ type Budget struct {
 func (b *Budget) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind == yaml.ScalarNode {
 		if n.Value != "unlimited" {
-			return fmt.Errorf("line %d: budget: %q invalide (unlimited ou {info_path, min_remaining, max_run_cost})", n.Line, n.Value)
+			return i18n.E("config.budget", n.Line, n.Value)
 		}
 		*b = Budget{Unlimited: true}
 		return nil
@@ -190,11 +211,11 @@ func (b *Budget) Limited() bool {
 func (p Provider) BudgetStatus() string {
 	switch {
 	case p.Budget == nil:
-		return "non déclaré"
+		return i18n.T("config.budget.undeclared")
 	case p.Budget.Unlimited:
-		return "illimité"
+		return i18n.T("config.budget.unlimited")
 	}
-	return "limité"
+	return i18n.T("config.budget.limited")
 }
 
 func (p Provider) APIKey() string {
@@ -317,6 +338,9 @@ func parse(data []byte, clientsDir string) (*Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	if ValidUILanguage(c.UILang) {
+		i18n.DefaultUI(c.UILang)
+	}
 	if clientsDir != "" {
 		if err := c.loadClients(clientsDir); err != nil {
 			return nil, err
@@ -347,7 +371,7 @@ func (c *Config) loadClients(dir string) error {
 			return fmt.Errorf("client %s: %w", f, err)
 		}
 		if base := strings.TrimSuffix(filepath.Base(f), ".yaml"); cl.Name != base {
-			return fmt.Errorf("client %s: name %q différent du nom du fichier (%s)", f, cl.Name, base)
+			return i18n.E("config.client_file", f, cl.Name, base)
 		}
 		for _, in := range cl.Instances {
 			in.Client = cl.Name
@@ -414,6 +438,9 @@ func (c *Config) applyDefaults() {
 	if c.Language == "" {
 		c.Language = "auto"
 	}
+	if c.UILang == "" {
+		c.UILang = "en"
+	}
 	if c.Routing.Sovereign == "" {
 		c.Routing.Sovereign = "any"
 	}
@@ -472,171 +499,174 @@ func (c *Config) applyDefaults() {
 
 func (c *Config) validate() error {
 	var errs []error
-	fail := func(format string, args ...any) {
-		errs = append(errs, fmt.Errorf(format, args...))
+	fail := func(msg string) {
+		errs = append(errs, errors.New(msg))
 	}
 	if len(c.Providers) == 0 {
-		fail("providers: au moins un provider requis")
+		fail(i18n.T("config.providers"))
 	}
 	seen := map[string]bool{}
 	for i, p := range c.Providers {
 		if p.Name == "" {
-			fail("providers[%d].name: requis", i)
+			fail(i18n.T("config.provider_name", i))
 		}
 		if strings.Contains(p.Name, "/") {
-			fail("providers[%d].name: %q ne doit pas contenir '/'", i, p.Name)
+			fail(i18n.T("config.provider_slash", i, p.Name))
 		}
 		if seen[p.Name] {
-			fail("providers[%d].name: %q dupliqué", i, p.Name)
+			fail(i18n.T("config.provider_dup", i, p.Name))
 		}
 		seen[p.Name] = true
 		if p.APIKeyEnv != "" && !envName.MatchString(p.APIKeyEnv) {
-			fail("providers[%d].api_key_env: attend un nom de variable d'environnement, pas une clé (utiliser api_key pour une clé en clair ou ${VAR})", i)
+			fail(i18n.T("config.api_key_env", i))
 		}
 		if b := p.Budget; b.Limited() && (b.MinRemaining < 0 || b.MaxRunCost < 0 || !strings.HasPrefix(b.InfoPath, "/")) {
-			fail("providers[%d].budget: min_remaining/max_run_cost >= 0 et info_path commençant par /", i)
+			fail(i18n.T("config.provider_budget", i))
 		}
 		if p.APIKeyEnv != "" && p.Key != "" {
-			fail("providers[%d]: api_key et api_key_env sont exclusifs", i)
+			fail(i18n.T("config.api_key_both", i))
 		}
 		if u, err := url.Parse(p.BaseURL); err != nil || u.Scheme == "" || u.Host == "" {
-			fail("providers[%d].base_url: URL invalide %q", i, p.BaseURL)
+			fail(i18n.T("config.base_url", i, p.BaseURL))
 		}
 	}
 	for i, p := range c.Profiles {
 		if p.Match == "" {
-			fail("profiles[%d].match: requis", i)
+			fail(i18n.T("config.profile_match", i))
 		}
 		if p.Tier != "" && TierRank(p.Tier) == 0 {
-			fail("profiles[%d].tier: %q invalide (fast|balanced|deep)", i, p.Tier)
+			fail(i18n.T("config.profile_tier", i, p.Tier))
 		}
 	}
 	if !ValidLanguage(c.Language) {
-		fail("language: %q invalide (auto|fr|en)", c.Language)
+		fail(i18n.T("config.language", c.Language))
+	}
+	if !ValidUILanguage(c.UILang) {
+		fail(i18n.T("config.ui_language", c.UILang))
 	}
 	if !ValidSovereignPolicy(c.Routing.Sovereign) {
-		fail("routing.sovereign: %q invalide (any|prefer|require)", c.Routing.Sovereign)
+		fail(i18n.T("config.sovereign", c.Routing.Sovereign))
 	}
 	for name, r := range c.Roles {
 		if TierRank(r.Tier) == 0 {
-			fail("roles.%s.tier: %q invalide (fast|balanced|deep)", name, r.Tier)
+			fail(i18n.T("config.role_tier", name, r.Tier))
 		}
 		if r.Sovereign != "" && !ValidSovereignPolicy(r.Sovereign) {
-			fail("roles.%s.sovereign: %q invalide (any|prefer|require)", name, r.Sovereign)
+			fail(i18n.T("config.role_sovereign", name, r.Sovereign))
 		}
 	}
 	for _, req := range []string{RolePlanner, RoleSynthesizer} {
 		if _, ok := c.Roles[req]; !ok {
-			fail("roles.%s: requis", req)
+			fail(i18n.T("config.role_required", req))
 		}
 	}
 	if len(c.WorkerRoles()) == 0 {
-		fail("roles: au moins un rôle de travail (hors planner/synthesizer) requis")
+		fail(i18n.T("config.worker_role"))
 	}
 	if c.Files != nil && len(c.Files.Roots) == 0 {
-		fail("files.roots: au moins une racine requise")
+		fail(i18n.T("config.roots"))
 	}
 	mcpNames := map[string]bool{}
 	for i, m := range c.MCP {
 		if !mcpName.MatchString(m.Name) {
-			fail("mcp[%d].name: %q invalide ([a-zA-Z0-9-]+)", i, m.Name)
+			fail(i18n.T("config.mcp_name", i, m.Name))
 		}
 		if mcpNames[m.Name] {
-			fail("mcp[%d].name: %q dupliqué", i, m.Name)
+			fail(i18n.T("config.mcp_dup", i, m.Name))
 		}
 		mcpNames[m.Name] = true
 		if (m.Command == "") == (m.URL == "") {
-			fail("mcp[%d]: command ou url requis (exclusifs)", i)
+			fail(i18n.T("config.mcp_cmd_url", i))
 		}
 		switch m.Transport {
 		case "", "stdio", "http", "sse":
 		default:
-			fail("mcp[%d].transport: %q invalide (stdio|http|sse)", i, m.Transport)
+			fail(i18n.T("config.mcp_transport", i, m.Transport))
 		}
 		if m.Command != "" && m.Transport != "" && m.Transport != "stdio" {
-			fail("mcp[%d].transport: %q incompatible avec command", i, m.Transport)
+			fail(i18n.T("config.mcp_transport_cmd", i, m.Transport))
 		}
 		if m.URL != "" && m.Transport == "stdio" {
-			fail("mcp[%d].transport: stdio incompatible avec url", i)
+			fail(i18n.T("config.mcp_stdio_url", i))
 		}
 	}
 	if *c.Limits.StallSteps < 0 {
-		fail("limits.stall_steps: valeur positive ou 0 (0 désactive la détection de non-progression)")
+		fail(i18n.T("config.stall_steps"))
 	}
 	if *c.Limits.HistoryKeepSteps < 0 || *c.Limits.HistoryToolChars < 0 {
-		fail("limits.history_keep_steps / history_tool_chars: valeurs positives ou 0 (0 désactive le raccourcissement)")
+		fail(i18n.T("config.history"))
 	}
 	if !ValidWebPolicy(c.WebSearch.Policy) {
-		fail("web_search.policy: %q invalide (ask|allow|deny)", c.WebSearch.Policy)
+		fail(i18n.T("config.web_policy", c.WebSearch.Policy))
 	}
 	if c.WebSearch.MCP != "" && !mcpNames[c.WebSearch.MCP] {
-		fail("web_search.mcp: serveur MCP %q absent de mcp", c.WebSearch.MCP)
+		fail(i18n.T("config.web_mcp", c.WebSearch.MCP))
 	}
 	if c.WebSearch.Model != "" {
 		prov, id, ok := strings.Cut(c.WebSearch.Model, "/")
 		if _, known := c.Provider(prov); !ok || id == "" || !known {
-			fail("web_search.model: %q invalide (provider/model, provider déclaré dans providers)", c.WebSearch.Model)
+			fail(i18n.T("config.web_model", c.WebSearch.Model))
 		}
 		if c.WebSearch.API != "messages" && c.WebSearch.API != "responses" {
-			fail("web_search.api: %q invalide (messages|responses)", c.WebSearch.API)
+			fail(i18n.T("config.web_api", c.WebSearch.API))
 		}
 	} else if c.WebSearch.API != "" {
-		fail("web_search.api: sans web_search.model")
+		fail(i18n.T("config.web_api_model"))
 	}
 	instNames := map[string]bool{}
 	for i, in := range c.Instances {
 		if !instanceName.MatchString(in.Name) {
-			fail("instances[%d].name: %q invalide ([a-z][a-z0-9-]*)", i, in.Name)
+			fail(i18n.T("config.instance_name", i, in.Name))
 		}
 		if slices.Contains(reservedPrefixes, in.Name) {
-			fail("instances[%d].name: %q réservé (%s)", i, in.Name, strings.Join(reservedPrefixes, ", "))
+			fail(i18n.T("config.instance_reserved", i, in.Name, strings.Join(reservedPrefixes, ", ")))
 		}
 		if instNames[in.Name] {
-			fail("instances[%d].name: %q dupliqué", i, in.Name)
+			fail(i18n.T("config.instance_dup", i, in.Name))
 		}
 		instNames[in.Name] = true
 		if in.Template == "" {
-			fail("instances[%d].template: requis", i)
+			fail(i18n.T("config.instance_template", i))
 		}
 	}
 	terms := map[string]string{}
 	for _, cl := range c.Clients {
 		if !instanceName.MatchString(cl.Name) {
-			fail("client %q: nom invalide ([a-z][a-z0-9-]*)", cl.Name)
+			fail(i18n.T("config.client_name", cl.Name))
 		}
 		if slices.Contains(reservedPrefixes, cl.Name) || instNames[cl.Name] {
-			fail("client %q: nom déjà pris par une instance ou réservé", cl.Name)
+			fail(i18n.T("config.client_taken", cl.Name))
 		}
 		for _, t := range append([]string{cl.Name}, cl.Aliases...) {
 			key := strings.ToLower(strings.TrimSpace(t))
 			if key == "" {
-				fail("client %s: alias vide", cl.Name)
+				fail(i18n.T("config.client_alias", cl.Name))
 				continue
 			}
 			if other, dup := terms[key]; dup {
-				fail("client %s: %q déjà utilisé par le client %s", cl.Name, t, other)
+				fail(i18n.T("config.client_alias_dup", cl.Name, t, other))
 			}
 			terms[key] = cl.Name
 		}
 		for k, v := range cl.Vars {
 			if !varName.MatchString(k) {
-				fail("client %s: vars.%s invalide ([a-z][a-z0-9_]*)", cl.Name, k)
+				fail(i18n.T("config.client_var", cl.Name, k))
 			}
 			if strings.TrimSpace(v) == "" {
-				fail("client %s: vars.%s vide", cl.Name, k)
+				fail(i18n.T("config.client_var_empty", cl.Name, k))
 			}
 		}
 	}
 	if c.Vault.Addr != "" {
 		if u, err := url.Parse(c.Vault.Addr); err != nil || u.Scheme == "" || u.Host == "" {
-			fail("vault.addr: URL invalide %q", c.Vault.Addr)
+			fail(i18n.T("config.vault_addr", c.Vault.Addr))
 		}
 	}
 	if *c.Limits.Continuations < 0 || *c.Limits.Continuations > 3 {
-		fail("limits.continuations: entre 0 et 3")
+		fail(i18n.T("config.continuations"))
 	}
 	if c.Templates.CacheTTL.Duration < 0 {
-		fail("templates.cache_ttl: négatif")
+		fail(i18n.T("config.cache_ttl"))
 	}
 	return errors.Join(errs...)
 }

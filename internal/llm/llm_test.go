@@ -188,7 +188,7 @@ func TestStreamIdleAndErrors(t *testing.T) {
 	pool := NewPool(cfg, srv.Client())
 	t0 := time.Now()
 	_, err := pool.Chat(context.Background(), "p", Request{Model: "stall"})
-	if err == nil || !Transient(err) || !strings.Contains(err.Error(), "aucune donnée") || time.Since(t0) > 400*time.Millisecond {
+	if err == nil || !Transient(err) || !strings.Contains(err.Error(), "no data received") || time.Since(t0) > 400*time.Millisecond {
 		t.Fatalf("idle: %v en %v", err, time.Since(t0))
 	}
 	if _, err := pool.Chat(context.Background(), "p", Request{Model: "err"}); err == nil || !Transient(err) || !strings.Contains(err.Error(), "exploded") {

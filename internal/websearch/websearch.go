@@ -15,6 +15,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/httpx"
+	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/tools"
 )
 
@@ -42,7 +43,7 @@ func New(p config.Provider, model, api string, timeout time.Duration) (*Tool, er
 	case "responses":
 		path = "/responses"
 	default:
-		return nil, fmt.Errorf("web_search.api: %q invalide (messages|responses)", api)
+		return nil, i18n.E("web.api", api)
 	}
 	id := make([]byte, 16)
 	_, _ = rand.Read(id)

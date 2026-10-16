@@ -62,7 +62,7 @@ func TestRecord(t *testing.T) {
 		t.Fatalf("provider sans budget écarté: %q", r)
 	}
 	sum := tr.Summary()
-	if c.Providers[1].BudgetStatus() != "illimité" || c.Providers[2].BudgetStatus() != "non déclaré" || c.Providers[0].BudgetStatus() != "limité" {
+	if c.Providers[1].BudgetStatus() != "unlimited" || c.Providers[2].BudgetStatus() != "not declared" || c.Providers[0].BudgetStatus() != "limited" {
 		t.Fatal("statuts de budget")
 	}
 	if len(sum) != 1 || sum[0].Calls != 2 || sum[0].RunCost < 0.509 || sum[0].Exhausted == "" {

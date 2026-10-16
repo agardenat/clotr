@@ -20,6 +20,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/driver/ssh"
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 func TestPath(t *Template) string {
@@ -33,7 +34,7 @@ func RunTests(ctx context.Context, t *Template, w io.Writer) (passed, failed int
 	path := TestPath(t)
 	src, err := os.ReadFile(path)
 	if err != nil {
-		return 0, 0, fmt.Errorf("tests du template %s: %w", t.Name, err)
+		return 0, 0, i18n.E("tpl.test.err", t.Name, err)
 	}
 	h := &testHarness{t: t}
 	thread := &starlark.Thread{Name: "load", Print: func(_ *starlark.Thread, msg string) { fmt.Fprintln(w, msg) }}
@@ -241,20 +242,20 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 				}
 				return starlark.String(out), nil
 			}
-			return nil, fmt.Errorf("outil %q inconnu (%s)", tool, strings.Join(ti.in.ToolNames(), ", "))
+			return nil, i18n.E("tpl.test.tool", tool, strings.Join(ti.in.ToolNames(), ", "))
 		}), nil
 	case "fn":
 		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 			if len(args) == 0 {
-				return nil, fmt.Errorf("fn(nom, *args)")
+				return nil, i18n.E("tpl.test.fn")
 			}
 			fname, _ := starlark.AsString(args[0])
 			if ti.in.script == nil {
-				return nil, fmt.Errorf("template sans script")
+				return nil, i18n.E("tpl.test.no_script")
 			}
 			fn, ok := ti.in.script.globals[fname].(starlark.Callable)
 			if !ok {
-				return nil, fmt.Errorf("fonction %q absente du script", fname)
+				return nil, i18n.E("tpl.test.no_func", fname)
 			}
 			v, err := ti.in.call(threadCtx(thread), fname, fn, args[1:]...)
 			if err != nil {
@@ -334,7 +335,7 @@ func (m *mockTransport) respond(rec map[string]any) (int, []byte, map[string]str
 	var resp starlark.Value
 	switch mk := m.mock.(type) {
 	case nil, starlark.NoneType:
-		return 0, nil, nil, fmt.Errorf("aucun mock http")
+		return 0, nil, nil, i18n.E("tpl.test.no_http_mock")
 	case *starlark.Dict:
 		key := fmt.Sprintf("%s %s", rec["method"], rec["path"])
 		v, found, _ := mk.Get(starlark.String(key))
@@ -342,7 +343,7 @@ func (m *mockTransport) respond(rec map[string]any) (int, []byte, map[string]str
 			v, found, _ = mk.Get(starlark.String("*"))
 		}
 		if !found {
-			return http.StatusNotFound, []byte("mock: aucune route pour " + key), nil, nil
+			return http.StatusNotFound, []byte(i18n.T("tpl.test.no_route") + key), nil, nil
 		}
 		resp = v
 		if fn, ok := v.(starlark.Callable); ok {
@@ -359,7 +360,7 @@ func (m *mockTransport) respond(rec map[string]any) (int, []byte, map[string]str
 		}
 		resp = r
 	default:
-		return 0, nil, nil, fmt.Errorf("mock http: dict ou fonction attendu")
+		return 0, nil, nil, i18n.E("tpl.test.http_mock")
 	}
 	return decodeMockResponse(resp)
 }
@@ -385,7 +386,7 @@ func decodeMockResponse(v starlark.Value) (int, []byte, map[string]string, error
 	}
 	m, ok := g.(map[string]any)
 	if !ok {
-		return 0, nil, nil, fmt.Errorf("mock http: réponse dict attendue (status, body ou json, headers)")
+		return 0, nil, nil, i18n.E("tpl.test.http_response")
 	}
 	status := 200
 	if s, ok := m["status"].(int64); ok {
@@ -423,7 +424,7 @@ func (m *mockSSH) ExecInput(_ context.Context, e ssh.Endpoint, cmd, stdin string
 	m.ti.mu.Unlock()
 	fn, ok := m.mock.(starlark.Callable)
 	if !ok {
-		return ssh.Result{}, fmt.Errorf("aucun mock ssh")
+		return ssh.Result{}, i18n.E("tpl.test.no_ssh_mock")
 	}
 	th := &starlark.Thread{Name: "mock-ssh"}
 	th.SetMaxExecutionSteps(maxScriptSteps)
@@ -440,7 +441,7 @@ func (m *mockSSH) ExecInput(_ context.Context, e ssh.Endpoint, cmd, stdin string
 	}
 	d, ok := g.(map[string]any)
 	if !ok {
-		return ssh.Result{}, fmt.Errorf("mock ssh: texte ou dict (stdout, stderr, exit) attendu")
+		return ssh.Result{}, i18n.E("tpl.test.ssh_mock")
 	}
 	r := ssh.Result{}
 	r.Stdout, _ = d["stdout"].(string)
@@ -475,7 +476,7 @@ var assertModule = &starlarkstruct.Module{
 				return nil, err
 			}
 			if !eq {
-				return nil, fmt.Errorf("%sobtenu %s, attendu %s", prefix(msg), x.String(), y.String())
+				return nil, i18n.E("tpl.test.eq", prefix(msg), x.String(), y.String())
 			}
 			return starlark.None, nil
 		}),
@@ -485,7 +486,7 @@ var assertModule = &starlarkstruct.Module{
 				return nil, err
 			}
 			if !x.Truth() {
-				return nil, fmt.Errorf("%scondition fausse", prefix(msg))
+				return nil, i18n.E("tpl.test.false", prefix(msg))
 			}
 			return starlark.None, nil
 		}),
@@ -495,7 +496,7 @@ var assertModule = &starlarkstruct.Module{
 				return nil, err
 			}
 			if !strings.Contains(hay, needle) {
-				return nil, fmt.Errorf("%q absent de :\n%s", needle, hay)
+				return nil, i18n.E("tpl.test.absent", needle, hay)
 			}
 			return starlark.None, nil
 		}),
@@ -505,7 +506,7 @@ var assertModule = &starlarkstruct.Module{
 				return nil, err
 			}
 			if strings.Contains(hay, needle) {
-				return nil, fmt.Errorf("%q présent dans :\n%s", needle, hay)
+				return nil, i18n.E("tpl.test.present", needle, hay)
 			}
 			return starlark.None, nil
 		}),
@@ -517,10 +518,10 @@ var assertModule = &starlarkstruct.Module{
 			}
 			_, err := starlark.Call(thread, fn, nil, nil)
 			if err == nil {
-				return nil, fmt.Errorf("aucune erreur, %q attendu", sub)
+				return nil, i18n.E("tpl.test.no_error", sub)
 			}
 			if msg := scriptErr(err).Error(); !strings.Contains(msg, sub) {
-				return nil, fmt.Errorf("erreur %q sans %q", msg, sub)
+				return nil, i18n.E("tpl.test.error", msg, sub)
 			}
 			return starlark.None, nil
 		}),

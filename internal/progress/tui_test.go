@@ -76,8 +76,9 @@ func TestBoard(t *testing.T) {
 }
 
 func TestBoardFrench(t *testing.T) {
-	i18n.Set("fr")
-	defer i18n.Set("en")
+	i18n.SetReport("en")
+	i18n.SetUI("fr")
+	defer i18n.SetUI("en")
 	b := newBoard(10)
 	b.width = 160
 	b.apply(Event{Task: "planner", Kind: "plan", Plan: []PlanItem{{ID: "t1", Role: "collector"}, {ID: "t2", Role: "analyst", DependsOn: []string{"t1"}}}})

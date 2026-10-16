@@ -20,6 +20,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/httpx"
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 type Message struct {
@@ -52,7 +53,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal(raw.Content, &parts); err != nil {
-		return fmt.Errorf("content: format non supporté")
+		return i18n.E("llm.content")
 	}
 	var b strings.Builder
 	for _, p := range parts {
@@ -206,7 +207,7 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s", e.Status, e.Body)
 }
 
-var ErrRequestTimeout = errors.New("request_timeout dépassé")
+var ErrRequestTimeout error = i18n.Key("llm.request_timeout")
 
 func Transient(err error) bool {
 	if err == nil || errors.Is(err, ErrRequestTimeout) {
@@ -365,10 +366,10 @@ func decodeResponse(resp *http.Response) (*Response, error) {
 	}
 	var out Response
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("réponse invalide: %w", err)
+		return nil, i18n.E("llm.invalid_response", err)
 	}
 	if len(out.Choices) == 0 {
-		return nil, &APIError{Status: 502, Body: "réponse sans choices"}
+		return nil, &APIError{Status: 502, Body: i18n.T("llm.no_choices")}
 	}
 	out.Cost = parseCost(resp.Header)
 	return &out, nil
@@ -419,7 +420,7 @@ func (c *Client) chatStream(ctx context.Context, req Request) (*Response, error)
 	}
 	idleErr := func(err error) error {
 		if idleFired.Load() {
-			return fmt.Errorf("aucune donnée reçue depuis %s: %w", c.idleTimeout, context.DeadlineExceeded)
+			return i18n.E("llm.idle", c.idleTimeout, context.DeadlineExceeded)
 		}
 		return err
 	}
@@ -466,7 +467,7 @@ func (c *Client) chatStream(ctx context.Context, req Request) (*Response, error)
 			}
 			var ch streamChunk
 			if jerr := json.Unmarshal([]byte(data), &ch); jerr != nil {
-				return nil, fmt.Errorf("flux invalide: %w", jerr)
+				return nil, i18n.E("llm.invalid_stream", jerr)
 			}
 			if ch.Error != nil {
 				return nil, &APIError{Status: 502, Body: httpx.Snippet([]byte(ch.Error.Message), 500)}
@@ -530,7 +531,7 @@ func (c *Client) chatStream(ctx context.Context, req Request) (*Response, error)
 		}
 	}
 	if progress.Chunks == 0 {
-		return nil, &APIError{Status: 502, Body: "flux vide"}
+		return nil, &APIError{Status: 502, Body: i18n.T("llm.empty_stream")}
 	}
 	sort.Ints(order)
 	msg := Message{Role: "assistant", Content: content.String()}
@@ -562,7 +563,7 @@ func NewPool(cfg *config.Config, hc *http.Client) *Pool {
 func (p *Pool) Chat(ctx context.Context, provider string, req Request) (*Response, error) {
 	c, ok := p.clients[provider]
 	if !ok {
-		return nil, fmt.Errorf("provider %q inconnu", provider)
+		return nil, i18n.E("llm.provider", provider)
 	}
 	sem := p.sems[provider]
 	t0 := time.Now()

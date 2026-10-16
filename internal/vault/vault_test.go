@@ -49,7 +49,7 @@ func TestRead(t *testing.T) {
 			t.Fatalf("%s: %q %v", ref, got, err)
 		}
 	}
-	for ref, want := range map[string]string{"kv2/team/ssh#missing": `champ "missing" absent`, "kv2/none": "HTTP 404", "": "référence vide"} {
+	for ref, want := range map[string]string{"kv2/team/ssh#missing": `field "missing" missing`, "kv2/none": "HTTP 404", "": "empty reference"} {
 		if _, err := c.Read(ctx, ref); err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("%s: %v", ref, err)
 		}

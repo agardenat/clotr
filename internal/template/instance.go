@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -24,6 +23,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/driver/ssh"
+	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/netx"
 )
 
@@ -184,7 +184,7 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 		}
 		in.sudo, err = in.conns[in.sshName].bool("sudo", false)
 		if err != nil {
-			return nil, fmt.Errorf("instance %s: connecteur %s: %w", name, in.sshName, err)
+			return nil, i18n.E("tpl.instance_connector", name, in.sshName, err)
 		}
 	}
 	if t.ScriptSrc != nil {
@@ -324,12 +324,12 @@ func (in *Instance) ensure() error {
 		if err == nil {
 			in.warnInventory()
 			if len(in.Reachable()) == 0 {
-				err = errors.New("aucune cible joignable")
+				err = i18n.E("tpl.no_target")
 			}
 		}
 		f := map[string]any{}
 		if err != nil {
-			a.err = fmt.Errorf("instance %s indisponible pour ce run: %w", in.Name, err)
+			a.err = i18n.E("tpl.instance_unavailable", in.Name, err)
 			in.warn(a.err.Error())
 			f["error"] = err.Error()
 		} else {
@@ -346,7 +346,7 @@ func (in *Instance) warnInventory() {
 	}
 	for _, t := range in.inv.Targets {
 		if t.Error != "" {
-			in.warn(fmt.Sprintf("instance %s: cible %s injoignable, retirée pour ce run: %s", in.Name, t.Name, t.Error))
+			in.warn(i18n.T("tpl.target_unreachable", in.Name, t.Name, t.Error))
 		}
 	}
 }
@@ -534,7 +534,7 @@ func (in *Instance) Reachable() []*Target {
 
 func (in *Instance) target(name string) (*Target, error) {
 	if in.inv == nil {
-		return nil, fmt.Errorf("inventaire de %s non découvert", in.Name)
+		return nil, i18n.E("tpl.not_discovered", in.Name)
 	}
 	var names []string
 	for _, t := range in.inv.Targets {
@@ -563,7 +563,7 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 		return in.pool, nil
 	}
 	if in.sshName == "" {
-		return nil, fmt.Errorf("aucun connecteur ssh dans le template %s", in.T.Name)
+		return nil, i18n.E("tpl.ssh.no_connector", in.T.Name)
 	}
 	o := in.conns[in.sshName]
 	port, err := o.int("proxy_port", 0)
@@ -620,7 +620,7 @@ func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.En
 	}
 	port, err := strconv.Atoi(defaultStr(pick("ssh_port", "port"), "22"))
 	if err != nil {
-		return ssh.Endpoint{}, nil, fmt.Errorf("port SSH invalide")
+		return ssh.Endpoint{}, nil, i18n.E("tpl.ssh_port")
 	}
 	host := h.IP
 	if host == "" {
@@ -682,7 +682,7 @@ func (in *Instance) findHost(target, host string) (*Target, *Host, error) {
 		return nil, nil, fmt.Errorf("host requis")
 	}
 	if in.inv == nil {
-		return nil, nil, fmt.Errorf("inventaire de %s non découvert", in.Name)
+		return nil, nil, i18n.E("tpl.not_discovered", in.Name)
 	}
 	var cands []*Target
 	if target != "" {
@@ -841,7 +841,7 @@ func toolEnabled(ts ToolSpec, params map[string]any) (bool, error) {
 	}
 	b, err := strconv.ParseBool(r)
 	if err != nil {
-		return false, fmt.Errorf("booléen attendu, %q", r)
+		return false, i18n.E("tpl.bool", r)
 	}
 	return b, nil
 }

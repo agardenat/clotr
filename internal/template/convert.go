@@ -3,7 +3,6 @@ package template
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"math/big"
 	"sort"
@@ -11,6 +10,8 @@ import (
 
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
+
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 func toStarlark(v any) (starlark.Value, error) {
@@ -101,7 +102,7 @@ func toStarlark(v any) (starlark.Value, error) {
 	}
 	b, err := json.Marshal(v)
 	if err != nil {
-		return nil, fmt.Errorf("conversion vers Starlark de %T: %w", v, err)
+		return nil, i18n.E("tpl.convert", v, err)
 	}
 	return jsonToStarlark(b)
 }
@@ -156,7 +157,7 @@ func fromStarlark(v starlark.Value) (any, error) {
 		for _, it := range x.Items() {
 			k, ok := starlark.AsString(it[0])
 			if !ok {
-				return nil, fmt.Errorf("clé de dict non textuelle: %s", it[0].Type())
+				return nil, i18n.E("tpl.dict_key", it[0].Type())
 			}
 			e, err := fromStarlark(it[1])
 			if err != nil {

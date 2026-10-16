@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -63,7 +62,7 @@ func TestWarnFilteredInstanceMentioned(t *testing.T) {
 	}
 	defer log.Close()
 	rt := &app{cfg: cfg, registry: tools.NewRegistry(100), audit: log}
-	rt.setupInstances(context.Background(), &options{quiet: true}, toolFilter{only: []string{"fs"}, exclude: []string{"gone"}}, func(string, ...any) {})
+	rt.setupInstances(context.Background(), &options{quiet: true}, toolFilter{only: []string{"fs"}, exclude: []string{"gone"}}, func(string) {})
 	if len(rt.instances) != 0 || len(rt.filtered) != 1 || rt.filtered[0].Name != "lab" {
 		t.Fatalf("instances %d, écartées par -t %d", len(rt.instances), len(rt.filtered))
 	}
@@ -104,7 +103,7 @@ func TestScopeClients(t *testing.T) {
 	}
 	rt := &app{cfg: cfg, registry: tools.NewRegistry(100), audit: audit.Nop()}
 	var warnings []string
-	rt.setupInstances(context.Background(), &options{quiet: true}, toolFilter{}, func(f string, a ...any) { warnings = append(warnings, fmt.Sprintf(f, a...)) })
+	rt.setupInstances(context.Background(), &options{quiet: true}, toolFilter{}, func(m string) { warnings = append(warnings, m) })
 	if len(rt.instances) != 3 || len(warnings) != 1 || !strings.Contains(warnings[0], "south-bad") || !strings.Contains(warnings[0], "params.secret") {
 		t.Fatalf("instances: %d, avertissements: %q", len(rt.instances), warnings)
 	}

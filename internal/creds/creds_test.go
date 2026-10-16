@@ -39,7 +39,7 @@ func TestResolveVault(t *testing.T) {
 	}
 
 	_, err = ResolveUser(ctx, "ops", "", "kv/other", "lab (CM)")
-	if err == nil || !strings.Contains(err.Error(), "Vault kv/other : introuvable") {
+	if err == nil || !strings.Contains(err.Error(), "Vault kv/other: introuvable") {
 		t.Fatalf("échec Vault non signalé: %v", err)
 	}
 }

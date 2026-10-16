@@ -71,18 +71,18 @@ func TestValidation(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "undef.star"), []byte("x = unknown_builtin()\n"), 0o600)
 	base := "name: x\ntargets: [{kind: a}]\n"
 	cases := map[string]string{
-		base + "connectors: {c: {driver: ftp}}\n":                                             "inconnu",
-		base + "connectors: {c: {driver: http, methods: [POST]}}\n":                           "exige une liste allow",
-		base + "connectors: {c: {driver: http, verbs: [GET]}}\n":                              "option \"verbs\" inconnue",
+		base + "connectors: {c: {driver: ftp}}\n":                                             "unknown",
+		base + "connectors: {c: {driver: http, methods: [POST]}}\n":                           "requires an explicit allow list",
+		base + "connectors: {c: {driver: http, verbs: [GET]}}\n":                              "unknown option \"verbs\"",
 		base + "connectors: {c: {driver: http, allow: [\"(\"]}}\n":                            "allow",
 		base + "connectors: {c: {driver: http, auth: {token: x}}}\n":                          "auth.token",
 		base + "script: bad.star\n":                                                           "bad.star",
 		base + "script: undef.star\n":                                                         "unknown_builtin",
 		base + "env: [\"A-B\"]\n":                                                             "env[0]",
-		base + "tools: [{kind: ssh_list}]\n":                                                  "exige un connecteur de driver ssh",
-		base + "tools: [{kind: nope}]\n":                                                      "inconnu",
-		"name: x\n":                                                                           "targets ou script",
-		base + "connectors: {a: {driver: ssh}, b: {driver: ssh}}\nssh_paths: {allow: [/x]}\n": "un seul connecteur ssh",
+		base + "tools: [{kind: ssh_list}]\n":                                                  "requires an ssh driver connector",
+		base + "tools: [{kind: nope}]\n":                                                      "unknown",
+		"name: x\n":                                                                           "targets or script",
+		base + "connectors: {a: {driver: ssh}, b: {driver: ssh}}\nssh_paths: {allow: [/x]}\n": "a single ssh connector",
 	}
 	for y, want := range cases {
 		if _, err := Parse([]byte(y), filepath.Join(dir, "x.yaml")); err == nil || !strings.Contains(err.Error(), want) {
@@ -93,7 +93,7 @@ func TestValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewInstance("i", tpl, nil); err == nil || !strings.Contains(err.Error(), "deux fois") {
+	if _, err := NewInstance("i", tpl, nil); err == nil || !strings.Contains(err.Error(), "declared twice") {
 		t.Fatalf("doublon: %v", err)
 	}
 	tpl, _ = Parse([]byte(base+"companions: [zz]\ntools: [{kind: inventory}]\n"), filepath.Join(dir, "x.yaml"))
@@ -101,7 +101,7 @@ func TestValidation(t *testing.T) {
 		t.Fatalf("companions: %v", err)
 	}
 	tpl, _ = Parse([]byte(base), filepath.Join(dir, "x.yaml"))
-	if _, err := NewInstance("i", tpl, nil); err == nil || !strings.Contains(err.Error(), "aucun outil") {
+	if _, err := NewInstance("i", tpl, nil); err == nil || !strings.Contains(err.Error(), "no tool") {
 		t.Fatalf("sans outil: %v", err)
 	}
 }
@@ -161,7 +161,7 @@ func TestSSHPathsRendered(t *testing.T) {
 	if _, err := in.rules.Check("/opt/x/a"); err != nil {
 		t.Error(err)
 	}
-	for given, want := range map[string]string{"/srv/../etc": "refusé", "srv": "doit être absolu"} {
+	for given, want := range map[string]string{"/srv/../etc": "refused", "srv": "must be absolute"} {
 		if _, err := NewInstance("i", tpl, map[string]any{"data": given}); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v", given, err)
 		}
@@ -211,10 +211,10 @@ def discover(ctx):
 	if out, err := tools["i_get_env"](`{"name":"OK_VAR"}`); err != nil || out != "v" {
 		t.Fatalf("env: %q %v", out, err)
 	}
-	if _, err := tools["i_get_env"](`{"name":"OTHER_VAR"}`); err == nil || !strings.Contains(err.Error(), "non déclarée") {
+	if _, err := tools["i_get_env"](`{"name":"OTHER_VAR"}`); err == nil || !strings.Contains(err.Error(), "is not declared") {
 		t.Fatalf("env non déclarée: %v", err)
 	}
-	if _, err := tools["i_get_file"](`{"path":"/etc/passwd"}`); err == nil || !strings.Contains(err.Error(), "non déclaré") {
+	if _, err := tools["i_get_file"](`{"path":"/etc/passwd"}`); err == nil || !strings.Contains(err.Error(), "is not declared") {
 		t.Fatalf("fichier non déclaré: %v", err)
 	}
 	if out, err := tools["i_list_type"](`{}`); err != nil || out != `[1,{"b":2.5}]` {
@@ -353,7 +353,7 @@ tool(name = "big", description = "d", schema = {"type": "object"}, fn = big)
 		case "i_ssh_tail":
 			out, err = tl.Call(context.Background(), []byte(`{"host":"`+sshHost+`","path":"/var/log/a.log","lines":5}`))
 		case "i_big":
-			if _, berr := tl.Call(context.Background(), []byte(`{}`)); berr == nil || !strings.Contains(berr.Error(), "réponse de plus de") {
+			if _, berr := tl.Call(context.Background(), []byte(`{}`)); berr == nil || !strings.Contains(berr.Error(), "response larger than") {
 				t.Errorf("max_bytes: %v", berr)
 			}
 		}
@@ -556,7 +556,7 @@ def discover(ctx):
 	}
 	wg.Wait()
 	for _, err := range errs {
-		if err == nil || !strings.Contains(err.Error(), "instance i indisponible") {
+		if err == nil || !strings.Contains(err.Error(), "instance i unavailable") {
 			t.Fatalf("erreur attendue: %v", err)
 		}
 	}
@@ -717,7 +717,7 @@ def discover(ctx):
 		t.Fatalf("appels: %q", rec.calls)
 	}
 	in.creds[in.sshName] = creds.Pair{Pass: "faux"}
-	if _, err := tail.Call(context.Background(), []byte(`{"host":"10.8.3.4","path":"/var/log/a.log"}`)); err == nil || !strings.Contains(err.Error(), "refusé par sudo") {
+	if _, err := tail.Call(context.Background(), []byte(`{"host":"10.8.3.4","path":"/var/log/a.log"}`)); err == nil || !strings.Contains(err.Error(), "refused by sudo") {
 		t.Fatalf("mot de passe sudo refusé: %v", err)
 	}
 }
@@ -731,7 +731,7 @@ def discover(ctx):
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := in.Discover(context.Background(), "", 0, true); err == nil || !strings.Contains(err.Error(), "plage CIDR") {
+	if err := in.Discover(context.Background(), "", 0, true); err == nil || !strings.Contains(err.Error(), "CIDR range") {
 		t.Fatalf("plage invalide acceptée: %v", err)
 	}
 }
