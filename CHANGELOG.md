@@ -4,6 +4,12 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Audit : chaque `llm_call` enregistre, quand elles sont mesurées, l'attente d'une place auprès du provider (`queue_ms`, limite de requêtes simultanées), l'arrivée des en-têtes HTTP (`headers_ms`) et celle du premier morceau du flux (`first_chunk_ms`), y compris quand l'appel échoue. `queue_ms` absent : pas d'attente ; `headers_ms` ou `first_chunk_ms` absent : étape non atteinte. `headers_ms` sans `first_chunk_ms` sur un échec « aucune donnée reçue » indique un modèle qui accepte la requête sans rien envoyer.
+
+### Corrigé
+- Affichage : chaque tentative en échec temporaire (429, 5xx, réseau, aucune donnée reçue) est annoncée sur la ligne de la tâche avec l'erreur et le délai avant le nouvel essai, et l'annonce d'un nouveau tour indique la dernière erreur. Auparavant l'erreur n'était affichée qu'en cas de bascule vers un autre modèle : avec un seul candidat, rien n'apparaissait avant le tour suivant.
+
 ## [0.21.1] - 2026-10-15
 
 ### Corrigé

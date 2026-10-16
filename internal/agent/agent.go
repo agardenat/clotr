@@ -388,7 +388,7 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 					pause = min(ra, maxRoundPause)
 				}
 			}
-			r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[s.cur].Ref(), Detail: i18n.T("fallback.round", pause)})
+			r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[s.cur].Ref(), Detail: i18n.T("fallback.round", truncate(lastErr.Error(), 120), pause)})
 			r.Audit.Log("retry_round", map[string]any{"task": s.spec.TaskID, "step": step, "round": round, "pause": pause.String(), "persistent": persistent, "error": lastErr.Error()})
 			select {
 			case <-ctx.Done():
@@ -416,9 +416,16 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 			var err error
 			for attempt := 1; attempt <= attempts; attempt++ {
 				t0 := time.Now()
+				tm := &llm.Timing{}
+				sent.Timing = tm
 				var resp *llm.Response
 				resp, err = r.Chat.Chat(ctx, m.Provider, sent)
 				rec := map[string]any{"task": s.spec.TaskID, "role": s.spec.Role, "model": m.Ref(), "step": step, "attempt": attempt, "duration_ms": time.Since(t0).Milliseconds(), "tools_offered": len(req.Tools), "max_tokens": sent.MaxTokens}
+				for k, d := range map[string]time.Duration{"queue_ms": tm.Queue, "headers_ms": tm.Headers, "first_chunk_ms": tm.FirstChunk} {
+					if d >= time.Millisecond {
+						rec[k] = d.Milliseconds()
+					}
+				}
 				if err == nil && !resp.Cost.Reported && (m.InputCost > 0 || m.OutputCost > 0) && resp.Usage.PromptTokens+resp.Usage.CompletionTokens > 0 {
 					resp.Cost.Response = float64(resp.Usage.PromptTokens)*m.InputCost + float64(resp.Usage.CompletionTokens)*m.OutputCost
 					resp.Cost.Reported, resp.Cost.Estimated = true, true
@@ -467,6 +474,7 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 				if ra := llm.RetryAfter(err); ra > wait {
 					wait = min(ra, 30*time.Second)
 				}
+				r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "retry", Model: m.Ref(), Detail: i18n.T("retry", attempt, m.Ref(), truncate(err.Error(), 120), wait)})
 				select {
 				case <-ctx.Done():
 					return nil, ctx.Err()
