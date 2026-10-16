@@ -23,6 +23,7 @@ const (
 	Kind        = "lead"
 	Established = "established"
 	Probable    = "probable"
+	Clue        = "clue"
 	Superseded  = "superseded"
 )
 
@@ -77,11 +78,11 @@ type reportTool struct{ s *Store }
 func (reportTool) Name() string { return ToolName }
 
 func (reportTool) Description() string {
-	return "Signale tout de suite une cause du dysfonctionnement décrit dans la demande (message d'erreur exact, configuration fautive), appuyée par au moins une preuve [Exxx], sans attendre ta conclusion : l'utilisateur la voit aussitôt et les autres tâches la reçoivent. status established si une preuve la démontre (message d'erreur, configuration), probable sinon. Une anomalie sans lien avec ce dysfonctionnement n'est pas une cause : elle va dans tes constats, pas ici. Un signal par cause, puis poursuis ta tâche (vérification, correctif). Une cause qui en contredit ou en corrige une déjà signalée (la tienne ou celle d'une autre tâche, numéro #N) la remplace : replaces=N. Une cause négative (« ce n'est pas X ») n'est established que si la preuve couvre toute la période en cause, événements les plus récents compris."
+	return "Signale tout de suite une cause du dysfonctionnement décrit dans la demande (message d'erreur exact, configuration fautive), appuyée par au moins une preuve [Exxx], sans attendre ta conclusion : l'utilisateur la voit aussitôt et les autres tâches la reçoivent. status established si une preuve la démontre (message d'erreur, configuration), probable sinon. Une piste sérieuse se signale aussi tout de suite, avec status clue : un élément précis de la demande (IP, nom d'hôte, identifiant, code d'erreur, horodatage) retrouvé dans une configuration, un log ou un historique d'installation, ou une coïncidence nette avec la panne, sans preuve encore que c'est la cause actuelle ; vérifie-la ensuite et remplace-la (replaces) par la cause établie, ou par sa réfutation. Une anomalie sans lien avec ce dysfonctionnement n'est pas une cause : elle va dans tes constats, pas ici. Un signal par cause, puis poursuis ta tâche (vérification, correctif). Une cause qui en contredit ou en corrige une déjà signalée (la tienne ou celle d'une autre tâche, numéro #N) la remplace : replaces=N. Une cause négative (« ce n'est pas X ») n'est established que si la preuve couvre toute la période en cause, événements les plus récents compris."
 }
 
 func (reportTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"summary":{"type":"string","description":"la cause en une phrase, avec le code ou le message d'erreur exact"},"evidence":{"type":"array","items":{"type":"string"},"description":"identifiants des preuves qui l'établissent, ex: [\"E012\"]"},"status":{"type":"string","enum":["established","probable"],"description":"established : démontrée par une preuve ; probable : indices sans preuve directe"},"replaces":{"type":"integer","description":"numéro #N d'une cause signalée plus tôt dans ce run que celle-ci corrige ou infirme : elle est retirée et la correction est affichée"}},"required":["summary","evidence","status"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"summary":{"type":"string","description":"la cause en une phrase, avec le code ou le message d'erreur exact"},"evidence":{"type":"array","items":{"type":"string"},"description":"identifiants des preuves qui l'établissent, ex: [\"E012\"]"},"status":{"type":"string","enum":["established","probable","clue"],"description":"established : démontrée par une preuve ; probable : indices sans preuve directe ; clue : piste sérieuse à vérifier (élément de la demande retrouvé dans une preuve)"},"replaces":{"type":"integer","description":"numéro #N d'une cause signalée plus tôt dans ce run que celle-ci corrige ou infirme : elle est retirée et la correction est affichée"}},"required":["summary","evidence","status"]}`)
 }
 
 func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
@@ -98,8 +99,8 @@ func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 	if summary == "" {
 		return "", errors.New("summary requis")
 	}
-	if a.Status != Established && a.Status != Probable {
-		return "", fmt.Errorf("status %q invalide (established|probable)", a.Status)
+	if a.Status != Established && a.Status != Probable && a.Status != Clue {
+		return "", fmt.Errorf("status %q invalide (established|probable|clue)", a.Status)
 	}
 	var ids []string
 	for _, id := range a.Evidence {
@@ -163,8 +164,11 @@ func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 }
 
 func label(status string) string {
-	if status == Established {
+	switch status {
+	case Established:
 		return "[cause établie]"
+	case Clue:
+		return "[piste]"
 	}
 	return "[cause probable]"
 }
