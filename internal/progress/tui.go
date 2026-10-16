@@ -207,6 +207,9 @@ func (b *board) apply(e Event) {
 	case "fallback":
 		r.warn = true
 		r.detail = i18n.T("fallback", e.Model, e.Detail)
+	case "retry":
+		r.warn = true
+		r.detail = e.Detail
 	case "dropped", "budget":
 		r.warn = true
 		r.detail = e.Detail

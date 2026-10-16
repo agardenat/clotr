@@ -708,3 +708,36 @@ func TestPersistentRetryOnTransientErrors(t *testing.T) {
 		t.Fatalf("interruption pendant la pause: %v", err)
 	}
 }
+
+type recEvents struct {
+	mu     sync.Mutex
+	events []progress.Event
+}
+
+func (r *recEvents) Emit(e progress.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, e)
+}
+
+func TestRetryShownWithSingleCandidate(t *testing.T) {
+	var calls atomic.Int32
+	chat := &testutil.FakeChat{Fn: func(context.Context, string, llm.Request) (*llm.Response, error) {
+		if calls.Add(1) == 1 {
+			return nil, &llm.APIError{Status: 429, Body: "rate limited"}
+		}
+		return testutil.Reply("# Rapport"), nil
+	}}
+	ev := &recEvents{}
+	r := runner(chat, tools.NewRegistry(100))
+	r.Events = ev
+	if _, err := r.Run(context.Background(), Spec{TaskID: "synthesizer", System: "s", User: "u", Candidates: []catalog.ModelInfo{{Provider: "sov", ID: "m"}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ev.events {
+		if e.Kind == "retry" && e.Model == "sov/m" && strings.Contains(e.Detail, "429") {
+			return
+		}
+	}
+	t.Fatalf("aucune relance annoncée : %+v", ev.events)
+}

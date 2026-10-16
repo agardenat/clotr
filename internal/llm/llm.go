@@ -115,6 +115,13 @@ type Request struct {
 	Session       string               `json:"-"`
 	OnProgress    func(StreamProgress) `json:"-"`
 	OnContent     func(delta string)   `json:"-"`
+	Timing        *Timing              `json:"-"`
+}
+
+type Timing struct {
+	Queue      time.Duration
+	Headers    time.Duration
+	FirstChunk time.Duration
 }
 
 type StreamOptions struct {
@@ -332,6 +339,7 @@ func (c *Client) Chat(ctx context.Context, req Request) (*Response, error) {
 }
 
 func (c *Client) chatOnce(ctx context.Context, req Request) (*Response, error) {
+	t0 := time.Now()
 	hreq, err := c.newRequest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -339,6 +347,9 @@ func (c *Client) chatOnce(ctx context.Context, req Request) (*Response, error) {
 	resp, err := c.hc.Do(hreq)
 	if err != nil {
 		return nil, err
+	}
+	if req.Timing != nil {
+		req.Timing.Headers = time.Since(t0)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -392,6 +403,7 @@ type toolAcc struct {
 }
 
 func (c *Client) chatStream(ctx context.Context, req Request) (*Response, error) {
+	t0 := time.Now()
 	req.Stream = true
 	req.StreamOptions = &StreamOptions{IncludeUsage: true}
 	sctx, cancel := context.WithCancel(ctx)
@@ -419,6 +431,9 @@ func (c *Client) chatStream(ctx context.Context, req Request) (*Response, error)
 	if err != nil {
 		return nil, idleErr(err)
 	}
+	if req.Timing != nil {
+		req.Timing.Headers = time.Since(t0)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, apiError(resp)
@@ -445,6 +460,9 @@ func (c *Client) chatStream(ctx context.Context, req Request) (*Response, error)
 			data = strings.TrimSpace(data)
 			if data == "[DONE]" {
 				break
+			}
+			if progress.Chunks == 0 && req.Timing != nil {
+				req.Timing.FirstChunk = time.Since(t0)
 			}
 			var ch streamChunk
 			if jerr := json.Unmarshal([]byte(data), &ch); jerr != nil {
@@ -547,9 +565,13 @@ func (p *Pool) Chat(ctx context.Context, provider string, req Request) (*Respons
 		return nil, fmt.Errorf("provider %q inconnu", provider)
 	}
 	sem := p.sems[provider]
+	t0 := time.Now()
 	if err := sem.Acquire(ctx, 1); err != nil {
 		return nil, err
 	}
 	defer sem.Release(1)
+	if req.Timing != nil {
+		req.Timing.Queue = time.Since(t0)
+	}
 	return c.Chat(ctx, req)
 }
