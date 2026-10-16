@@ -3,7 +3,6 @@ package vault
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agardenat/clotr/internal/httpx"
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 type Client struct {
@@ -26,7 +26,7 @@ type Client struct {
 func FromEnv() (*Client, error) {
 	addr := strings.TrimRight(strings.TrimSpace(os.Getenv("VAULT_ADDR")), "/")
 	if addr == "" {
-		return nil, errors.New("VAULT_ADDR non défini")
+		return nil, i18n.E("vault.addr")
 	}
 	token := strings.TrimSpace(os.Getenv("VAULT_TOKEN"))
 	if token == "" {
@@ -37,7 +37,7 @@ func FromEnv() (*Client, error) {
 		}
 	}
 	if token == "" {
-		return nil, errors.New("aucun jeton (VAULT_TOKEN ou ~/.vault-token, voir vault login)")
+		return nil, i18n.E("vault.token")
 	}
 	return &Client{Addr: addr, Token: token, Namespace: strings.TrimSpace(os.Getenv("VAULT_NAMESPACE")), HTTP: &http.Client{Timeout: 30 * time.Second}}, nil
 }
@@ -58,7 +58,7 @@ func (c *Client) Read(ctx context.Context, ref string) (string, error) {
 		field = "password"
 	}
 	if path == "" {
-		return "", errors.New("référence vide")
+		return "", i18n.E("vault.empty_ref")
 	}
 	api := path
 	if mount, version, err := c.mount(ctx, path); err == nil && version == "2" && strings.HasPrefix(path+"/", mount) {
@@ -78,11 +78,11 @@ func (c *Client) Read(ctx context.Context, ref string) (string, error) {
 	}
 	v, ok := data[field]
 	if !ok {
-		return "", fmt.Errorf("%s: champ %q absent", path, field)
+		return "", i18n.E("vault.field_missing", path, field)
 	}
 	s, ok := v.(string)
 	if !ok || s == "" {
-		return "", fmt.Errorf("%s: champ %q vide ou non textuel", path, field)
+		return "", i18n.E("vault.field", path, field)
 	}
 	return s, nil
 }

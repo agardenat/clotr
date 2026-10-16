@@ -72,7 +72,7 @@ func Fetch(ctx context.Context, hc *http.Client, p config.Provider) Status {
 		} `json:"info"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		st.Error = fmt.Sprintf("GET %s: réponse invalide: %v", path, err)
+		st.Error = i18n.T("budget.invalid", path, err)
 		return st
 	}
 	st.Spend = out.Info.Spend
@@ -160,7 +160,7 @@ func (t *Tracker) Seed(statuses []Status) []string {
 		a.baseline, a.hasBase = s.Spend, true
 		if reason := a.check(); reason != "" {
 			a.exhausted = reason
-			excluded = append(excluded, fmt.Sprintf("%s écarté: %s", s.Provider, reason))
+			excluded = append(excluded, i18n.T("budget.excluded", s.Provider, reason))
 		}
 	}
 	return excluded
@@ -184,10 +184,10 @@ func (a *account) check() string {
 		return ""
 	}
 	if a.hasKey && a.cfg.MinRemaining > 0 && a.max-a.spend < a.cfg.MinRemaining {
-		return fmt.Sprintf("budget restant %.4f $ < min_remaining %.2f $ (dépensé %.4f / %.2f $)", a.max-a.spend, a.cfg.MinRemaining, a.spend, a.max)
+		return i18n.T("budget.min_remaining", a.max-a.spend, a.cfg.MinRemaining, a.spend, a.max)
 	}
 	if a.cfg.MaxRunCost > 0 && a.runCost >= a.cfg.MaxRunCost {
-		return fmt.Sprintf("coût du run %.4f $ >= max_run_cost %.2f $", a.runCost, a.cfg.MaxRunCost)
+		return i18n.T("budget.max_run_cost", a.runCost, a.cfg.MaxRunCost)
 	}
 	return ""
 }

@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 type PathRules struct {
@@ -23,7 +25,7 @@ func CompileRules(r PathRules) (*Rules, error) {
 	out := &Rules{src: r}
 	for _, g := range r.Allow {
 		if !strings.HasPrefix(g, "/") {
-			return nil, fmt.Errorf("ssh_paths.allow: %q doit être absolu", g)
+			return nil, i18n.E("ssh.paths_absolute", g)
 		}
 		out.allow = append(out.allow, globRegexp(g))
 	}
@@ -31,7 +33,7 @@ func CompileRules(r PathRules) (*Rules, error) {
 		out.deny = append(out.deny, globRegexp(g))
 	}
 	if len(out.allow) == 0 {
-		return nil, fmt.Errorf("ssh_paths.allow: au moins un chemin requis")
+		return nil, i18n.E("ssh.paths_required")
 	}
 	return out, nil
 }

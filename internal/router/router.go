@@ -1,11 +1,11 @@
 package router
 
 import (
-	"fmt"
 	"sort"
 
 	"github.com/agardenat/clotr/internal/catalog"
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 type Router struct {
@@ -18,7 +18,7 @@ type Router struct {
 
 func New(cfg *config.Config, cat *catalog.Catalog, overrides map[string]string, sovereign string) (*Router, error) {
 	if sovereign != "" && !config.ValidSovereignPolicy(sovereign) {
-		return nil, fmt.Errorf("--sovereign %q invalide (any|prefer|require)", sovereign)
+		return nil, i18n.E("router.sovereign", sovereign)
 	}
 	r := &Router{cfg: cfg, cat: cat, overrides: map[string]catalog.ModelInfo{}, order: map[string]int{}, sovereign: sovereign}
 	for i, p := range cfg.Providers {
@@ -27,7 +27,7 @@ func New(cfg *config.Config, cat *catalog.Catalog, overrides map[string]string, 
 	for role, ref := range overrides {
 		rc, ok := cfg.Roles[role]
 		if !ok {
-			return nil, fmt.Errorf("--model %s=%s: rôle inconnu", role, ref)
+			return nil, i18n.E("router.model_role", role, ref)
 		}
 		if m, ok := cat.Find(ref); ok {
 			r.overrides[role] = m
@@ -35,11 +35,11 @@ func New(cfg *config.Config, cat *catalog.Catalog, overrides map[string]string, 
 		}
 		prov, id, ok := catalog.SplitRef(ref)
 		if !ok {
-			return nil, fmt.Errorf("--model %s=%s: format attendu provider/model", role, ref)
+			return nil, i18n.E("router.model_format", role, ref)
 		}
 		p, ok := cfg.Provider(prov)
 		if !ok {
-			return nil, fmt.Errorf("--model %s=%s: provider %q inconnu", role, ref, prov)
+			return nil, i18n.E("router.model_provider", role, ref, prov)
 		}
 		r.overrides[role] = catalog.ModelInfo{Provider: prov, ID: id, Tier: rc.Tier, Tools: rc.Tools, Context: rc.MinContext, Sovereign: p.Sovereign, Weight: p.Weight, Source: "override"}
 	}
@@ -59,12 +59,12 @@ func (r *Router) Policy(role string) string {
 func (r *Router) Candidates(role string) ([]catalog.ModelInfo, error) {
 	rc, ok := r.cfg.Roles[role]
 	if !ok {
-		return nil, fmt.Errorf("rôle %q inconnu", role)
+		return nil, i18n.E("router.role", role)
 	}
 	policy := r.Policy(role)
 	if m, ok := r.overrides[role]; ok {
 		if policy == "require" && !m.Sovereign {
-			return nil, fmt.Errorf("rôle %s: modèle forcé %s non souverain alors que sovereign=require", role, m.Ref())
+			return nil, i18n.E("router.forced_foreign", role, m.Ref())
 		}
 		return []catalog.ModelInfo{m}, nil
 	}
@@ -86,7 +86,7 @@ func (r *Router) Candidates(role string) ([]catalog.ModelInfo, error) {
 		out = append(out, m)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("aucun modèle ne satisfait le rôle %q (tier>=%s, tools=%t, min_context=%d, sovereign=%s) : ajuster profiles ou roles", role, rc.Tier, rc.Tools, rc.MinContext, policy)
+		return nil, i18n.E("router.no_model", role, rc.Tier, rc.Tools, rc.MinContext, policy)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]

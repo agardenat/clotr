@@ -18,6 +18,7 @@ import (
 	"github.com/agardenat/clotr/internal/catalog"
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/httpx"
+	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/tools"
 )
 
@@ -96,7 +97,7 @@ func ConnectTransport(ctx context.Context, cfg config.MCPServer, t sdk.Transport
 	defer cancel()
 	session, err := client.Connect(cctx, t, nil)
 	if err != nil {
-		return nil, fmt.Errorf("mcp %s: connexion: %w", cfg.Name, err)
+		return nil, i18n.E("mcp.connect", cfg.Name, err)
 	}
 	s := &Server{cfg: cfg, session: session}
 	allow := globs(cfg.Allow)
@@ -114,7 +115,7 @@ func ConnectTransport(ctx context.Context, cfg config.MCPServer, t sdk.Transport
 		}
 		nt := newTool(s, t)
 		if names[nt.name] {
-			s.skipped = append(s.skipped, t.Name+" (nom en collision après normalisation)")
+			s.skipped = append(s.skipped, t.Name+i18n.T("mcp.collision"))
 			continue
 		}
 		names[nt.name] = true
@@ -230,7 +231,7 @@ func ConnectAll(ctx context.Context, cfgs []config.MCPServer, version string) ([
 			if n > 5 {
 				shown, more = shown[:5], fmt.Sprintf(", … (+%d, voir clotr tools)", n-5)
 			}
-			warnings = append(warnings, fmt.Sprintf("mcp %s: %d outils non exposés (ni readOnlyHint ni allow): %s%s", s.cfg.Name, n, strings.Join(shown, ", "), more))
+			warnings = append(warnings, i18n.T("mcp.unexposed", s.cfg.Name, n, strings.Join(shown, ", "), more))
 		}
 		ok = append(ok, s)
 	}

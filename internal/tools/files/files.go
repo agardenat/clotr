@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/tools"
 )
 
@@ -37,13 +38,13 @@ func New(cfg *config.Files) (*FS, []string, error) {
 			abs, err = filepath.EvalSymlinks(abs)
 		}
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("files: racine ignorée %s: %v", r, err))
+			warnings = append(warnings, i18n.T("files.root_skipped", r, err))
 			continue
 		}
 		f.roots = append(f.roots, abs)
 	}
 	if len(f.roots) == 0 {
-		return nil, warnings, errors.New("files: aucune racine accessible")
+		return nil, warnings, i18n.E("files.no_root")
 	}
 	return f, warnings, nil
 }

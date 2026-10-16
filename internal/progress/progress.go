@@ -5,6 +5,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 type Event struct {
@@ -57,7 +59,7 @@ func NewPrinter(w io.Writer) *Printer {
 				continue
 			}
 			elapsed := time.Since(p.start).Truncate(100 * time.Millisecond)
-			line := fmt.Sprintf("[%7s] %-14s %-10s", elapsed, e.Task, e.Kind)
+			line := fmt.Sprintf("[%7s] %-14s %-10s", elapsed, e.Task, kindLabel(e.Kind))
 			if e.Model != "" {
 				line += " " + e.Model
 			}
@@ -85,4 +87,11 @@ func (p *Printer) Close() {
 		close(p.ch)
 		p.wg.Wait()
 	})
+}
+
+func kindLabel(kind string) string {
+	if s := i18n.T("kind." + kind); s != "kind."+kind {
+		return s
+	}
+	return kind
 }

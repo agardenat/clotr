@@ -13,6 +13,7 @@ import (
 	"go.starlark.net/starlarkstruct"
 
 	"github.com/agardenat/clotr/internal/driver/ssh"
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 type command func(ssh.Builder) string
@@ -43,7 +44,7 @@ func (in *Instance) remote(ctx context.Context, tool string, t *Target, h *Host,
 	res, err := in.exec(ctx, pool, tool, t, ep, login, ssh.SudoWithPassword(build(ssh.Builder{})), pw+"\n", maxBytes)
 	if err == nil && res.Exit != 0 && ssh.SudoPasswordRejected(res.Stderr) {
 		login.forget()
-		return ssh.Result{}, fmt.Errorf("mot de passe de %s refusé par sudo sur %s", ep.User, ep.Host)
+		return ssh.Result{}, i18n.E("tpl.ssh.sudo_password", ep.User, ep.Host)
 	}
 	return res, err
 }
@@ -113,13 +114,13 @@ func (in *Instance) sshRun(thread *starlark.Thread, target, host string, cmd com
 
 func (in *Instance) sshPrepare(thread *starlark.Thread, target, host string) (*Target, *Host, error) {
 	if thread.Local(localLoading) != nil {
-		return nil, nil, fmt.Errorf("ssh: interdit au chargement du script")
+		return nil, nil, i18n.E("tpl.ssh.at_load")
 	}
 	if err := denyOffline(threadCtx(thread)); err != nil {
 		return nil, nil, err
 	}
 	if in.sshName == "" {
-		return nil, nil, fmt.Errorf("aucun connecteur ssh dans le template %s", in.T.Name)
+		return nil, nil, i18n.E("tpl.ssh.no_connector", in.T.Name)
 	}
 	return in.findHost(target, host)
 }
@@ -130,7 +131,7 @@ func resultValue(res ssh.Result, host string) (starlark.Value, error) {
 
 func (in *Instance) checkPath(p string) (string, error) {
 	if in.rules == nil {
-		return "", fmt.Errorf("aucun connecteur ssh dans le template %s", in.T.Name)
+		return "", i18n.E("tpl.ssh.no_connector", in.T.Name)
 	}
 	return in.rules.Check(p)
 }
@@ -170,7 +171,7 @@ func (in *Instance) sshTail(thread *starlark.Thread, b *starlark.Builtin, args s
 		return nil, err
 	}
 	if strings.ContainsAny(filter, "\n\r\x00") {
-		return nil, fmt.Errorf("filter invalide")
+		return nil, i18n.E("tpl.ssh.filter")
 	}
 	cp, err := in.checkPath(p)
 	if err != nil {
@@ -191,7 +192,7 @@ func (in *Instance) sshGrep(thread *starlark.Thread, b *starlark.Builtin, args s
 		return nil, err
 	}
 	if strings.TrimSpace(pattern) == "" || strings.ContainsAny(pattern, "\n\r\x00") {
-		return nil, fmt.Errorf("pattern invalide")
+		return nil, i18n.E("tpl.ssh.pattern")
 	}
 	cp, err := in.checkPath(p)
 	if err != nil {
@@ -244,7 +245,7 @@ func (in *Instance) sshStatTail(thread *starlark.Thread, b *starlark.Builtin, ar
 		head, body, _ := strings.Cut(res.Stdout, "\n")
 		f := strings.Fields(head)
 		if len(f) != 2 {
-			return nil, fmt.Errorf("stat inattendu: %q", head)
+			return nil, i18n.E("tpl.stat", head)
 		}
 		size, _ := strconv.ParseInt(f[0], 10, 64)
 		mt, _ := strconv.ParseInt(f[1], 10, 64)
@@ -270,7 +271,7 @@ func (in *Instance) sshRecent(thread *starlark.Thread, b *starlark.Builtin, args
 		ds = append(ds, cp)
 	}
 	if len(ds) == 0 {
-		return nil, fmt.Errorf("dirs vide")
+		return nil, i18n.E("tpl.ssh.dirs")
 	}
 	t, h, err := in.sshPrepare(thread, target, host)
 	if err != nil {

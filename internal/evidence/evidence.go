@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 type Item struct {
@@ -163,7 +165,7 @@ func (s *Store) Annex(report, title, unknown string, display func(string) string
 		}
 		status := ""
 		if it.Error != "" {
-			status = " — erreur"
+			status = " — " + i18n.R("evidence.error")
 		}
 		fmt.Fprintf(&b, "- **%s** · %s · `%s` `%s`%s → `%s`\n", id, it.Task, it.Tool, args, status, display(it.File))
 	}

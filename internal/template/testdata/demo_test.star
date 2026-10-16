@@ -71,11 +71,11 @@ def test_tools():
 def test_guards():
     inst = new()
     inst.discover()
-    assert.contains(inst.error("raw", {"path": "/other"}), "hors de la liste allow")
-    assert.contains(inst.error("raw", {"path": "/api/secrets"}), "mot-clé sensible")
-    assert.contains(inst.error("raw", {"path": "/api/../x"}), "invalide")
-    assert.contains(inst.error("raw", {"path": "/rpc/deleteNode", "conn": "rpc", "method": "POST"}), "hors de la liste allow")
-    assert.contains(inst.error("raw", {"path": "/api/x", "method": "DELETE"}), "méthode DELETE refusée")
+    assert.contains(inst.error("raw", {"path": "/other"}), "outside the allow list")
+    assert.contains(inst.error("raw", {"path": "/api/secrets"}), "sensitive keyword")
+    assert.contains(inst.error("raw", {"path": "/api/../x"}), "invalid path")
+    assert.contains(inst.error("raw", {"path": "/rpc/deleteNode", "conn": "rpc", "method": "POST"}), "outside the allow list")
+    assert.contains(inst.error("raw", {"path": "/api/x", "method": "DELETE"}), "method DELETE refused")
     assert.eq(inst.call("raw", {"path": "/api/missing"}), "404")
 
 def test_ssh():

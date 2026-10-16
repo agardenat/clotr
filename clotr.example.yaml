@@ -37,6 +37,7 @@ profiles:
     tier: fast
 
 language: auto
+ui_language: en
 
 web_search:
   policy: ask

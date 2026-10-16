@@ -22,6 +22,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/httpx"
+	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/netx"
 )
 
@@ -56,13 +57,13 @@ var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_by
 func checkHTTPOptions(o options) error {
 	for k := range o {
 		if !slices.Contains(httpOptionKeys, k) {
-			return fmt.Errorf("option %q inconnue (%s)", k, strings.Join(httpOptionKeys, ", "))
+			return i18n.E("tpl.http.option", k, strings.Join(httpOptionKeys, ", "))
 		}
 	}
 	methods := o.list("methods")
 	for _, m := range methods {
 		if m != strings.ToUpper(m) || m == "" {
-			return fmt.Errorf("methods: %q invalide (majuscules attendues)", m)
+			return i18n.E("tpl.http.method_case", m)
 		}
 	}
 	for _, k := range []string{"allow", "deny"} {
@@ -74,7 +75,7 @@ func checkHTTPOptions(o options) error {
 	}
 	for _, m := range methods {
 		if m != http.MethodGet && m != http.MethodHead && len(o.list("allow")) == 0 {
-			return fmt.Errorf("methods: %s exige une liste allow explicite de chemins autorisés", m)
+			return i18n.E("tpl.http.method_allow", m)
 		}
 	}
 	return checkAuthOptions(o)
@@ -83,7 +84,7 @@ func checkHTTPOptions(o options) error {
 func checkAuthOptions(o options) error {
 	for k := range o.sub("auth") {
 		if !slices.Contains([]string{"user_env", "password_env", "password_vault", "label"}, k) {
-			return fmt.Errorf("auth.%s inconnue (user_env, password_env, password_vault, label)", k)
+			return i18n.E("tpl.http.auth", k)
 		}
 	}
 	return nil
@@ -174,14 +175,14 @@ func requestTLS(v starlark.Value) (*netx.TLS, error) {
 		if k == "insecure" {
 			b, ok := it[1].(starlark.Bool)
 			if !ok {
-				return nil, fmt.Errorf("tls.insecure: booléen attendu")
+				return nil, i18n.E("tpl.http.tls_insecure")
 			}
 			t.Verify = !bool(b)
 			continue
 		}
 		s, ok := asText(it[1])
 		if !ok {
-			return nil, fmt.Errorf("tls.%s: texte PEM attendu, %s reçu", k, it[1].Type())
+			return nil, i18n.E("tpl.http.tls_pem", k, it[1].Type())
 		}
 		switch k {
 		case "ca":
@@ -191,7 +192,7 @@ func requestTLS(v starlark.Value) (*netx.TLS, error) {
 		case "key":
 			t.KeyPEM = []byte(s)
 		default:
-			return nil, fmt.Errorf("tls.%s inconnue (ca, cert, key, insecure)", k)
+			return nil, i18n.E("tpl.http.tls", k)
 		}
 	}
 	return t, nil
@@ -247,14 +248,14 @@ func (in *Instance) httpClientFor(hc *httpConn, t *netx.TLS, proxy string) (*htt
 
 func checkRequestPath(hc *httpConn, method, p string) (string, error) {
 	if !slices.Contains(hc.methods, method) {
-		return "", fmt.Errorf("méthode %s refusée par le connecteur %s (autorisées : %s)", method, hc.name, strings.Join(hc.methods, ", "))
+		return "", i18n.E("tpl.http.method_refused", method, hc.name, strings.Join(hc.methods, ", "))
 	}
 	if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "?#") {
-		return "", fmt.Errorf("chemin %q invalide (absolu, sans ? ni #)", p)
+		return "", i18n.E("tpl.http.path_form", p)
 	}
 	for _, seg := range strings.Split(p, "/") {
 		if seg == ".." || seg == "." {
-			return "", fmt.Errorf("chemin %q invalide", p)
+			return "", i18n.E("tpl.http.path", p)
 		}
 	}
 	clean := path.Clean(p)
@@ -262,11 +263,11 @@ func checkRequestPath(hc *httpConn, method, p string) (string, error) {
 		clean += "/"
 	}
 	if !hc.ownDeny && sensitivePath.MatchString(clean) {
-		return "", fmt.Errorf("chemin %q refusé : contient un mot-clé sensible (keytab, secret, password, token)", clean)
+		return "", i18n.E("tpl.http.path_sensitive", clean)
 	}
 	for _, re := range hc.deny {
 		if re.MatchString(clean) {
-			return "", fmt.Errorf("chemin %q refusé par la liste deny du connecteur %s", clean, hc.name)
+			return "", i18n.E("tpl.http.path_deny", clean, hc.name)
 		}
 	}
 	if len(hc.allow) > 0 {
@@ -278,7 +279,7 @@ func checkRequestPath(hc *httpConn, method, p string) (string, error) {
 			}
 		}
 		if !ok {
-			return "", fmt.Errorf("chemin %q hors de la liste allow du connecteur %s", clean, hc.name)
+			return "", i18n.E("tpl.http.path_allow", clean, hc.name)
 		}
 	}
 	return clean, nil
@@ -342,14 +343,14 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 		return nil, err
 	}
 	if thread.Local(localLoading) != nil {
-		return nil, fmt.Errorf("http.request: interdit au chargement du script")
+		return nil, i18n.E("tpl.http.at_load")
 	}
 	if err := denyOffline(threadCtx(thread)); err != nil {
 		return nil, err
 	}
 	hc, ok := in.https[conn]
 	if !ok {
-		return nil, fmt.Errorf("connecteur http %q inconnu (%s)", conn, strings.Join(sortedKeys(in.https), ", "))
+		return nil, i18n.E("tpl.http.connector", conn, strings.Join(sortedKeys(in.https), ", "))
 	}
 	method = strings.ToUpper(method)
 	clean, err := checkRequestPath(hc, method, p)
@@ -361,7 +362,7 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 	}
 	bu, err := url.Parse(strings.TrimRight(base, "/"))
 	if err != nil || (bu.Scheme != "http" && bu.Scheme != "https") || bu.Host == "" {
-		return nil, fmt.Errorf("URL de base invalide %q", base)
+		return nil, i18n.E("tpl.http.base_url", base)
 	}
 	u := *bu
 	u.Path = strings.TrimRight(bu.Path, "/") + clean
@@ -421,7 +422,7 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 	if hc.auth != nil {
 		c, ok := in.creds[conn]
 		if !ok {
-			return nil, fmt.Errorf("connecteur %s : identifiants non résolus", conn)
+			return nil, i18n.E("tpl.http.creds", conn)
 		}
 		req.SetBasicAuth(c.User, c.Pass)
 	}
@@ -447,7 +448,7 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 	}
 	in.audit("http_call", audit)
 	if len(data) > limit {
-		return nil, fmt.Errorf("%s %s: réponse de plus de %d Mo, affiner la requête", method, u.Path, limit>>20)
+		return nil, i18n.E("tpl.http.too_big", method, u.Path, limit>>20)
 	}
 	hdr := map[string]string{}
 	for k := range resp.Header {
@@ -457,7 +458,7 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 	if jqExpr != "" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		var doc any
 		if err := json.Unmarshal(data, &doc); err != nil {
-			return nil, fmt.Errorf("%s %s: JSON illisible ou incomplet: %w", method, u.Path, err)
+			return nil, i18n.E("tpl.http.json", method, u.Path, err)
 		}
 		out, err := runJQ(jqExpr, doc)
 		if err != nil {
@@ -474,7 +475,7 @@ func optString(name string, v starlark.Value) (string, error) {
 	}
 	s, ok := starlark.AsString(v)
 	if !ok {
-		return "", fmt.Errorf("%s: texte attendu, %s reçu", name, v.Type())
+		return "", i18n.E("tpl.arg.text", name, v.Type())
 	}
 	return s, nil
 }
@@ -485,7 +486,7 @@ func optDict(name string, v starlark.Value) (*starlark.Dict, error) {
 	}
 	d, ok := v.(*starlark.Dict)
 	if !ok {
-		return nil, fmt.Errorf("%s: dict attendu, %s reçu", name, v.Type())
+		return nil, i18n.E("tpl.arg.dict", name, v.Type())
 	}
 	return d, nil
 }
@@ -496,7 +497,7 @@ func optInt(name string, v starlark.Value) (int, error) {
 	}
 	i, ok := v.(starlark.Int)
 	if !ok {
-		return 0, fmt.Errorf("%s: entier attendu, %s reçu", name, v.Type())
+		return 0, i18n.E("tpl.arg.int", name, v.Type())
 	}
 	n, _ := i.Int64()
 	return int(n), nil

@@ -171,13 +171,13 @@ func TestPlanRetryAndValidation(t *testing.T) {
 		t.Fatalf("retry: %v %+v", err, p)
 	}
 	cases := map[string]string{
-		`{"tasks":[]}`: "aucune tâche",
-		`{"tasks":[{"id":"a","role":"planner","goal":"g"}]}`:                                                                                  "rôle",
+		`{"tasks":[]}`: "no task",
+		`{"tasks":[{"id":"a","role":"planner","goal":"g"}]}`:                                                                                  "invalid role",
 		`{"tasks":[{"id":"a","role":"collector","goal":"g","tools":["nope"]}]}`:                                                               "outil inconnu",
-		`{"tasks":[{"id":"a","role":"thinker","goal":"g","tools":["k8s"]}]}`:                                                                  "n'utilise pas",
-		`{"tasks":[{"id":"a","role":"collector","goal":"g","depends_on":["z"]}]}`:                                                             "dépendance",
+		`{"tasks":[{"id":"a","role":"thinker","goal":"g","tools":["k8s"]}]}`:                                                                  "does not use tools",
+		`{"tasks":[{"id":"a","role":"collector","goal":"g","depends_on":["z"]}]}`:                                                             "invalid dependency",
 		`{"tasks":[{"id":"a","role":"collector","goal":"g","depends_on":["b"]},{"id":"b","role":"collector","goal":"g","depends_on":["a"]}]}`: "cycle",
-		`{"tasks":[{"id":"a","role":"collector","goal":"g"},{"id":"a","role":"collector","goal":"g"}]}`:                                       "dupliqué",
+		`{"tasks":[{"id":"a","role":"collector","goal":"g"},{"id":"a","role":"collector","goal":"g"}]}`:                                       "duplicated id",
 	}
 	for in, want := range cases {
 		var p Plan
@@ -192,7 +192,7 @@ func TestPlanRetryAndValidation(t *testing.T) {
 
 func TestAllFailed(t *testing.T) {
 	o, _ := newOrch(t, []string{`{"tasks":[{"id":"t1","role":"collector","goal":"g"}]}`}, map[string]bool{"t1": true})
-	if _, err := o.Run(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "toutes les tâches") {
+	if _, err := o.Run(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "all tasks failed") {
 		t.Fatalf("err=%v", err)
 	}
 }

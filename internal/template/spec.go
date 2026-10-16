@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/agardenat/clotr/internal/driver/ssh"
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 type Template struct {
@@ -95,27 +96,27 @@ func Parse(data []byte, source string) (*Template, error) {
 
 func (t *Template) validate() error {
 	var errs []string
-	fail := func(format string, args ...any) {
-		errs = append(errs, fmt.Sprintf(format, args...))
+	fail := func(msg string) {
+		errs = append(errs, msg)
 	}
 	if !nameRe.MatchString(t.Name) {
-		fail("name: %q invalide ([a-z][a-z0-9-]*)", t.Name)
+		fail(i18n.T("tpl.spec.name", t.Name))
 	}
 	for _, n := range sortedKeys(t.Params) {
 		p := t.Params[n]
 		if !slices.Contains(paramTypes, p.Type) {
-			fail("params.%s.type: %q invalide (%s)", n, p.Type, strings.Join(paramTypes, "|"))
+			fail(i18n.T("tpl.spec.param_type", n, p.Type, strings.Join(paramTypes, "|")))
 		}
 		if p.Type == "enum" && len(p.Values) == 0 {
-			fail("params.%s.values: requis pour enum", n)
+			fail(i18n.T("tpl.spec.enum_values", n))
 		}
 		if p.Type == "list" {
 			if len(p.Item) == 0 {
-				fail("params.%s.item: requis pour list", n)
+				fail(i18n.T("tpl.spec.list_item", n))
 			}
 			for k, it := range p.Item {
 				if !slices.Contains(itemTypes, it) {
-					fail("params.%s.item.%s: type %q invalide (%s)", n, k, it, strings.Join(itemTypes, "|"))
+					fail(i18n.T("tpl.spec.item_type", n, k, it, strings.Join(itemTypes, "|")))
 				}
 			}
 		}
@@ -124,79 +125,79 @@ func (t *Template) validate() error {
 	for _, n := range sortedKeys(t.Connectors) {
 		c := t.Connectors[n]
 		if !identRe.MatchString(n) {
-			fail("connectors.%s: nom invalide ([a-z][a-z0-9_]*)", n)
+			fail(i18n.T("tpl.spec.connector", n))
 		}
 		if !slices.Contains(drivers, c.Driver) {
-			fail("connectors.%s.driver: %q inconnu (%s)", n, c.Driver, strings.Join(drivers, "|"))
+			fail(i18n.T("tpl.spec.driver", n, c.Driver, strings.Join(drivers, "|")))
 		}
 		if c.Driver == "ssh" {
 			nssh++
 			if err := checkAuthOptions(options(c.Options)); err != nil {
-				fail("connectors.%s: %v", n, err)
+				fail(fmt.Sprintf("connectors.%s: %v", n, err))
 			}
 		}
 		if c.Driver == "http" {
 			if err := checkHTTPOptions(options(c.Options)); err != nil {
-				fail("connectors.%s: %v", n, err)
+				fail(fmt.Sprintf("connectors.%s: %v", n, err))
 			}
 		}
 	}
 	if nssh > 1 {
-		fail("connectors: un seul connecteur ssh par template")
+		fail(i18n.T("tpl.spec.one_ssh"))
 	}
 	for i, tg := range t.Targets {
 		if !targetKinds.MatchString(tg["kind"]) {
-			fail("targets[%d].kind: %q invalide", i, tg["kind"])
+			fail(i18n.T("tpl.spec.target_kind", i, tg["kind"]))
 		}
 		if fe := tg["foreach"]; fe != "" {
 			if p, ok := t.Params[fe]; !ok || p.Type != "list" {
-				fail("targets[%d].foreach: %q n'est pas un paramètre de type list", i, fe)
+				fail(i18n.T("tpl.spec.foreach", i, fe))
 			}
 			if tg["name"] == "" {
-				fail("targets[%d].name: requis avec foreach", i)
+				fail(i18n.T("tpl.spec.foreach_name", i))
 			}
 		}
 	}
 	if len(t.Targets) == 0 && t.Script == "" {
-		fail("targets ou script: au moins l'un des deux est requis")
+		fail(i18n.T("tpl.spec.targets_script"))
 	}
 	for i, e := range t.Env {
 		if !envNameRe.MatchString(e) {
-			fail("env[%d]: nom de variable %q invalide", i, e)
+			fail(i18n.T("tpl.spec.env", i, e))
 		}
 	}
 	for i, f := range t.Files {
 		if strings.TrimSpace(f) == "" {
-			fail("files[%d]: chemin vide", i)
+			fail(i18n.T("tpl.spec.file", i))
 		}
 	}
 	seen := map[string]bool{}
 	for i, ts := range t.Tools {
 		k, ok := kinds[ts.Kind]
 		if !ok {
-			fail("tools[%d].kind: %q inconnu (%s)", i, ts.Kind, strings.Join(sortedKeys(kinds), ", "))
+			fail(i18n.T("tpl.spec.tool_kind", i, ts.Kind, strings.Join(sortedKeys(kinds), ", ")))
 			continue
 		}
 		if k.ssh && nssh == 0 {
-			fail("tools[%d] (%s): exige un connecteur de driver ssh", i, ts.Kind)
+			fail(i18n.T("tpl.spec.tool_ssh", i, ts.Kind))
 		}
 		name := ts.ToolName()
 		if !identRe.MatchString(name) {
-			fail("tools[%d].name: %q invalide", i, name)
+			fail(i18n.T("tpl.spec.tool_name", i, name))
 		}
 		if seen[name] {
-			fail("tools[%d].name: %q dupliqué", i, name)
+			fail(i18n.T("tpl.spec.tool_dup", i, name))
 		}
 		seen[name] = true
 	}
 	if nssh > 0 {
 		if err := checkPaths(t.SSHPaths); err != nil {
-			fail("%v", err)
+			fail(err.Error())
 		}
 	}
 	if t.ScriptSrc != nil {
 		if err := checkScript(t); err != nil {
-			fail("script %s: %v", t.Script, err)
+			fail(fmt.Sprintf("script %s: %v", t.Script, err))
 		}
 	}
 	if len(errs) > 0 {

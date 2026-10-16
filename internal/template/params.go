@@ -12,6 +12,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/driver/ssh"
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 var envRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -21,7 +22,7 @@ func (t *Template) ResolveParams(given map[string]any) (map[string]any, error) {
 	out := map[string]any{}
 	for k := range given {
 		if _, ok := t.Params[k]; !ok {
-			errs = append(errs, fmt.Sprintf("paramètre %q inconnu du template %s (connus: %s)", k, t.Name, strings.Join(sortedKeys(t.Params), ", ")))
+			errs = append(errs, i18n.T("tpl.param.unknown", k, t.Name, strings.Join(sortedKeys(t.Params), ", ")))
 		}
 	}
 	for _, name := range sortedKeys(t.Params) {
@@ -32,7 +33,7 @@ func (t *Template) ResolveParams(given map[string]any) (map[string]any, error) {
 		}
 		if v == nil {
 			if p.Required {
-				errs = append(errs, fmt.Sprintf("paramètre %q requis", name))
+				errs = append(errs, i18n.T("tpl.param.required", name))
 			}
 			if p.Type == "list" {
 				out[name] = []map[string]any{}
@@ -66,19 +67,19 @@ func (t *Template) ResolveParams(given map[string]any) (map[string]any, error) {
 func convertList(name string, v any, item map[string]string) ([]map[string]any, error) {
 	raw, ok := v.([]any)
 	if !ok {
-		return nil, fmt.Errorf("paramètre %q: liste attendue", name)
+		return nil, i18n.E("tpl.param.list", name)
 	}
 	out := make([]map[string]any, 0, len(raw))
 	for i, r := range raw {
 		m, ok := r.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("paramètre %s[%d]: objet attendu", name, i)
+			return nil, i18n.E("tpl.param.object", name, i)
 		}
 		cm := map[string]any{}
 		for k, val := range m {
 			typ, ok := item[k]
 			if !ok {
-				return nil, fmt.Errorf("paramètre %s[%d].%s inconnu (connus: %s)", name, i, k, strings.Join(sortedKeys(item), ", "))
+				return nil, i18n.E("tpl.param.item_unknown", name, i, k, strings.Join(sortedKeys(item), ", "))
 			}
 			if val == nil {
 				continue
@@ -112,18 +113,18 @@ func convert(name, typ string, v any, values []string) (any, error) {
 			}
 			i, err := strconv.Atoi(n)
 			if err != nil {
-				return nil, fmt.Errorf("paramètre %q: entier attendu, %q", name, n)
+				return nil, i18n.E("tpl.param.int_str", name, n)
 			}
 			return i, nil
 		}
-		return nil, fmt.Errorf("paramètre %q: entier attendu, %v", name, v)
+		return nil, i18n.E("tpl.param.int", name, v)
 	case "bool":
 		if b, ok := v.(bool); ok {
 			return b, nil
 		}
 		b, err := strconv.ParseBool(s)
 		if err != nil {
-			return nil, fmt.Errorf("paramètre %q: booléen attendu, %v", name, v)
+			return nil, i18n.E("tpl.param.bool", name, v)
 		}
 		return b, nil
 	case "url":
@@ -132,19 +133,19 @@ func convert(name, typ string, v any, values []string) (any, error) {
 		}
 		u, err := url.Parse(s)
 		if err != nil || u.Scheme == "" || u.Host == "" {
-			return nil, fmt.Errorf("paramètre %q: URL invalide %q", name, s)
+			return nil, i18n.E("tpl.param.url", name, s)
 		}
 		return s, nil
 	case "env":
 		if s != "" && !envRe.MatchString(s) {
-			return nil, fmt.Errorf("paramètre %q: nom de variable d'environnement attendu, pas une valeur", name)
+			return nil, i18n.E("tpl.param.env", name)
 		}
 		return s, nil
 	case "path":
 		return config.ExpandHome(s), nil
 	case "enum":
 		if !slices.Contains(values, s) {
-			return nil, fmt.Errorf("paramètre %q: %q invalide (%s)", name, s, strings.Join(values, "|"))
+			return nil, i18n.E("tpl.param.enum", name, s, strings.Join(values, "|"))
 		}
 		return s, nil
 	}
@@ -182,7 +183,7 @@ func renderPaths(r ssh.PathRules, data map[string]any) (ssh.PathRules, error) {
 				continue
 			}
 			if strings.Contains(v, "..") || unsafePath.MatchString(v) {
-				return nil, fmt.Errorf("ssh_paths.%s[%d]: %q refusé", field, i, v)
+				return nil, i18n.E("tpl.param.ssh_path", field, i, v)
 			}
 			out = append(out, path.Clean(v))
 		}
@@ -270,7 +271,7 @@ func (o options) int(k string, def int) (int, error) {
 	}
 	i, err := strconv.Atoi(s)
 	if err != nil {
-		return 0, fmt.Errorf("option %s: entier attendu, %q", k, s)
+		return 0, i18n.E("tpl.option.int", k, s)
 	}
 	return i, nil
 }
@@ -282,7 +283,7 @@ func (o options) bool(k string, def bool) (bool, error) {
 	}
 	b, err := strconv.ParseBool(s)
 	if err != nil {
-		return false, fmt.Errorf("option %s: booléen attendu, %q", k, s)
+		return false, i18n.E("tpl.option.bool", k, s)
 	}
 	return b, nil
 }

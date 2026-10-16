@@ -108,7 +108,7 @@ tool(name = "get", description = "d", schema = {"type": "object"}, fn = get)
 	if err != nil || out != want {
 		t.Fatalf("certificat client, deny propre au connecteur, yaml:\n%s%v", out, err)
 	}
-	if _, err := get(`{"path":"/forbidden"}`); err == nil || !strings.Contains(err.Error(), "liste deny") {
+	if _, err := get(`{"path":"/forbidden"}`); err == nil || !strings.Contains(err.Error(), "deny list") {
 		t.Fatalf("deny: %v", err)
 	}
 	if _, err := get(`{"path":"/ok","no_cert":true}`); err == nil {
@@ -121,7 +121,7 @@ func TestDefaultSensitivePathsWithoutDeny(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := checkRequestPath(hc, http.MethodGet, "/api/v1/secrets"); err == nil || !strings.Contains(err.Error(), "mot-clé sensible") {
+	if _, err := checkRequestPath(hc, http.MethodGet, "/api/v1/secrets"); err == nil || !strings.Contains(err.Error(), "sensitive keyword") {
 		t.Fatalf("mots-clés par défaut: %v", err)
 	}
 	hc, _ = newHTTPConn("api", options{"base_url": "https://x.invalid", "deny": []any{}})

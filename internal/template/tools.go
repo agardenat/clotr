@@ -14,6 +14,7 @@ import (
 	"go.starlark.net/starlark"
 
 	"github.com/agardenat/clotr/internal/driver/ssh"
+	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/tools"
 	"github.com/agardenat/clotr/internal/tools/dns"
 )
@@ -515,7 +516,7 @@ func logStatsTool(in *Instance, name, desc string) tools.Tool {
 			head, body, _ := strings.Cut(res.Stdout, "\n")
 			f := strings.Fields(head)
 			if len(f) != 2 {
-				return "", fmt.Errorf("stat inattendu: %q", head)
+				return "", i18n.E("tpl.stat", head)
 			}
 			size, _ := strconv.ParseInt(f[0], 10, 64)
 			mt, _ := strconv.ParseInt(f[1], 10, 64)

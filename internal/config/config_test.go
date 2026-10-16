@@ -46,11 +46,11 @@ func TestDefaults(t *testing.T) {
 
 func TestValidationErrors(t *testing.T) {
 	cases := map[string]string{
-		"providers: []\n": "au moins un provider",
-		"providers:\n  - name: a\n    base_url: nope\n":                                               "URL invalide",
+		"providers: []\n": "at least one provider",
+		"providers:\n  - name: a\n    base_url: nope\n":                                               "invalid URL",
 		"providers:\n  - name: a\n    base_url: http://x\nroles:\n  planner: {tier: huge}\n":          "tier",
 		"providers:\n  - name: a\n    base_url: http://x\nunknown: 1\n":                               "unknown",
-		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - name: m\n":                        "command ou url",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - name: m\n":                        "command or url",
 		"providers:\n  - name: a\n    base_url: http://x\nlimits:\n  agent_timeout: 5 minutes\n":      "invalid duration",
 		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {policy: maybe}\n":              "web_search.policy",
 		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {mcp: absent}\n":                "web_search.mcp",
@@ -58,7 +58,7 @@ func TestValidationErrors(t *testing.T) {
 		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/, api: messages}\n":   "web_search.model",
 		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/m}\n":                 "web_search.api",
 		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {api: responses}\n":             "web_search.api",
-		"providers:\n  - name: a\n    base_url: http://x\ninstances:\n  - {name: web, template: t}\n": "réservé",
+		"providers:\n  - name: a\n    base_url: http://x\ninstances:\n  - {name: web, template: t}\n": "is reserved",
 	}
 	for in, want := range cases {
 		_, err := Parse([]byte(in))
@@ -80,7 +80,7 @@ func TestAPIKey(t *testing.T) {
 		}
 	}
 	_, err = Parse([]byte("providers:\n  - {name: a, base_url: http://x, api_key_env: sk-1234-abcd}\n"))
-	if err == nil || strings.Contains(err.Error(), "sk-1234") || !strings.Contains(err.Error(), "nom de variable") {
+	if err == nil || strings.Contains(err.Error(), "sk-1234") || !strings.Contains(err.Error(), "environment variable name") {
 		t.Errorf("clé dans api_key_env: %v", err)
 	}
 }

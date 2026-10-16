@@ -3,7 +3,6 @@ package template
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -20,6 +19,8 @@ import (
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 	"go.starlark.net/syntax"
+
+	"github.com/agardenat/clotr/internal/i18n"
 )
 
 var maxScriptSteps uint64 = 500_000_000
@@ -113,7 +114,7 @@ func (in *Instance) loadScript() error {
 	if d, ok := globals["discover"]; ok {
 		fn, ok := d.(starlark.Callable)
 		if !ok {
-			return fmt.Errorf("script %s: discover n'est pas une fonction", in.T.Script)
+			return i18n.E("tpl.star.discover", in.T.Script)
 		}
 		in.script.discover = fn
 	}
@@ -128,10 +129,10 @@ type loadEntry struct {
 
 func (in *Instance) loadModule(thread *starlark.Thread, module string) (starlark.StringDict, error) {
 	if thread.Local(localLoading) == nil {
-		return nil, fmt.Errorf("load: uniquement au chargement du script")
+		return nil, i18n.E("tpl.star.load_time")
 	}
 	if !moduleRe.MatchString(module) {
-		return nil, fmt.Errorf("load %q: nom de module invalide (fichier .star du répertoire du template)", module)
+		return nil, i18n.E("tpl.star.load_module", module)
 	}
 	if e, ok := in.loaded[module]; ok {
 		if !e.done {
@@ -162,7 +163,7 @@ type offlineRun struct {
 	network atomic.Bool
 }
 
-var errOffline = errors.New("accès réseau interdit pendant la découverte hors ligne")
+var errOffline error = i18n.Key("tpl.star.offline")
 
 func offline(ctx context.Context) bool {
 	return ctx.Value(offlineKey{}) != nil
@@ -227,7 +228,7 @@ func threadTool(thread *starlark.Thread) string {
 
 func (in *Instance) builtinTool(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	if thread.Local(localLoading) == nil {
-		return nil, fmt.Errorf("tool: à appeler au chargement du script")
+		return nil, i18n.E("tpl.star.tool_time")
 	}
 	var name string
 	var desc starlark.Value
@@ -237,11 +238,11 @@ func (in *Instance) builtinTool(thread *starlark.Thread, b *starlark.Builtin, ar
 		return nil, err
 	}
 	if !identRe.MatchString(name) {
-		return nil, fmt.Errorf("tool: nom %q invalide ([a-z][a-z0-9_]*)", name)
+		return nil, i18n.E("tpl.star.tool_name", name)
 	}
 	if _, ok := desc.(starlark.String); !ok {
 		if _, ok := desc.(starlark.Callable); !ok {
-			return nil, fmt.Errorf("tool %s: description doit être un texte ou une fonction", name)
+			return nil, i18n.E("tpl.star.tool_desc", name)
 		}
 	}
 	raw, err := starlarkJSON(schema)
@@ -252,11 +253,11 @@ func (in *Instance) builtinTool(thread *starlark.Thread, b *starlark.Builtin, ar
 		Type string `json:"type"`
 	}
 	if json.Unmarshal(raw, &head) != nil || head.Type != "object" {
-		return nil, fmt.Errorf("tool %s: schema doit être un objet JSON Schema de type object", name)
+		return nil, i18n.E("tpl.star.tool_schema", name)
 	}
 	for _, st := range in.script.tools {
 		if st.name == name {
-			return nil, fmt.Errorf("tool %s: déjà déclaré", name)
+			return nil, i18n.E("tpl.star.tool_dup", name)
 		}
 	}
 	in.script.tools = append(in.script.tools, &scriptTool{name: name, desc: desc, schema: raw, fn: fn})
@@ -267,16 +268,16 @@ func (in *Instance) checkToolNames() error {
 	seen := map[string]bool{}
 	for _, n := range in.ToolNames() {
 		if seen[n] {
-			return fmt.Errorf("outil %s déclaré deux fois (YAML et script)", n)
+			return i18n.E("tpl.star.tool_twice", n)
 		}
 		seen[n] = true
 	}
 	if len(seen) == 0 {
-		return fmt.Errorf("aucun outil : en déclarer dans tools ou avec tool() dans le script")
+		return i18n.E("tpl.star.no_tool")
 	}
 	for _, c := range in.T.Companions {
 		if !seen[in.Name+"_"+c] {
-			return fmt.Errorf("companions: outil %q inconnu", c)
+			return i18n.E("tpl.star.companion", c)
 		}
 	}
 	return nil
@@ -311,11 +312,11 @@ func (in *Instance) runDiscover(ctx context.Context, inv *Inventory) error {
 		Data     any       `json:"data"`
 	}
 	if err := decodeStarlark(v, &res); err != nil {
-		return fmt.Errorf("résultat de discover invalide: %w", err)
+		return i18n.E("tpl.star.discover_result", err)
 	}
 	for i, t := range res.Targets {
 		if t == nil || t.Name == "" || !targetKinds.MatchString(t.Kind) {
-			return fmt.Errorf("résultat de discover: targets[%d] sans name ou kind valide", i)
+			return i18n.E("tpl.star.discover_target", i)
 		}
 		if t.Attrs == nil {
 			t.Attrs = map[string]string{}
@@ -323,7 +324,7 @@ func (in *Instance) runDiscover(ctx context.Context, inv *Inventory) error {
 		for j, n := range t.Networks {
 			_, ipn, err := net.ParseCIDR(strings.TrimSpace(n))
 			if err != nil {
-				return fmt.Errorf("résultat de discover: targets[%d].networks[%d]: %q n'est pas une plage CIDR", i, j, n)
+				return i18n.E("tpl.star.discover_cidr", i, j, n)
 			}
 			t.Networks[j] = ipn.String()
 		}
@@ -362,7 +363,7 @@ func (in *Instance) builtinInventory(_ *starlark.Thread, b *starlark.Builtin, ar
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	if in.invValue == nil {
-		return nil, fmt.Errorf("inventaire de %s non découvert", in.Name)
+		return nil, i18n.E("tpl.not_discovered", in.Name)
 	}
 	return in.invValue, nil
 }
@@ -372,7 +373,7 @@ func (in *Instance) targetValue(name string) (starlark.Value, error) {
 	inv := in.invValue
 	in.mu.Unlock()
 	if inv == nil {
-		return nil, fmt.Errorf("inventaire de %s non découvert", in.Name)
+		return nil, i18n.E("tpl.not_discovered", in.Name)
 	}
 	targets, _, _ := inv.(*starlark.Dict).Get(starlark.String("targets"))
 	list, _ := targets.(*starlark.List)
@@ -383,7 +384,7 @@ func (in *Instance) targetValue(name string) (starlark.Value, error) {
 			return d, nil
 		}
 	}
-	return nil, fmt.Errorf("cible %q absente de l'inventaire", name)
+	return nil, i18n.E("tpl.star.target_missing", name)
 }
 
 func (in *Instance) builtinTarget(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -450,11 +451,11 @@ func (in *Instance) builtinMemo(thread *starlark.Thread, b *starlark.Builtin, ar
 
 func builtinCatch(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	if len(args) == 0 {
-		return nil, fmt.Errorf("catch: fonction requise")
+		return nil, i18n.E("tpl.star.catch_fn")
 	}
 	fn, ok := args[0].(starlark.Callable)
 	if !ok {
-		return nil, fmt.Errorf("catch: %s n'est pas appelable", args[0].Type())
+		return nil, i18n.E("tpl.star.catch", args[0].Type())
 	}
 	v, err := starlark.Call(thread, fn, args[1:], kwargs)
 	if err != nil {

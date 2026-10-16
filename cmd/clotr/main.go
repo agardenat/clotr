@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -69,6 +68,7 @@ type options struct {
 	auditDir     string
 	langFlag     string
 	lang         string
+	uiLangFlag   string
 	evidenceID   string
 	synthesize   bool
 	web          string
@@ -120,8 +120,9 @@ func main() {
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigs)
 	go watchInterrupts(ctx, cancel, sigs, &interruptHook)
+	initUILanguage(os.Args[1:])
 	if err := newRoot().ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "erreur:", err)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.error"), err)
 		os.Exit(1)
 	}
 }
@@ -149,121 +150,87 @@ func watchInterrupts(ctx context.Context, cancel context.CancelFunc, sigs <-chan
 func newRoot() *cobra.Command {
 	o := &options{}
 	root := &cobra.Command{
-		Use:   "clotr",
-		Short: "Agent d'analyse d'infrastructure en lecture seule, multi-modèles",
-		Long: `Agent d'analyse d'infrastructure en lecture seule, multi-modèles.
-
-Modes de run :
-  clotr run "<demande>"            planner, sous-agents en parallèle, vérification, synthèse
-  clotr run --direct "<demande>"   réponse directe par un seul agent, sans planner ni synthèse
-  clotr run --chat [--direct]      conversation plein écran : réponse en direct,
-                                   r répondre · c copier en Markdown · q quitter
-
-Limites pour un run (plan, run) : --max-agents N, --max-tasks N, --max-steps N
-Rapport mis en forme dans le terminal ; --raw pour le Markdown brut.
-Détail des options : clotr run --help`,
-		Example: `  clotr run "état du cluster prod"
-  clotr run --direct "taille de /var/log sur les hôtes de prod ?"
-  clotr run --chat --direct
-  clotr run -s last "détaille les pods en erreur"`,
+		Use:           "clotr",
+		Short:         i18n.T("cli.root.short"),
+		Long:          i18n.T("cli.root.long"),
+		Example:       i18n.T("cli.root.example"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().StringVarP(&o.config, "config", "c", "", "fichier de configuration (défaut: $CLOTR_CONFIG ou ~/.config/clotr/config.yaml)")
-	root.PersistentFlags().BoolVar(&o.refresh, "refresh", false, "rafraîchir le catalogue de modèles")
-	root.PersistentFlags().StringVar(&o.sovereign, "sovereign", "", "politique souveraine pour ce run: any|prefer|require (prioritaire sur la config)")
-	root.PersistentFlags().BoolVar(&o.confidential, "confidential", false, "run confidentiel: équivaut à --sovereign require")
-	root.PersistentFlags().StringVar(&o.langFlag, "lang", "", "langue de sortie: auto|fr|en (auto: rapport dans la langue de la demande, interface en anglais)")
+	root.PersistentFlags().StringVarP(&o.config, "config", "c", "", i18n.T("cli.flag.config"))
+	root.PersistentFlags().BoolVar(&o.refresh, "refresh", false, i18n.T("cli.flag.refresh"))
+	root.PersistentFlags().StringVar(&o.sovereign, "sovereign", "", i18n.T("cli.flag.sovereign"))
+	root.PersistentFlags().BoolVar(&o.confidential, "confidential", false, i18n.T("cli.flag.confidential"))
+	root.PersistentFlags().StringVar(&o.langFlag, "lang", "", i18n.T("cli.flag.lang"))
+	root.PersistentFlags().StringVar(&o.uiLangFlag, "ui-lang", "", i18n.T("cli.flag.ui_lang"))
 
 	models := &cobra.Command{
 		Use:   "models",
-		Short: "Affiche le catalogue des modèles découverts et le routage par rôle",
+		Short: i18n.T("cli.models.short"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmdModels(cmd.Context(), o, cmd.OutOrStdout())
 		},
 	}
-	models.Flags().BoolVar(&o.json, "json", false, "sortie JSON")
-	models.Flags().BoolVar(&o.all, "all", false, "afficher les chaînes de fallback complètes")
+	models.Flags().BoolVar(&o.json, "json", false, i18n.T("cli.flag.json"))
+	models.Flags().BoolVar(&o.all, "all", false, i18n.T("cli.flag.all"))
 
 	addTaskFlags := func(c *cobra.Command) {
-		c.Flags().StringToStringVarP(&o.models, "model", "m", nil, "forcer un modèle par rôle: role=provider/model")
-		c.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance>,<client> (un serveur ou une instance cité par son nom est activé même avec enabled: false ; un client vaut pour toutes ses instances)")
-		c.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, "exclure des outils par préfixe (mêmes préfixes que -t, prioritaire sur -t et enabled)")
-		c.Flags().StringVar(&o.web, "web", "", "recherche web pour ce run: yes|no (défaut: web_search.policy)")
-		c.Flags().IntVar(&o.maxAgents, "max-agents", 0, "sous-agents simultanés pour ce run (prioritaire sur limits.max_agents)")
-		c.Flags().IntVar(&o.maxTasks, "max-tasks", 0, "tâches au plus dans le plan (prioritaire sur limits.max_tasks)")
-		c.Flags().IntVar(&o.maxSteps, "max-steps", 0, "plafond d'étapes par sous-agent (prioritaire sur limits.max_steps)")
+		c.Flags().StringToStringVarP(&o.models, "model", "m", nil, i18n.T("cli.flag.model"))
+		c.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, i18n.T("cli.flag.tools"))
+		c.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, i18n.T("cli.flag.exclude"))
+		c.Flags().StringVar(&o.web, "web", "", i18n.T("cli.flag.web"))
+		c.Flags().IntVar(&o.maxAgents, "max-agents", 0, i18n.T("cli.flag.max_agents"))
+		c.Flags().IntVar(&o.maxTasks, "max-tasks", 0, i18n.T("cli.flag.max_tasks"))
+		c.Flags().IntVar(&o.maxSteps, "max-steps", 0, i18n.T("cli.flag.max_steps"))
 	}
 
 	plan := &cobra.Command{
-		Use:   "plan <demande>",
-		Short: "Planifie la demande sans l'exécuter",
+		Use:   i18n.T("cli.plan.use"),
+		Short: i18n.T("cli.plan.short"),
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmdPlan(cmd.Context(), o, args, cmd.OutOrStdout())
 		},
 	}
 	addTaskFlags(plan)
-	plan.Flags().BoolVarP(&o.quiet, "quiet", "q", false, "pas de progression sur stderr")
-	plan.Flags().BoolVar(&o.plain, "plain", false, "progression ligne par ligne au lieu du tableau dynamique")
+	plan.Flags().BoolVarP(&o.quiet, "quiet", "q", false, i18n.T("cli.flag.quiet"))
+	plan.Flags().BoolVar(&o.plain, "plain", false, i18n.T("cli.flag.plain"))
 
 	run := &cobra.Command{
-		Use:   "run [demande]",
-		Short: "Exécute la demande (plan, sous-agents, synthèse, ou réponse directe), produit un rapport Markdown",
-		Long: `Exécute la demande et produit un rapport Markdown, enregistré comme un tour de session.
-
-Modes :
-  (défaut)      planner, sous-agents en parallèle, vérification des constats, synthèse
-  --direct      un seul agent répond directement, sans planner, vérification ni synthèse ;
-                --direct=<rôle> choisit le rôle (défaut : le rôle outillé le plus léger)
-  --chat        conversation plein écran : réponse affichée en direct, chaque échange est un
-                tour de la session ; la demande est facultative (saisie à l'ouverture)
-
-Touches du mode conversation :
-  r             répondre (tour suivant)
-  entrée        envoyer ; alt+entrée ou ctrl+j : nouvelle ligne ; échap : annuler la saisie
-  c             copier la dernière réponse en Markdown dans le presse-papiers
-  ↑ ↓ pgup pgdown home end   défiler
-  ctrl+c        interrompre le tour en cours (deux fois : quitter) ; hors tour : quitter
-  q, échap      quitter
-
-Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal, ou GLAMOUR_STYLE) ;
---raw, -o, --json ou une redirection donnent le Markdown brut. La demande "-" est lue sur stdin.`,
-		Example: `  clotr run "état du cluster prod"
-  clotr run --direct "taille de /var/log sur les hôtes de prod ?"
-  clotr run --max-tasks 3 --max-agents 2 "pods en CrashLoopBackOff et leur cause"
-  clotr run --chat --direct
-  clotr run -s last --chat`,
-		Args: cobra.ArbitraryArgs,
+		Use:     i18n.T("cli.run.use"),
+		Short:   i18n.T("cli.run.short"),
+		Long:    i18n.T("cli.run.long"),
+		Example: i18n.T("cli.run.example"),
+		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmdRun(cmd.Context(), o, args, cmd.OutOrStdout())
 		},
 	}
 	addTaskFlags(run)
-	run.Flags().StringVarP(&o.output, "output", "o", "", "écrire le rapport dans ce fichier")
-	run.Flags().BoolVar(&o.json, "json", false, "sortie JSON (plan, résultats, rapport)")
-	run.Flags().BoolVarP(&o.quiet, "quiet", "q", false, "pas de progression sur stderr")
-	run.Flags().BoolVar(&o.plain, "plain", false, "progression ligne par ligne au lieu du tableau dynamique")
-	run.Flags().StringVarP(&o.session, "session", "s", "", "affiner une session existante (nom ou last)")
-	run.Flags().StringVar(&o.direct, "direct", "", "réponse directe par un seul agent, sans planner, vérification ni synthèse (--direct=<rôle> pour choisir le rôle, défaut: le rôle outillé le plus léger)")
+	run.Flags().StringVarP(&o.output, "output", "o", "", i18n.T("cli.flag.output"))
+	run.Flags().BoolVar(&o.json, "json", false, i18n.T("cli.flag.run_json"))
+	run.Flags().BoolVarP(&o.quiet, "quiet", "q", false, i18n.T("cli.flag.quiet"))
+	run.Flags().BoolVar(&o.plain, "plain", false, i18n.T("cli.flag.plain"))
+	run.Flags().StringVarP(&o.session, "session", "s", "", i18n.T("cli.flag.session"))
+	run.Flags().StringVar(&o.direct, "direct", "", i18n.T("cli.flag.direct"))
 	run.Flags().Lookup("direct").NoOptDefVal = directAuto
-	run.Flags().BoolVar(&o.chat, "chat", false, "mode conversation plein écran: réponse affichée en direct, r pour répondre, c pour copier en Markdown, q pour quitter")
-	run.Flags().BoolVar(&o.raw, "raw", false, "rapport en Markdown brut, sans mise en forme pour le terminal")
-	run.Flags().BoolVar(&o.withEvidence, "with-evidence", false, "annexer au rapport la sortie complète de chaque preuve citée (Markdown brut)")
-	run.Flags().BoolVar(&o.incident, "incident", false, "investigation d'un dysfonctionnement: tri avant le plan, causes affichées dès qu'un agent les signale, premier ctrl+c pour conclure tout de suite")
+	run.Flags().BoolVar(&o.chat, "chat", false, i18n.T("cli.flag.chat"))
+	run.Flags().BoolVar(&o.raw, "raw", false, i18n.T("cli.flag.raw"))
+	run.Flags().BoolVar(&o.withEvidence, "with-evidence", false, i18n.T("cli.flag.with_evidence"))
+	run.Flags().BoolVar(&o.incident, "incident", false, i18n.T("cli.flag.incident"))
 
 	sessionsCmd := &cobra.Command{
 		Use:   "sessions",
-		Short: "Liste les sessions",
+		Short: i18n.T("cli.sessions.short"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmdSessions(o, cmd.OutOrStdout())
 		},
 	}
 	sessionCmd := &cobra.Command{
-		Use:   "session <nom|last>",
-		Short: "Affiche une session et son dernier rapport",
+		Use:   i18n.T("cli.session.use"),
+		Short: i18n.T("cli.session.short"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if o.synthesize {
@@ -272,30 +239,30 @@ Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal,
 			return cmdSession(o, args[0], cmd.OutOrStdout())
 		},
 	}
-	sessionCmd.Flags().IntVar(&o.turn, "turn", 0, "rapport d'un tour précis")
-	sessionCmd.Flags().BoolVar(&o.showPath, "path", false, "afficher seulement le répertoire de la session")
-	sessionCmd.Flags().BoolVar(&o.synthesize, "synthesize", false, "régénérer le rapport d'un tour à partir de ses résultats enregistrés, sans relancer les tâches")
-	sessionCmd.Flags().StringVarP(&o.output, "output", "o", "", "écrire le rapport dans ce fichier")
-	sessionCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "avec --synthesize : connecteurs à préparer (défaut : ceux du tour)")
-	sessionCmd.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, "avec --synthesize : connecteurs à exclure (défaut : ceux du tour)")
-	sessionCmd.Flags().StringVar(&o.evidenceID, "evidence", "", "afficher la sortie d'outil archivée d'une preuve (ex: E012, E2.005)")
-	sessionCmd.Flags().BoolVar(&o.raw, "raw", false, "rapport en Markdown brut, sans mise en forme pour le terminal")
-	sessionCmd.Flags().BoolVar(&o.withEvidence, "with-evidence", false, "annexer au rapport la sortie complète de chaque preuve citée (Markdown brut)")
+	sessionCmd.Flags().IntVar(&o.turn, "turn", 0, i18n.T("cli.flag.turn"))
+	sessionCmd.Flags().BoolVar(&o.showPath, "path", false, i18n.T("cli.flag.path"))
+	sessionCmd.Flags().BoolVar(&o.synthesize, "synthesize", false, i18n.T("cli.flag.synthesize"))
+	sessionCmd.Flags().StringVarP(&o.output, "output", "o", "", i18n.T("cli.flag.output"))
+	sessionCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, i18n.T("cli.flag.resynth_tools"))
+	sessionCmd.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, i18n.T("cli.flag.resynth_exclude"))
+	sessionCmd.Flags().StringVar(&o.evidenceID, "evidence", "", i18n.T("cli.flag.evidence"))
+	sessionCmd.Flags().BoolVar(&o.raw, "raw", false, i18n.T("cli.flag.raw"))
+	sessionCmd.Flags().BoolVar(&o.withEvidence, "with-evidence", false, i18n.T("cli.flag.with_evidence"))
 
 	toolsCmd := &cobra.Command{
 		Use:   "tools",
-		Short: "Liste les outils exposés aux agents, et les outils MCP écartés",
+		Short: i18n.T("cli.tools.short"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmdTools(cmd.Context(), o, cmd.OutOrStdout())
 		},
 	}
-	toolsCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, "restreindre les outils par préfixe: fs,mcp,mcp_<serveur>,<instance>,<client> (un serveur ou une instance cité par son nom est activé même avec enabled: false ; un client vaut pour toutes ses instances)")
-	toolsCmd.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, "exclure des outils par préfixe (mêmes préfixes que -t, prioritaire sur -t et enabled)")
+	toolsCmd.Flags().StringSliceVarP(&o.tools, "tools", "t", nil, i18n.T("cli.flag.tools"))
+	toolsCmd.Flags().StringSliceVarP(&o.exclude, "exclude", "x", nil, i18n.T("cli.flag.exclude"))
 
 	templatesCmd := &cobra.Command{
-		Use:   "templates [nom]",
-		Short: "Liste les templates disponibles et les instances configurées, ou affiche un template",
+		Use:   i18n.T("cli.templates.use"),
+		Short: i18n.T("cli.templates.short"),
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmdTemplates(o, args, cmd.OutOrStdout())
@@ -303,25 +270,26 @@ Dans un terminal, le rapport est mis en forme (thème selon le fond du terminal,
 	}
 	var testDir string
 	templatesTest := &cobra.Command{
-		Use:   "test <nom>",
-		Short: "Exécute les tests d'un template (fonctions test_* de <script>_test.star)",
+		Use:   i18n.T("cli.templates_test.use"),
+		Short: i18n.T("cli.templates_test.short"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmdTemplatesTest(cmd.Context(), o, testDir, args[0], cmd.OutOrStdout())
 		},
 	}
-	templatesTest.Flags().StringVar(&testDir, "dir", "", "répertoire des templates (défaut : templates.dir de la configuration)")
+	templatesTest.Flags().StringVar(&testDir, "dir", "", i18n.T("cli.flag.templates_dir"))
 	templatesCmd.AddCommand(templatesTest)
 
 	ver := &cobra.Command{
 		Use:   "version",
-		Short: "Affiche la version",
+		Short: i18n.T("cli.version.short"),
 		Run: func(cmd *cobra.Command, _ []string) {
 			fmt.Fprintln(cmd.OutOrStdout(), version)
 		},
 	}
 
 	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, toolsCmd, templatesCmd, ver)
+	localizeCobra(root)
 	return root
 }
 
@@ -335,12 +303,18 @@ func readRequest(args []string) (string, error) {
 	}
 	req := strings.TrimSpace(strings.Join(args, " "))
 	if req == "" {
-		return "", errors.New("demande vide")
+		return "", i18n.E("cli.err.empty_request")
 	}
 	return req, nil
 }
 
 func loadConfig(o *options) (*config.Config, error) {
+	if o.uiLangFlag != "" {
+		if !config.ValidUILanguage(o.uiLangFlag) {
+			return nil, i18n.E("cli.err.ui_lang", o.uiLangFlag)
+		}
+		i18n.SetUI(o.uiLangFlag)
+	}
 	path, err := config.Resolve(o.config)
 	if err != nil {
 		return nil, err
@@ -356,7 +330,7 @@ func loadConfig(o *options) (*config.Config, error) {
 		dst  *int
 	}{{"--max-agents", o.maxAgents, &cfg.Limits.MaxAgents}, {"--max-tasks", o.maxTasks, &cfg.Limits.MaxTasks}, {"--max-steps", o.maxSteps, &cfg.Limits.MaxSteps}} {
 		if l.v < 0 {
-			return nil, fmt.Errorf("%s %d invalide (entier positif)", l.flag, l.v)
+			return nil, i18n.E("cli.err.positive", l.flag, l.v)
 		}
 		if l.v > 0 {
 			*l.dst = l.v
@@ -365,11 +339,11 @@ func loadConfig(o *options) (*config.Config, error) {
 	o.lang = cfg.Language
 	if o.langFlag != "" {
 		if !config.ValidLanguage(o.langFlag) {
-			return nil, fmt.Errorf("--lang %q invalide (auto|fr|en)", o.langFlag)
+			return nil, i18n.E("cli.err.lang", o.langFlag)
 		}
 		o.lang = o.langFlag
 	}
-	i18n.Set(o.lang)
+	i18n.SetReport(o.lang)
 	return cfg, nil
 }
 
@@ -383,11 +357,11 @@ func loadBase(ctx context.Context, o *options) (*app, error) {
 		return nil, err
 	}
 	for _, w := range cat.Warnings {
-		fmt.Fprintln(os.Stderr, "avertissement:", w)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), w)
 	}
 	if o.confidential {
 		if o.sovereign != "" && o.sovereign != "require" {
-			return nil, fmt.Errorf("--confidential incompatible avec --sovereign %s", o.sovereign)
+			return nil, i18n.E("cli.err.confidential_sovereign", o.sovereign)
 		}
 		o.sovereign = "require"
 	}
@@ -419,11 +393,11 @@ func resolveWeb(cfg *config.Config, o *options, confidential bool) (bool, string
 	switch o.web {
 	case "", "yes", "no":
 	default:
-		return false, "", fmt.Errorf("--web: %q invalide (yes|no)", o.web)
+		return false, "", i18n.E("cli.err.web", o.web)
 	}
 	if confidential {
 		if o.web == "yes" {
-			return false, "", errors.New("--web yes refusé: session confidentielle")
+			return false, "", i18n.E("cli.err.web_confidential")
 		}
 		return false, i18n.T("web.confidential"), nil
 	}
@@ -433,7 +407,7 @@ func resolveWeb(cfg *config.Config, o *options, confidential bool) (bool, string
 			return false, "", nil
 		}
 		if o.web == "yes" {
-			return false, "", fmt.Errorf("--web yes refusé: serveur %s exclu par -x", cfg.WebSearch.MCP)
+			return false, "", i18n.E("cli.err.web_excluded", cfg.WebSearch.MCP)
 		}
 		return false, i18n.T("web.exclude"), nil
 	}
@@ -600,9 +574,9 @@ func checkToolGroups(cfg *config.Config, lists ...[]string) error {
 				continue
 			}
 			if slices.Contains(groups, "mcp_"+toolGroup(t)) {
-				return fmt.Errorf("-t/-x %s: aucun groupe d'outils de ce nom (serveur MCP: mcp_%s)", t, toolGroup(t))
+				return i18n.E("cli.err.group_mcp", t, toolGroup(t))
 			}
-			return fmt.Errorf("-t/-x %s: aucun groupe d'outils de ce nom (fs, mcp, mcp_<serveur>, <instance>, <client>)", t)
+			return i18n.E("cli.err.group", t)
 		}
 	}
 	return nil
@@ -620,19 +594,19 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	statuses := budget.FetchAll(ctx, &http.Client{Timeout: 15 * time.Second}, cfg)
 	for _, st := range statuses {
 		if st.Error != "" {
-			fmt.Fprintf(os.Stderr, "avertissement: budget %s non vérifié: %s\n", st.Provider, st.Error)
+			fmt.Fprint(os.Stderr, i18n.T("cli.warn.budget_unchecked", st.Provider, st.Error))
 		}
 	}
 	for _, w := range rt.budget.Seed(statuses) {
-		fmt.Fprintln(os.Stderr, "avertissement: budget:", w)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.budget"), w)
 	}
 	rt.registry = tools.NewRegistry(cfg.Limits.ToolOutputMaxChars)
 	filter := toolFilter{only: expandClients(cfg, o.tools), exclude: expandClients(cfg, o.exclude)}
 	if err := checkToolGroups(cfg, filter.only, filter.exclude); err != nil {
 		return nil, err
 	}
-	warn := func(format string, args ...any) {
-		fmt.Fprintf(os.Stderr, "avertissement: "+format+"\n", args...)
+	warn := func(msg string) {
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), msg)
 	}
 	if withAudit {
 		dir, runID := cfg.Audit.Dir, time.Now().Format("20060102-150405")
@@ -641,7 +615,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		}
 		a, err := audit.Open(dir, runID)
 		if err != nil {
-			warn("audit désactivé: %v", err)
+			warn(i18n.T("cli.warn.audit_off", err))
 		} else {
 			rt.audit = a
 			rt.closers = append(rt.closers, func() { _ = a.Close() })
@@ -652,10 +626,10 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	if cfg.Files != nil && filter.enabled("fs") {
 		f, warnings, err := files.New(cfg.Files)
 		for _, w := range warnings {
-			warn("%s", w)
+			warn(w)
 		}
 		if err != nil {
-			warn("%v (outils fs désactivés)", err)
+			warn(i18n.T("cli.warn.fs_off", err))
 		} else {
 			rt.registry.Add(f.Tools()...)
 			envLines = append(envLines, "- Fichiers locaux: "+strings.Join(cfg.Files.Roots, ", "))
@@ -676,7 +650,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	if len(mcpCfgs) > 0 {
 		servers, warnings := mcp.ConnectAll(ctx, mcpCfgs, version)
 		for _, w := range warnings {
-			warn("%s", w)
+			warn(w)
 		}
 		rt.mcpServers = servers
 		for _, s := range servers {
@@ -689,7 +663,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		prov, model, _ := strings.Cut(ref, "/")
 		p, _ := cfg.Provider(prov)
 		if t, err := websearch.New(p, model, cfg.WebSearch.API, cfg.Limits.RequestTimeout.Duration); err != nil {
-			warn("%v (recherche web désactivée)", err)
+			warn(i18n.T("cli.warn.web_off", err))
 		} else {
 			rt.registry.Add(t)
 			rt.webTools = append(rt.webTools, t.Name())
@@ -703,7 +677,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	}
 	if rt.registry.Len() == 0 {
 		rt.close()
-		return nil, errors.New("aucun outil disponible: configurer files, mcp ou une instance de template")
+		return nil, i18n.E("cli.err.no_tools")
 	}
 	rt.evidence = o.evidence
 	rt.memory = memory.NewStore()
@@ -730,7 +704,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	return rt, nil
 }
 
-func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter, warn func(string, ...any)) {
+func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter, warn func(string)) {
 	cfg := rt.cfg
 	var active, filtered []config.Instance
 	for _, in := range cfg.Instances {
@@ -746,11 +720,11 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 	}
 	set, err := template.Load(cfg.Templates.Dir)
 	if err != nil {
-		warn("templates: %v (instances désactivées)", err)
+		warn(i18n.T("cli.warn.templates_off", err))
 		return
 	}
 	for _, w := range set.Warnings {
-		warn("%s", w)
+		warn(w)
 	}
 	rt.instanceEnv = map[string][]string{}
 	for _, ic := range filtered {
@@ -771,13 +745,13 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 	for _, ic := range active {
 		t, ok := set.Get(ic.Template)
 		if !ok {
-			warn("instance %s: template %q introuvable (instance désactivée)", ic.Name, ic.Template)
+			warn(i18n.T("cli.warn.template_missing", ic.Name, ic.Template))
 			continue
 		}
 		in, err := newInstance(cfg, ic, t)
 		if err == nil {
 			in.Audit = rt.audit.Log
-			in.Warn = func(msg string) { warn("%s", msg) }
+			in.Warn = warn
 			if !o.quiet {
 				name, tname := ic.Name, t.Name
 				in.Activating = func() { fmt.Fprintln(os.Stderr, i18n.T("instance.discovering", name, tname)) }
@@ -785,7 +759,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 			err = in.Defer(ctx, cfg.Templates.CacheDir, cfg.Templates.CacheTTL.Duration, o.refresh)
 		}
 		if err != nil {
-			warn("%v (instance %s désactivée)", err, ic.Name)
+			warn(i18n.T("cli.warn.instance_off", err, ic.Name))
 			continue
 		}
 		rt.instances = append(rt.instances, in)
@@ -917,7 +891,7 @@ func cmdModels(ctx context.Context, o *options, w io.Writer) error {
 	for name := range rt.cfg.Roles {
 		cands, err := rt.router.Candidates(name)
 		if err != nil {
-			roles[name] = []string{"ERREUR: " + err.Error()}
+			roles[name] = []string{i18n.T("cli.models.error") + err.Error()}
 			continue
 		}
 		for _, c := range cands {
@@ -1028,19 +1002,19 @@ func cmdTemplatesTest(ctx context.Context, o *options, dir, name string, w io.Wr
 		return err
 	}
 	for _, wn := range set.Warnings {
-		fmt.Fprintln(os.Stderr, "avertissement:", wn)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), wn)
 	}
 	t, ok := set.Get(name)
 	if !ok {
-		return fmt.Errorf("template %q introuvable dans %s", name, dir)
+		return i18n.E("cli.err.template_not_in", name, dir)
 	}
 	passed, failed, err := template.RunTests(ctx, t, w)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "%d réussis, %d en échec\n", passed, failed)
+	fmt.Fprint(w, i18n.T("cli.templates_test.summary", passed, failed))
 	if failed > 0 {
-		return fmt.Errorf("%d test(s) en échec", failed)
+		return i18n.E("cli.err.tests_failed", failed)
 	}
 	return nil
 }
@@ -1055,12 +1029,12 @@ func cmdTemplates(o *options, args []string, w io.Writer) error {
 		return err
 	}
 	for _, wn := range set.Warnings {
-		fmt.Fprintln(os.Stderr, "avertissement:", wn)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), wn)
 	}
 	if len(args) == 1 {
 		t, ok := set.Get(args[0])
 		if !ok {
-			return fmt.Errorf("template %q introuvable", args[0])
+			return i18n.E("cli.err.template_missing", args[0])
 		}
 		if _, err := w.Write(t.Raw); err != nil {
 			return err
@@ -1191,7 +1165,7 @@ func openRun(ctx context.Context, o *options) (*session.Session, *app, error) {
 	rt.closers = append(rt.closers, func() { _ = rt.audit.Close() })
 	prior, err := sess.LoadMemory()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "avertissement: mémoire de session illisible:", err)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.memory"), err)
 	}
 	rt.memory.Load(prior)
 	return sess, rt, nil
@@ -1218,7 +1192,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	sess.Turns[n-1].Exclude = o.exclude
 	rt.evidence.Begin(filepath.Join(turnDir, "evidence"), n)
 	if err := rt.audit.Reopen(turnDir, "audit"); err != nil {
-		fmt.Fprintln(os.Stderr, "avertissement: audit désactivé:", err)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.audit"), err)
 	}
 	rt.budget.NewRun()
 	fmt.Fprintln(os.Stderr, i18n.T("session.start", sess.Name, n, filepath.Join(turnDir, "audit.jsonl")))
@@ -1279,7 +1253,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	mst := rt.memory.Stats()
 	res.info = append(res.info, i18n.T("memory.line", i18n.N(mst.Entries, "entry"), mst.Sovereign, mst.ExposedToForeign))
 	if err := rt.evidence.Save(); err != nil {
-		fmt.Fprintln(os.Stderr, "avertissement: preuves:", err)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.evidence"), err)
 	}
 	if k := rt.evidence.Len(); k > 0 {
 		res.info = append(res.info, i18n.T("evidence.line", k, filepath.Join(turnDir, "evidence"), sess.Name))
@@ -1290,7 +1264,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 
 func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if o.incident && (o.chat || o.direct != "") {
-		return errors.New("--incident: incompatible avec --chat et --direct (le mode incident repose sur le tri et le plan)")
+		return i18n.E("cli.err.incident_modes")
 	}
 	if o.chat {
 		return cmdChat(ctx, o, args)
@@ -1345,7 +1319,7 @@ func (o *options) fullReport(md, sessDir string) string {
 			return evidence.WithContent(body, sessDir, full[i], missing[i])
 		}
 	}
-	return evidence.WithContent(md, sessDir, i18n.T("evidence.full"), i18n.T("evidence.missing"))
+	return evidence.WithContent(md, sessDir, i18n.R("evidence.full"), i18n.R("evidence.missing"))
 }
 
 func writeReport(w io.Writer, path string, out []byte, runErr error) error {
@@ -1356,7 +1330,7 @@ func writeReport(w io.Writer, path string, out []byte, runErr error) error {
 	if err := os.WriteFile(path, out, 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "rapport:", path)
+	fmt.Fprintln(os.Stderr, i18n.T("cli.report"), path)
 	return runErr
 }
 
@@ -1379,10 +1353,10 @@ func writeMarkdown(w io.Writer, md string, raw bool) {
 
 func cmdChat(ctx context.Context, o *options, args []string) error {
 	if o.json || o.output != "" || o.withEvidence {
-		return errors.New("--chat incompatible avec --json, --output et --with-evidence")
+		return i18n.E("cli.err.chat_flags")
 	}
 	if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stderr.Fd()) {
-		return errors.New("--chat requiert un terminal interactif")
+		return i18n.E("cli.err.chat_tty")
 	}
 	initial := strings.TrimSpace(strings.Join(args, " "))
 	sess, rt, err := openRun(ctx, o)
@@ -1424,7 +1398,7 @@ func (rt *app) budgetRefresher(events progress.Sink) func(context.Context) {
 		}
 		defer busy.Store(false)
 		for _, ex := range rt.budget.Refresh(budget.FetchAll(ctx, hc, rt.cfg, used...)) {
-			events.Emit(progress.Event{Task: "budget", Kind: "budget", Model: ex.Provider, Detail: "provider dropped for the rest of the run: " + ex.Reason})
+			events.Emit(progress.Event{Task: "budget", Kind: "budget", Model: ex.Provider, Detail: i18n.T("budget.dropped", ex.Reason)})
 			rt.audit.Log("budget_exhausted", map[string]any{"provider": ex.Provider, "reason": ex.Reason})
 		}
 	}
@@ -1445,12 +1419,12 @@ func openSession(cfg *config.Config, o *options) (*session.Session, error) {
 	}
 	if o.langFlag == "" && sess.Language != "" {
 		o.lang = sess.Language
-		i18n.Set(o.lang)
+		i18n.SetReport(o.lang)
 	}
 	sess.Language = o.lang
 	if sess.Confidential {
 		if o.sovereign != "" && o.sovereign != "require" {
-			return nil, fmt.Errorf("session %s confidentielle: --sovereign %s refusé", sess.Name, o.sovereign)
+			return nil, i18n.E("cli.err.session_confidential", sess.Name, o.sovereign)
 		}
 		o.sovereign = "require"
 	} else if confidential {
@@ -1476,7 +1450,7 @@ func (rt *app) saveTurn(sess *session.Session, n int, dir string, report *orches
 	}
 	warn := func(err error) {
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "avertissement: session:", err)
+			fmt.Fprintln(os.Stderr, i18n.T("cli.warn.session"), err)
 		}
 	}
 	if report != nil {
@@ -1541,19 +1515,19 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 		n = len(sess.Turns)
 	}
 	if n < 1 || n > len(sess.Turns) {
-		return fmt.Errorf("tour %d inexistant", n)
+		return i18n.E("cli.err.no_turn", n)
 	}
 	dir := sess.TurnDir(n)
 	data, err := os.ReadFile(filepath.Join(dir, "results.json"))
 	if err != nil {
-		return fmt.Errorf("tour %d sans résultats enregistrés: %w", n, err)
+		return i18n.E("cli.err.turn_results", n, err)
 	}
 	var results []orchestrator.Result
 	if err := json.Unmarshal(data, &results); err != nil {
 		return fmt.Errorf("results.json: %w", err)
 	}
 	if o.evidence, err = evidence.Reopen(filepath.Join(dir, "evidence"), n); err != nil {
-		fmt.Fprintln(os.Stderr, "avertissement: preuves:", err)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.evidence"), err)
 		o.evidence = evidence.Open(filepath.Join(dir, "evidence"), n)
 	}
 	importPriorEvidence(sess, o.evidence, n)
@@ -1578,7 +1552,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	defer rt.close()
 	prior, err := sess.LoadMemory()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "avertissement: mémoire de session illisible:", err)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.memory"), err)
 	}
 	rt.memory.Load(prior)
 	events := newProgress(o, rt.cfg.Limits.MaxSteps, sess.Name)
@@ -1618,7 +1592,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 		if err := os.WriteFile(o.output, []byte(md+"\n"), 0o644); err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, "rapport:", o.output)
+		fmt.Fprintln(os.Stderr, i18n.T("cli.report"), o.output)
 		return nil
 	}
 	_, err = fmt.Fprintln(w, md)
@@ -1632,7 +1606,7 @@ func importPriorEvidence(sess *session.Session, store *evidence.Store, turn int)
 			continue
 		}
 		if err := store.Import(dir); err != nil {
-			fmt.Fprintf(os.Stderr, "avertissement: preuves du tour %d: %v\n", n, err)
+			fmt.Fprint(os.Stderr, i18n.T("cli.warn.turn_evidence", n, err))
 		}
 	}
 }
@@ -1698,7 +1672,7 @@ func cmdSession(o *options, name string, w io.Writer) error {
 		fmt.Fprintf(os.Stderr, "%s\n    %s\n", i18n.T("session.turn", t.N, t.Time.Local().Format("2006-01-02 15:04"), t.Status, models), strings.Join(strings.Fields(t.Request), " "))
 	}
 	if o.turn > len(s.Turns) || o.turn < 0 {
-		return fmt.Errorf("tour %d inexistant", o.turn)
+		return i18n.E("cli.err.no_turn", o.turn)
 	}
 	report, err := s.Report(o.turn)
 	if err != nil {
@@ -1789,7 +1763,7 @@ func showEvidence(sessDir, id string, w io.Writer) error {
 	path := evidence.Path(sessDir, id)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("preuve %s introuvable (%s)", id, path)
+		return i18n.E("cli.err.evidence_missing", id, path)
 	}
 	_, err = w.Write(data)
 	return err
