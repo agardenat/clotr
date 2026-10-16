@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-16
+
 ### Ajouté
 - Langue de l'interface choisie indépendamment de celle des réponses : `ui_language` (config) ou `--ui-lang`, `en` (défaut) ou `fr`. Toute l'interface passe par le catalogue `internal/i18n` : aide des commandes (y compris `help`, `completion` et les titres de l'aide), erreurs et avertissements (config, routage, LLM, Vault, SSH, moteur de templates, `templates test`), tableaux et bilan. Auparavant l'aide et les erreurs restaient en français alors que le tableau et le bilan suivaient `--lang`, d'où un affichage mélangé.
 
