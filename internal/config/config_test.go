@@ -47,18 +47,21 @@ func TestDefaults(t *testing.T) {
 func TestValidationErrors(t *testing.T) {
 	cases := map[string]string{
 		"providers: []\n": "at least one provider",
-		"providers:\n  - name: a\n    base_url: nope\n":                                               "invalid URL",
-		"providers:\n  - name: a\n    base_url: http://x\nroles:\n  planner: {tier: huge}\n":          "tier",
-		"providers:\n  - name: a\n    base_url: http://x\nunknown: 1\n":                               "unknown",
-		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - name: m\n":                        "command or url",
-		"providers:\n  - name: a\n    base_url: http://x\nlimits:\n  agent_timeout: 5 minutes\n":      "invalid duration",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {policy: maybe}\n":              "web_search.policy",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {mcp: absent}\n":                "web_search.mcp",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: b/m, api: messages}\n":  "web_search.model",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/, api: messages}\n":   "web_search.model",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/m}\n":                 "web_search.api",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {api: responses}\n":             "web_search.api",
-		"providers:\n  - name: a\n    base_url: http://x\ninstances:\n  - {name: web, template: t}\n": "is reserved",
+		"providers:\n  - name: a\n    base_url: nope\n":                                                                                        "invalid URL",
+		"providers:\n  - name: a\n    base_url: http://x\nroles:\n  planner: {tier: huge}\n":                                                   "tier",
+		"providers:\n  - name: a\n    base_url: http://x\nunknown: 1\n":                                                                        "unknown",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - name: m\n":                                                                 "command or url",
+		"providers:\n  - name: a\n    base_url: http://x\nlimits:\n  agent_timeout: 5 minutes\n":                                               "invalid duration",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {policy: maybe}\n":                                                       "web_search.policy",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {mcp: absent}\n":                                                         "web_search.mcp",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: b/m, api: messages}\n":                                           "web_search.model",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/, api: messages}\n":                                            "web_search.model",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/m}\n":                                                          "web_search.api",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {api: responses}\n":                                                      "web_search.api",
+		"providers:\n  - name: a\n    base_url: http://x\ninstances:\n  - {name: web, template: t}\n":                                          "is reserved",
+		"providers:\n  - name: a\n    base_url: http://x\nreport_export: {mcp: absent}\n":                                                      "report_export.mcp",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m}\nweb_search: {mcp: m}\nreport_export: {mcp: m}\n": "already the web_search",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m}\nreport_export: {mcp: m, role: planner}\n":        "report_export.role",
 	}
 	for in, want := range cases {
 		_, err := Parse([]byte(in))
@@ -170,5 +173,19 @@ func TestVaultConf(t *testing.T) {
 	}
 	if _, err := Parse([]byte(base + "vault: {addr: vault.example.com}\n")); err == nil {
 		t.Error("vault.addr sans schéma accepté")
+	}
+}
+
+func TestExportRole(t *testing.T) {
+	c, err := Parse([]byte("providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: docs, url: http://d}\nreport_export: {mcp: docs}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.ExportRole(); got != "analyst" {
+		t.Fatalf("rôle par défaut: %q", got)
+	}
+	c.Export.Role = "collector"
+	if got := c.ExportRole(); got != "collector" {
+		t.Fatalf("rôle configuré: %q", got)
 	}
 }

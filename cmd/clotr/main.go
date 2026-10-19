@@ -22,7 +22,6 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
-	"github.com/agardenat/clotr/internal/agent"
 	"github.com/agardenat/clotr/internal/audit"
 	"github.com/agardenat/clotr/internal/budget"
 	"github.com/agardenat/clotr/internal/catalog"
@@ -82,6 +81,8 @@ type options struct {
 	withEvidence bool
 	raw          bool
 	incident     bool
+	exportFmt    string
+	exportPath   string
 }
 
 type app struct {
@@ -219,6 +220,7 @@ func newRoot() *cobra.Command {
 	run.Flags().BoolVar(&o.raw, "raw", false, i18n.T("cli.flag.raw"))
 	run.Flags().BoolVar(&o.withEvidence, "with-evidence", false, i18n.T("cli.flag.with_evidence"))
 	run.Flags().BoolVar(&o.incident, "incident", false, i18n.T("cli.flag.incident"))
+	run.Flags().StringVar(&o.exportFmt, "export", "", i18n.T("cli.flag.export"))
 
 	sessionsCmd := &cobra.Command{
 		Use:   "sessions",
@@ -236,7 +238,7 @@ func newRoot() *cobra.Command {
 			if o.synthesize {
 				return cmdResynthesize(cmd.Context(), o, args[0], cmd.OutOrStdout())
 			}
-			return cmdSession(o, args[0], cmd.OutOrStdout())
+			return cmdSession(cmd.Context(), o, args[0], cmd.OutOrStdout())
 		},
 	}
 	sessionCmd.Flags().IntVar(&o.turn, "turn", 0, i18n.T("cli.flag.turn"))
@@ -248,6 +250,9 @@ func newRoot() *cobra.Command {
 	sessionCmd.Flags().StringVar(&o.evidenceID, "evidence", "", i18n.T("cli.flag.evidence"))
 	sessionCmd.Flags().BoolVar(&o.raw, "raw", false, i18n.T("cli.flag.raw"))
 	sessionCmd.Flags().BoolVar(&o.withEvidence, "with-evidence", false, i18n.T("cli.flag.with_evidence"))
+	sessionCmd.Flags().StringVar(&o.exportFmt, "export", "", i18n.T("cli.flag.export"))
+	sessionCmd.Flags().BoolVarP(&o.quiet, "quiet", "q", false, i18n.T("cli.flag.quiet"))
+	sessionCmd.Flags().BoolVar(&o.plain, "plain", false, i18n.T("cli.flag.plain"))
 
 	toolsCmd := &cobra.Command{
 		Use:   "tools",
@@ -637,6 +642,9 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	}
 	var mcpCfgs []config.MCPServer
 	for _, m := range cfg.MCP {
+		if m.Name == cfg.Export.MCP {
+			continue
+		}
 		if m.Name == cfg.WebSearch.MCP {
 			if o.webAllowed && m.IsEnabled() && !matchGroup(o.exclude, "mcp_"+m.Name) {
 				mcpCfgs = append(mcpCfgs, m)
@@ -842,27 +850,8 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 }
 
 func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env string) *orchestrator.Orchestrator {
-	runner := &agent.Runner{
-		Chat:            rt.pool,
-		Tools:           reg,
-		Audit:           rt.audit,
-		Events:          events,
-		MaxSteps:        rt.cfg.Limits.MaxSteps,
-		ConcludeReserve: min(5*time.Minute, rt.cfg.Limits.RequestTimeout.Duration),
-		Evidence:        rt.evidence,
-		Attempts:        2,
-		Backoff:         2 * time.Second,
-		RoundPause:      30 * time.Second,
-		Persistent: func(provider string) bool {
-			p, ok := rt.cfg.Provider(provider)
-			return ok && p.PersistentRetry
-		},
-		StallSteps:    *rt.cfg.Limits.StallSteps,
-		KeepSteps:     *rt.cfg.Limits.HistoryKeepSteps,
-		ToolChars:     *rt.cfg.Limits.HistoryToolChars,
-		ConcludeNotes: rt.memory.TaskNotes,
-		Budget:        rt.budget,
-	}
+	runner := rt.newRunner(events, reg)
+	runner.Evidence = rt.evidence
 	if rt.leads != nil {
 		rt.leads.Events = events
 		runner.Inbox = rt.leads.Inbox
@@ -1269,6 +1258,9 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if o.chat {
 		return cmdChat(ctx, o, args)
 	}
+	if err := o.resolveExport(); err != nil {
+		return err
+	}
 	request, err := readRequest(args)
 	if err != nil {
 		return err
@@ -1278,6 +1270,9 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 		return err
 	}
 	defer rt.close()
+	if err := o.checkExport(rt.cfg, sess.Confidential); err != nil {
+		return err
+	}
 	events := newProgress(o, rt.cfg.Limits.MaxSteps, sess.Name)
 	defer events.Close()
 	res := rt.runTurn(ctx, o, sess, request, events, nil)
@@ -1297,15 +1292,26 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 			doc["leads"] = rt.leads.Leads()
 		}
 		out, _ := json.MarshalIndent(doc, "", "  ")
-		return writeReport(w, o.output, append(out, '\n'), runErr)
+		if err := writeReport(w, o.output, append(out, '\n'), nil); err != nil {
+			return err
+		}
+	} else if md != "" {
+		if o.output != "" {
+			if err := writeReport(w, o.output, []byte(md+"\n"), nil); err != nil {
+				return err
+			}
+		} else {
+			writeMarkdown(w, md, o.raw || o.withEvidence)
+		}
 	}
-	if md == "" {
-		return runErr
+	if o.exportFmt != "" && md != "" {
+		if err := rt.exportReport(ctx, o, res.dir, exportTitle(md, request), md); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.T("cli.error"), err)
+			if runErr == nil {
+				runErr = err
+			}
+		}
 	}
-	if o.output != "" {
-		return writeReport(w, o.output, []byte(md+"\n"), runErr)
-	}
-	writeMarkdown(w, md, o.raw || o.withEvidence)
 	return runErr
 }
 
@@ -1352,7 +1358,7 @@ func writeMarkdown(w io.Writer, md string, raw bool) {
 }
 
 func cmdChat(ctx context.Context, o *options, args []string) error {
-	if o.json || o.output != "" || o.withEvidence {
+	if o.json || o.output != "" || o.withEvidence || o.exportFmt != "" {
 		return i18n.E("cli.err.chat_flags")
 	}
 	if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stderr.Fd()) {
@@ -1502,12 +1508,18 @@ func cmdSessions(o *options, w io.Writer) error {
 }
 
 func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) error {
+	if err := o.resolveExport(); err != nil {
+		return err
+	}
 	cfg, err := loadConfig(o)
 	if err != nil {
 		return err
 	}
 	sess, err := session.Open(cfg.Sessions.Dir, name)
 	if err != nil {
+		return err
+	}
+	if err := o.checkExport(cfg, sess.Confidential); err != nil {
 		return err
 	}
 	n := o.turn
@@ -1593,10 +1605,13 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 			return err
 		}
 		fmt.Fprintln(os.Stderr, i18n.T("cli.report"), o.output)
+	} else if _, err := fmt.Fprintln(w, md); err != nil {
+		return err
+	}
+	if o.exportFmt == "" {
 		return nil
 	}
-	_, err = fmt.Fprintln(w, md)
-	return err
+	return rt.exportReport(ctx, o, dir, exportTitle(md, sess.Turns[n-1].Request), md)
 }
 
 func importPriorEvidence(sess *session.Session, store *evidence.Store, turn int) {
@@ -1643,7 +1658,10 @@ func toolFilterFromAudit(path string) []string {
 	return nil
 }
 
-func cmdSession(o *options, name string, w io.Writer) error {
+func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error {
+	if err := o.resolveExport(); err != nil {
+		return err
+	}
 	cfg, err := loadConfig(o)
 	if err != nil {
 		return err
@@ -1658,6 +1676,9 @@ func cmdSession(o *options, name string, w io.Writer) error {
 	}
 	if o.evidenceID != "" {
 		return showEvidence(s.Dir(), o.evidenceID, w)
+	}
+	if err := o.checkExport(cfg, s.Confidential); err != nil {
+		return err
 	}
 	conf := ""
 	if s.Confidential {
@@ -1684,11 +1705,29 @@ func cmdSession(o *options, name string, w io.Writer) error {
 	}
 	report = o.fullReport(report, s.Dir())
 	if o.output != "" {
-		return writeReport(w, o.output, []byte(report+"\n"), nil)
+		if err := writeReport(w, o.output, []byte(report+"\n"), nil); err != nil {
+			return err
+		}
+	} else if o.exportFmt == "" {
+		fmt.Fprintln(os.Stderr)
+		writeMarkdown(w, report, o.raw || o.withEvidence)
 	}
-	fmt.Fprintln(os.Stderr)
-	writeMarkdown(w, report, o.raw || o.withEvidence)
-	return nil
+	if o.exportFmt == "" {
+		return nil
+	}
+	n := o.turn
+	if n == 0 {
+		n = len(s.Turns)
+	}
+	if o.sovereign == "" {
+		o.sovereign = s.Sovereign
+	}
+	rt, err := exportApp(ctx, o, s.TurnDir(n))
+	if err != nil {
+		return err
+	}
+	defer rt.close()
+	return rt.exportReport(ctx, o, s.TurnDir(n), exportTitle(report, s.Turns[n-1].Request), report)
 }
 
 type usedModel struct {

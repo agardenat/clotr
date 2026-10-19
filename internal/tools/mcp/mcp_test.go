@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -82,5 +84,67 @@ func TestToolName(t *testing.T) {
 	}
 	if got := ToolName("srv", strings.Repeat("x", 100)); len(got) != 64 {
 		t.Errorf("longueur: %d", len(got))
+	}
+}
+
+func TestConnectWriter(t *testing.T) {
+	ctx := context.Background()
+	srv := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "1"}, nil)
+	srv.AddTool(&sdk.Tool{Name: "create_doc", InputSchema: objSchema}, handler("created", false))
+	srv.AddTool(&sdk.Tool{Name: "delete_doc", InputSchema: objSchema}, handler("deleted", false))
+	st, ct := sdk.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cfg := config.MCPServer{Name: "docs", Deny: []string{"delete_*"}, Timeout: config.Duration{Duration: 5 * time.Second}}
+	s, err := ConnectWriterTransport(ctx, cfg, ct, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if len(s.Tools()) != 1 || s.Tools()[0].Name() != "mcp_docs_create_doc" {
+		t.Fatalf("outils exposés: %v", s.Tools())
+	}
+}
+
+func TestFetch(t *testing.T) {
+	ctx := context.Background()
+	own := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/files/report.docx":
+			if r.Header.Get("Authorization") != "Bearer k" {
+				http.Error(w, "no auth", http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte("PKdata"))
+		case "/big":
+			_, _ = w.Write(make([]byte, 2048))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer own.Close()
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("requête vers un autre hôte en http: %s", r.URL)
+	}))
+	defer other.Close()
+	s := &Server{cfg: config.MCPServer{Name: "docs", URL: own.URL + "/mcp", Headers: map[string]string{"Authorization": "Bearer k"}}}
+	data, err := s.Fetch(ctx, own.URL+"/files/report.docx?sig=1", 1024)
+	if err != nil || string(data) != "PKdata" {
+		t.Fatalf("même origine: %q %v", data, err)
+	}
+	if _, err := s.Fetch(ctx, own.URL+"/absent", 1024); err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("404: %v", err)
+	}
+	if _, err := s.Fetch(ctx, own.URL+"/big", 1024); err == nil {
+		t.Fatal("taille maximale ignorée")
+	}
+	if _, err := s.Fetch(ctx, other.URL+"/x.docx", 1024); err == nil {
+		t.Fatal("http vers un autre hôte accepté")
+	}
+	if _, err := s.Fetch(ctx, "file:///etc/passwd", 1024); err == nil {
+		t.Fatal("file:// accepté")
 	}
 }
