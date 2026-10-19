@@ -123,6 +123,20 @@ Les agents doivent rester factuels : chaque affirmation repose sur une preuve `[
 - Les outils web sont ajoutés à chaque tâche outillée. Les consignes demandent de privilégier la documentation officielle de l'éditeur, et de ne jamais mettre d'identifiant interne (hôte, IP, cluster, compte, domaine) dans les requêtes.
 - Chaque page lue est archivée comme preuve, comme toute sortie d'outil.
 
+## Export du rapport en document
+
+`--export docx|pdf` (`run`, `session`, `session --synthesize`) produit aussi le rapport en document Word ou PDF par le serveur MCP désigné par `report_export.mcp`. `-o rapport.docx` ou `-o rapport.pdf` vaut `--export` avec ce fichier pour destination ; sinon le document est écrit dans le tour de la session (`turns/NNN/report.docx`). Le rapport d'une session existante s'exporte sans relancer d'analyse :
+
+```sh
+clotr session last -o rapport.pdf
+```
+
+- Un agent dédié (rôle `report_export.role`, par défaut le rôle de travail outillé du tier le plus élevé) reçoit le rapport Markdown et ne voit que les outils de ce serveur. Il recopie le texte sans résumé ni reformulation, avec la mise en forme du serveur.
+- Le serveur n'est pas soumis au filtre de lecture seule (`readOnlyHint` / `allow`) : créer un document est une écriture. Seul `deny` s'applique. Il est réservé à l'export et n'est jamais proposé aux agents d'analyse, même avec `-t` ou `enabled: true`.
+- clotr récupère le fichier à partir des URL renvoyées par les outils (https, ou l'adresse du serveur lui-même, la seule à recevoir ses `headers`), puis compare son texte au rapport : passages absents ou modifiés, passages hors de leur place, titres rendus comme texte ordinaire (`.docx`), syntaxe Markdown restée littérale. En cas d'écart, la liste revient à l'agent, qui corrige ; après deux corrections, le document est conservé avec les écarts affichés. Le rapport Markdown fait foi.
+- Le texte d'un PDF n'est lisible que s'il utilise des polices simples (WinAnsi) ; sinon le contrôle est impossible et un avertissement le signale.
+- Le rapport est transmis au serveur, qui peut stocker le document chez un tiers : l'export est refusé en session confidentielle, et `-x mcp_<serveur>` l'interdit.
+
 ## Passage souverain → non souverain
 
 Tout ce qu'un agent envoie à un modèle non souverain passe par un point unique de l'agent, l'interface `agent.Boundary`, qui couvre :
@@ -376,6 +390,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `vault` | `addr`, `namespace` : adresse et namespace Vault utilisés quand `VAULT_ADDR` / `VAULT_NAMESPACE` ne sont pas définis, voir Secrets Vault |
 | `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
 | `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
+| `report_export` | `mcp` (nom d'un serveur de `mcp`, différent de `web_search.mcp`) et `role` (rôle de travail outillé ; défaut : celui du tier le plus élevé). Voir Export du rapport en document. |
 | `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true ; false : connecté seulement par `-t mcp_<serveur>`). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. |
 
 Une section absente désactive les outils correspondants. Un outil dont l'initialisation échoue est désactivé, avec un avertissement.
@@ -474,6 +489,7 @@ clotr run --chat --direct
 | `--chat` (`run`) | mode conversation, voir Conversation |
 | `--raw` (`run`, `session`) | rapport en Markdown brut, sans mise en forme pour le terminal |
 | `--with-evidence` (`run`, `session`) | annexe la sortie complète de chaque preuve citée, voir Preuves |
+| `--export docx\|pdf` (`run`, `session`) | produit aussi le rapport en document via `report_export.mcp`, voir Export du rapport en document |
 | `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |
 | `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
 

@@ -67,7 +67,32 @@ type Config struct {
 	Language  string          `yaml:"language"`
 	UILang    string          `yaml:"ui_language"`
 	WebSearch WebSearch       `yaml:"web_search"`
+	Export    ReportExport    `yaml:"report_export"`
 	Vault     VaultConf       `yaml:"vault"`
+}
+
+type ReportExport struct {
+	MCP  string `yaml:"mcp"`
+	Role string `yaml:"role"`
+}
+
+var ExportFormats = []string{"docx", "pdf"}
+
+func (c *Config) ExportRole() string {
+	if c.Export.Role != "" {
+		return c.Export.Role
+	}
+	best := ""
+	for _, name := range c.WorkerRoles() {
+		r := c.Roles[name]
+		if !r.Tools {
+			continue
+		}
+		if b := c.Roles[best]; best == "" || TierRank(r.Tier) > TierRank(b.Tier) || (TierRank(r.Tier) == TierRank(b.Tier) && r.MinContext > b.MinContext) {
+			best = name
+		}
+	}
+	return best
 }
 
 type VaultConf struct {
@@ -612,6 +637,15 @@ func (c *Config) validate() error {
 		}
 	} else if c.WebSearch.API != "" {
 		fail(i18n.T("config.web_api_model"))
+	}
+	if c.Export.MCP != "" && !mcpNames[c.Export.MCP] {
+		fail(i18n.T("config.export_mcp", c.Export.MCP))
+	}
+	if c.Export.MCP != "" && c.Export.MCP == c.WebSearch.MCP {
+		fail(i18n.T("config.export_web", c.Export.MCP))
+	}
+	if r := c.Export.Role; r != "" && (!slices.Contains(c.WorkerRoles(), r) || !c.Roles[r].Tools) {
+		fail(i18n.T("config.export_role", r))
 	}
 	instNames := map[string]bool{}
 	for i, in := range c.Instances {

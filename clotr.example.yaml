@@ -45,6 +45,10 @@ web_search:
   # model: opencode-go/claude-haiku-5-5
   # api: messages
 
+report_export:
+  mcp: ""
+  # role: analyst
+
 routing:
   sovereign: prefer
 

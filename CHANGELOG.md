@@ -4,6 +4,10 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- `--export docx|pdf` (`run`, `session`, `session --synthesize`) : le rapport est aussi produit en document Word ou PDF par le serveur MCP désigné dans `report_export.mcp`. `-o fichier.docx` ou `-o fichier.pdf` l'implique ; sans `-o`, le document est écrit dans le tour de la session. Un agent dédié (`report_export.role`) ne voit que les outils de ce serveur, réservé à l'export et soustrait au filtre de lecture seule (seul `deny` s'applique). clotr récupère le fichier depuis les URL renvoyées par les outils et compare son texte au rapport (passages absents, déplacés, titres aplatis, syntaxe Markdown littérale) ; les écarts sont renvoyés à l'agent pour correction, puis affichés s'il en reste. Refusé en session confidentielle.
+- `session` accepte `-q/--quiet` et `--plain`, pour la progression de l'export et de `--synthesize`.
+
 ## [0.24.0] - 2026-10-16
 
 ### Ajouté

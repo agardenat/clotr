@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -92,6 +94,18 @@ func Connect(ctx context.Context, cfg config.MCPServer, version string) (*Server
 }
 
 func ConnectTransport(ctx context.Context, cfg config.MCPServer, t sdk.Transport, version string) (*Server, error) {
+	return connect(ctx, cfg, t, version, false)
+}
+
+func ConnectWriter(ctx context.Context, cfg config.MCPServer, version string) (*Server, error) {
+	return connect(ctx, cfg, transport(cfg), version, true)
+}
+
+func ConnectWriterTransport(ctx context.Context, cfg config.MCPServer, t sdk.Transport, version string) (*Server, error) {
+	return connect(ctx, cfg, t, version, true)
+}
+
+func connect(ctx context.Context, cfg config.MCPServer, t sdk.Transport, version string, writer bool) (*Server, error) {
 	client := sdk.NewClient(&sdk.Implementation{Name: "clotr", Version: version}, nil)
 	cctx, cancel := context.WithTimeout(ctx, cfg.Timeout.Duration)
 	defer cancel()
@@ -109,7 +123,7 @@ func ConnectTransport(ctx context.Context, cfg config.MCPServer, t sdk.Transport
 			return nil, fmt.Errorf("mcp %s: tools/list: %w", cfg.Name, err)
 		}
 		readOnly := t.Annotations != nil && t.Annotations.ReadOnlyHint
-		if matchAny(deny, t.Name) || (!readOnly && !matchAny(allow, t.Name)) {
+		if matchAny(deny, t.Name) || (!writer && !readOnly && !matchAny(allow, t.Name)) {
 			s.skipped = append(s.skipped, t.Name)
 			continue
 		}
@@ -206,6 +220,56 @@ func (t *tool) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	return b.String(), nil
 }
 
+func (s *Server) Fetch(ctx context.Context, raw string, maxBytes int64) ([]byte, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return nil, i18n.E("mcp.fetch_url", s.cfg.Name, truncate(raw, 60))
+	}
+	own := false
+	if base, err := url.Parse(os.ExpandEnv(s.cfg.URL)); err == nil && s.cfg.URL != "" {
+		own = base.Scheme == u.Scheme && base.Host == u.Host
+	}
+	if u.Scheme != "https" && !own {
+		return nil, i18n.E("mcp.fetch_url", s.cfg.Name, u.Redacted())
+	}
+	cctx, cancel := context.WithTimeout(ctx, max(s.cfg.Timeout.Duration, time.Minute))
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", httpx.UserAgent)
+	if own {
+		for k, v := range s.cfg.Headers {
+			req.Header.Set(k, os.ExpandEnv(v))
+		}
+	}
+	client := &http.Client{CheckRedirect: func(r *http.Request, _ []*http.Request) error {
+		if r.URL.Host != u.Host {
+			for k := range s.cfg.Headers {
+				r.Header.Del(k)
+			}
+		}
+		return nil
+	}}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, i18n.E("mcp.fetch", s.cfg.Name, u.Host, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, i18n.E("mcp.fetch_status", s.cfg.Name, u.Host, resp.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, i18n.E("mcp.fetch", s.cfg.Name, u.Host, err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, i18n.E("mcp.fetch_size", s.cfg.Name, maxBytes>>20)
+	}
+	return data, nil
+}
+
 func ConnectAll(ctx context.Context, cfgs []config.MCPServer, version string) ([]*Server, []string) {
 	servers := make([]*Server, len(cfgs))
 	errs := make([]error, len(cfgs))
@@ -236,4 +300,11 @@ func ConnectAll(ctx context.Context, cfgs []config.MCPServer, version string) ([
 		ok = append(ok, s)
 	}
 	return ok, warnings
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
