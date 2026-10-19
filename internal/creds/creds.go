@@ -46,11 +46,15 @@ var OpenTTY = openConsole
 var Suspend func() (resume func())
 
 func Resolve(ctx context.Context, userEnv, passEnv, passVault, label string) (Pair, error) {
-	return resolve(ctx, "", userEnv, passEnv, passVault, label)
+	return resolve(ctx, "", userEnv, passEnv, passVault, label, false)
 }
 
 func ResolveUser(ctx context.Context, user, passEnv, passVault, label string) (Pair, error) {
-	return resolve(ctx, user, "", passEnv, passVault, label)
+	return resolve(ctx, user, "", passEnv, passVault, label, false)
+}
+
+func ResolveSecret(ctx context.Context, passEnv, passVault, label string) (Pair, error) {
+	return resolve(ctx, "", "", passEnv, passVault, label, true)
 }
 
 func Forget(label, user string) {
@@ -67,7 +71,7 @@ func userKey(label, user string) string {
 	return label + "\x00" + user
 }
 
-func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label string) (Pair, error) {
+func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label string, secretOnly bool) (Pair, error) {
 	p := Pair{User: user}
 	if p.User == "" && userEnv != "" {
 		p.User = os.Getenv(userEnv)
@@ -75,7 +79,7 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 	if passEnv != "" {
 		p.Pass = os.Getenv(passEnv)
 	}
-	if p.User != "" && p.Pass != "" {
+	if p.Pass != "" && (secretOnly || p.User != "") {
 		return p, nil
 	}
 	key := label
@@ -96,6 +100,10 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		if err := ctx.Err(); err != nil {
 			return Pair{}, err
 		}
+		if vaultErr == nil && secretOnly {
+			cache[key] = p
+			return p, nil
+		}
 		if vaultErr == nil && p.User == "" {
 			path, _, _ := strings.Cut(passVault, "#")
 			if u, err := ReadVault(ctx, path+"#username"); err == nil {
@@ -109,6 +117,9 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		}
 	}
 	missing := i18n.T("creds.missing", label, orNone(userEnv), orNone(passEnv))
+	if secretOnly {
+		missing = i18n.T("creds.missing_secret", label, orNone(passEnv))
+	}
 	if vaultErr != nil {
 		missing += i18n.T("creds.vault", passVault, vaultErr)
 	}
@@ -126,7 +137,7 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 	if vaultErr != nil {
 		fmt.Fprint(tty.Out, i18n.T("prompt.vault_failed", label, passVault, vaultErr))
 	}
-	if p.User == "" {
+	if p.User == "" && !secretOnly {
 		fmt.Fprint(tty.Out, i18n.T("prompt.user", label))
 		line, err := readInterruptible(ctx, tty, func() (string, error) {
 			return bufio.NewReader(tty.In).ReadString('\n')
@@ -137,7 +148,11 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		p.User = strings.TrimSpace(line)
 	}
 	if p.Pass == "" {
-		fmt.Fprint(tty.Out, i18n.T("prompt.password", label, p.User))
+		if secretOnly {
+			fmt.Fprint(tty.Out, i18n.T("prompt.secret", label))
+		} else {
+			fmt.Fprint(tty.Out, i18n.T("prompt.password", label, p.User))
+		}
 		pass, err := readInterruptible(ctx, tty, func() (string, error) {
 			b, err := term.ReadPassword(tty.In.Fd())
 			return string(b), err
@@ -148,11 +163,13 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		}
 		p.Pass = pass
 	}
-	if p.User == "" || p.Pass == "" {
+	if p.Pass == "" || p.User == "" && !secretOnly {
 		return Pair{}, i18n.E("creds.empty", label)
 	}
 	cache[key] = p
-	cache[userKey(label, p.User)] = p
+	if !secretOnly {
+		cache[userKey(label, p.User)] = p
+	}
 	return p, nil
 }
 

@@ -36,6 +36,7 @@ var runtimeMsgs = map[string]msg{
 	"vault.empty_ref":       {"empty reference", "référence vide"},
 	"vault.field":           {"%s: field %q is empty or not text", "%s : champ %q vide ou non textuel"},
 	"creds.missing":         {"%s: credentials missing (variables %s / %s) and no terminal to type them", "%s : identifiants absents (variables %s / %s) et aucun terminal pour les saisir"},
+	"creds.missing_secret":  {"%s: token missing (variable %s) and no terminal to type it", "%s : jeton absent (variable %s) et aucun terminal pour le saisir"},
 	"creds.notty":           {"no terminal", "aucun terminal"},
 	"session.none":          {"no session", "aucune session"},
 	"session.invalid_name":  {"invalid session name %q", "nom de session invalide %q"},

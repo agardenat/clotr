@@ -157,12 +157,12 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
 
 - `keywords` : termes qui, présents dans une demande, font proposer l'instance aux agents (en plus du nom de l'instance, du template et des cibles), voir Activation d'une instance ;
 - `params` : paramètres de l'instance, typés (`string`, `url`, `int`, `bool`, `env`, `path`, `enum`, `list` avec `item`), avec `required` et `default`. Un paramètre inconnu est rejeté ;
-- `connectors` : connexions nommées, dont les options sont rendues avec les paramètres (`{{.proxy_url}}`) :
-  - `http` : `base_url`, `methods` (défaut `[GET]`), `allow` (expressions régulières sur le chemin), `headers`, `auth` (`user_env`, `password_env`, `password_vault`, `label` : authentification basic, saisie sur le terminal si les variables sont vides, voir Secrets Vault), `deny` (expressions régulières de chemins refusés, voir Garde-fous), `proxy`, `proxy_port`, `verify_tls`, `ca_file`, `timeout` (défaut 60s), `max_bytes` (défaut 32 Mio) ;
+- `connectors` : connexions nommées, dont les options sont rendues avec les paramètres (`{{.proxy_url}}`). `when` : condition rendue avec les paramètres, comme pour `tools` ; un connecteur dont la condition est fausse n'est pas créé et ses identifiants ne sont jamais demandés :
+  - `http` : `base_url`, `methods` (défaut `[GET]`), `allow` (expressions régulières sur le chemin), `headers`, `auth` (`user_env`, `password_env`, `password_vault`, `label` : authentification basic, saisie sur le terminal si les variables sont vides, voir Secrets Vault ; avec `header`, le secret seul est envoyé dans cet en-tête, précédé de `scheme` s'il est donné, ex. `header: Authorization` et `scheme: Bearer`, sans utilisateur), `deny` (expressions régulières de chemins refusés, voir Garde-fous), `proxy`, `proxy_port`, `verify_tls`, `ca_file`, `timeout` (défaut 60s), `max_bytes` (défaut 32 Mio) ;
   - `ssh` (un seul par template) : `user`, `key`, `key_vault` (clé privée lue dans un secret Vault, `chemin[#champ]`, champ par défaut `private_key`), `auth` (`user_env`, `password_env`, `password_vault`, `label` : mot de passe saisi sur le terminal seulement s'il est nécessaire, voir Outils SSH), `port`, `proxy`, `proxy_port`, `host_key`, `sudo`, `max_conns`, `known_hosts` ;
 - `targets` : cibles statiques. `foreach: <paramètre list>` crée une cible par élément ; un champ vide de l'élément hérite du paramètre de même nom. Les attributs `ssh_user`, `ssh_key_path`, `ssh_key_vault` et `ssh_port` d'une cible remplacent ceux du connecteur ssh ;
 - `script` : fichier Starlark, chemin relatif au YAML ;
-- `files`, `env` : fichiers et variables d'environnement que le script peut lire ; les chemins de `files` sont rendus avec les paramètres (`"{{.config_path}}"`) ;
+- `files`, `env` : fichiers et variables d'environnement que le script peut lire ; les chemins de `files` sont rendus avec les paramètres (`"{{.config_path}}"`), une entrée rendue vide est ignorée. Une entrée terminée par `/**` autorise tout le répertoire (`"{{.repo_dir}}/**"`, chemin absolu) : le chemin demandé est résolu, liens symboliques compris, et doit rester dans le répertoire ;
 - `tools` : outils génériques du moteur (`inventory`, `ssh_list`, `ssh_read`, `ssh_tail`, `ssh_grep`, `ssh_disk`, `ssh_resolve`, `log_stats`), avec `name` et `description` optionnels, et `when` : condition rendue avec les paramètres (`"{{.ssh}}"`), l'outil n'est créé que si elle vaut vrai (vide = faux, valeur non booléenne refusée) ;
 - `companions` : outils ajoutés d'office à toute tâche qui utilise un outil de l'instance ;
 - `ssh_paths` : `allow` et `deny` (globs, `**` récursif), rendus avec les paramètres (`"{{.data_dir}}/logs/**"`) : une entrée rendue vide est ignorée (`"{{if .data_dir}}…{{end}}"`), une entrée rendue doit rester sans `..` et, dans `allow`, absolue ;
@@ -221,7 +221,7 @@ tool(
 | `jq(expr, data)` | filtre JSON exécuté en Go ; renvoie la liste des résultats |
 | `json`, `yaml`, `time`, `math`, `re`, `url`, `base64` | encodage (`yaml.decode`, `yaml.encode`), dates et durées, calcul, expressions régulières, URL |
 | `crypto.sign(key, msg)`, `crypto.key_type(key)` | signature ed25519 (graine base64 ou PKCS#8) ou RSA SHA-256 |
-| `file.read`, `file.exists`, `env` | fichiers et variables déclarés dans `files` et `env` |
+| `file.read`, `file.exists`, `file.list(path, depth=1, max=5000)`, `env` | fichiers et variables déclarés dans `files` et `env` ; `file.list` parcourt un répertoire déclaré avec `/**` et renvoie `entries` (`path`, `type` : `file`, `dir` ou `link`, `size`, `target`), sans suivre les liens, et `truncated` |
 | `parallel(fn, items, limit=4)` | exécution concurrente ; `value` ou `error` par élément |
 | `catch(fn, *args)` | appel protégé ; `value` ou `error` |
 | `instance.name`, `instance.params`, `instance.inventory()`, `instance.target(nom)`, `instance.find_host(hôte, target=)`, `instance.memo(clé, fn)` | instance courante, inventaire, cache par instance |
@@ -262,7 +262,7 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 - adresse : `VAULT_ADDR` (variable exportée ; une fonction ou un alias du shell n'est pas visible), sinon `vault.addr` de la configuration ;
 - jeton : `VAULT_TOKEN`, sinon `~/.vault-token` écrit par `vault login` (un `token_helper` n'est pas pris en charge) ; `VAULT_NAMESPACE` si défini, sinon `vault.namespace` ;
 - moteur KV v1 ou v2, détecté comme le fait `vault kv get` (`sys/internal/ui/mounts`) ;
-- utilisateur non fixé (`ssh_user` vide, ou `user_env` absent pour un connecteur `http`) : lu dans le champ `username` du même secret, sinon saisi ;
+- utilisateur non fixé (`ssh_user` vide, ou `user_env` absent pour un connecteur `http`) : lu dans le champ `username` du même secret, sinon saisi ; un connecteur `http` avec `auth.header` n'a pas d'utilisateur, seul le secret (jeton) est lu ou saisi ;
 - lecture seulement quand le mot de passe est nécessaire, une fois par utilisateur. Vide, l'option est ignorée. Un secret illisible (variable absente, jeton expiré, accès refusé, champ absent) est signalé sur le terminal et le mot de passe est saisi ; un mot de passe Vault refusé par SSH ou sudo est oublié et le suivant est saisi.
 
 Le secret est lu par clotr et n'est jamais transmis aux modèles ni archivé dans les preuves. Ne pas faire lire un secret par un outil MCP : sa réponse irait au modèle et dans les preuves. Le chemin peut reprendre les `vars` du client (voir Clients).

@@ -139,6 +139,7 @@ var msgs = map[string]msg{
 	"yesno.no":             {"no", "non"},
 	"prompt.user":          {"%s — user: ", "%s — utilisateur : "},
 	"prompt.password":      {"%s — password for %s: ", "%s — mot de passe de %s : "},
+	"prompt.secret":        {"%s — token: ", "%s — jeton : "},
 	"prompt.vault_failed":  {"%s — Vault %s: %v\n", "%s — Vault %s : %v\n"},
 	"instance.discovering": {"instance %s: activation (template %s)…", "instance %s : activation (template %s)…"},
 	"templates.head":       {"TEMPLATE\tVERSION\tSOURCE\tINSTANCES\tDESCRIPTION", "TEMPLATE\tVERSION\tSOURCE\tINSTANCES\tDESCRIPTION"},

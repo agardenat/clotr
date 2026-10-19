@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -126,6 +128,12 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 		}
 		return nil, os.ErrNotExist
 	}
+	in.realPath = func(p string) (string, error) {
+		return p, nil
+	}
+	in.listDir = func(root string, depth, limit int) ([]dirEntry, bool, error) {
+		return mockListDir(fileMap, root, depth, limit)
+	}
 	if now != "" {
 		ts, err := time.Parse(time.RFC3339, now)
 		if err != nil {
@@ -154,6 +162,35 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 		in.creds[in.sshName] = p
 	}
 	return ti, nil
+}
+
+func mockListDir(fileMap map[string]string, root string, depth, limit int) ([]dirEntry, bool, error) {
+	found := map[string]dirEntry{}
+	for p, content := range fileMap {
+		rel, ok := strings.CutPrefix(p, root+"/")
+		if !ok {
+			continue
+		}
+		parts := strings.Split(rel, "/")
+		for i := range min(len(parts), depth) {
+			full := root + "/" + strings.Join(parts[:i+1], "/")
+			if i == len(parts)-1 {
+				found[full] = dirEntry{path: full, kind: "file", size: int64(len(content))}
+			} else if _, seen := found[full]; !seen {
+				found[full] = dirEntry{path: full, kind: "dir"}
+			}
+		}
+	}
+	if len(found) == 0 {
+		if _, ok := fileMap[root]; !ok {
+			return nil, false, os.ErrNotExist
+		}
+	}
+	out := slices.SortedFunc(maps.Values(found), func(a, b dirEntry) int { return strings.Compare(a.path, b.path) })
+	if len(out) > limit {
+		return out[:limit], true, nil
+	}
+	return out, false, nil
 }
 
 func dictStrings(d *starlark.Dict) map[string]string {

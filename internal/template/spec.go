@@ -49,6 +49,7 @@ type Param struct {
 
 type Connector struct {
 	Driver  string         `yaml:"driver"`
+	When    string         `yaml:"when"`
 	Options map[string]any `yaml:",inline"`
 }
 
