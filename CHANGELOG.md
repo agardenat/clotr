@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-19
+
 ### Ajouté
 - Templates : `auth.header` (et `auth.scheme`) d'un connecteur `http` envoie le secret seul dans un en-tête, par exemple un jeton d'API, lu dans `password_env`, dans `password_vault` ou saisi sur le terminal, sans utilisateur.
 - Templates : `when` sur un connecteur, comme sur un outil ; un connecteur dont la condition est fausse n'est pas créé et ses identifiants ne sont pas demandés.
