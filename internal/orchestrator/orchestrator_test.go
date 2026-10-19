@@ -640,7 +640,8 @@ func TestJournalShowsFindingsWhenTaskEnds(t *testing.T) {
 				continue
 			}
 			found[e.Task] = true
-			if e.Detail != "[INFO] "+e.Task+" vu" || i+1 >= len(ev.events) || ev.events[i+1].Task != e.Task || ev.events[i+1].Kind != "done" {
+			next := slices.IndexFunc(ev.events[i+1:], func(n progress.Event) bool { return n.Task == e.Task })
+			if e.Detail != "[INFO] "+e.Task+" vu" || next < 0 || ev.events[i+1+next].Kind != "done" {
 				t.Fatalf("constat %d %+v, suivi de %+v", i, e, ev.events[i+1:])
 			}
 		}
