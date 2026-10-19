@@ -741,3 +741,34 @@ func TestRetryShownWithSingleCandidate(t *testing.T) {
 	}
 	t.Fatalf("aucune relance annoncée : %+v", ev.events)
 }
+
+func TestJournalShowsEachEvidence(t *testing.T) {
+	var cur, peak int32
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		if req.Messages[len(req.Messages)-1].Role == "user" {
+			return testutil.Reply("", testutil.Call("k8s_list", map[string]string{"ns": "a"})), nil
+		}
+		return testutil.Reply(`{"findings":["ok [E001]"]}`), nil
+	}}
+	for _, journal := range []bool{false, true} {
+		ev := &recEvents{}
+		r := runner(chat, registry(&cur, &peak))
+		r.Events, r.Journal = ev, journal
+		r.Evidence = evidence.Open(t.TempDir(), 1)
+		if _, err := r.Run(context.Background(), Spec{TaskID: "t1", System: "s", User: "u", Tools: []string{"k8s_list"}, Candidates: models}); err != nil {
+			t.Fatal(err)
+		}
+		var lines []string
+		for _, e := range ev.events {
+			if e.Kind == "evidence" {
+				lines = append(lines, e.Detail)
+			}
+		}
+		if !journal && len(lines) != 0 {
+			t.Fatalf("journal hors mode panique : %q", lines)
+		}
+		if journal && (len(lines) != 1 || !strings.HasPrefix(lines[0], `E001 k8s_list {"ns":"a"} → `) || !strings.Contains(lines[0], "16 bytes, ")) {
+			t.Fatalf("journal : %q", lines)
+		}
+	}
+}

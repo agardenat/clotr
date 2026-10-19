@@ -81,6 +81,7 @@ type options struct {
 	withEvidence bool
 	raw          bool
 	incident     bool
+	panic        bool
 	exportFmt    string
 	exportPath   string
 }
@@ -103,6 +104,7 @@ type app struct {
 	webTools    []string
 	evidence    *evidence.Store
 	leads       *lead.Store
+	journal     bool
 	filtered    []*template.Instance
 	closers     []func()
 }
@@ -220,6 +222,7 @@ func newRoot() *cobra.Command {
 	run.Flags().BoolVar(&o.raw, "raw", false, i18n.T("cli.flag.raw"))
 	run.Flags().BoolVar(&o.withEvidence, "with-evidence", false, i18n.T("cli.flag.with_evidence"))
 	run.Flags().BoolVar(&o.incident, "incident", false, i18n.T("cli.flag.incident"))
+	run.Flags().BoolVar(&o.panic, "panic", false, i18n.T("cli.flag.panic"))
 	run.Flags().StringVar(&o.exportFmt, "export", "", i18n.T("cli.flag.export"))
 
 	sessionsCmd := &cobra.Command{
@@ -697,6 +700,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		rt.registry.Add(rt.evidence.Tool(), rt.evidence.SearchTool())
 		if o.incident {
 			rt.leads = lead.New(rt.memory, rt.evidence, rt.audit)
+			rt.journal = o.panic
 			rt.registry.Add(rt.leads.Tool())
 		}
 	}
@@ -852,6 +856,7 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env string) *orchestrator.Orchestrator {
 	runner := rt.newRunner(events, reg)
 	runner.Evidence = rt.evidence
+	runner.Journal = rt.journal
 	if rt.leads != nil {
 		rt.leads.Events = events
 		runner.Inbox = rt.leads.Inbox
@@ -868,6 +873,7 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		Language:    rt.lang,
 		WebTools:    rt.webTools,
 		Incident:    rt.leads != nil,
+		Journal:     rt.journal,
 	}
 }
 
@@ -1185,6 +1191,9 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	}
 	rt.budget.NewRun()
 	fmt.Fprintln(os.Stderr, i18n.T("session.start", sess.Name, n, filepath.Join(turnDir, "audit.jsonl")))
+	if rt.journal {
+		fmt.Fprintln(os.Stderr, i18n.T("journal.dir", filepath.Join(turnDir, "evidence")))
+	}
 	rt.audit.Log("run_start", map[string]any{"request": request, "version": version, "tools": rt.registry.Names(), "session": sess.Name, "turn": n, "memory_loaded": len(rt.memory.All()), "web": o.webAllowed, "direct": o.direct})
 	mention := request
 	forced := slices.Clone(o.tools)
@@ -1252,6 +1261,9 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 }
 
 func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
+	if o.panic {
+		o.incident = true
+	}
 	if o.incident && (o.chat || o.direct != "") {
 		return i18n.E("cli.err.incident_modes")
 	}

@@ -93,6 +93,7 @@ type Orchestrator struct {
 	Language        string
 	OnAnswer        func(text string)
 	Incident        bool
+	Journal         bool
 	triaged         *Result
 	stopVerify      atomic.Pointer[context.CancelFunc]
 }
@@ -630,6 +631,14 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 		}
 		if res.Status != "ok" {
 			kind, detail = "failed", res.Error
+		}
+		if o.Journal {
+			for _, f := range res.Findings {
+				o.Events.Emit(progress.Event{Task: t.ID, Kind: "finding", Detail: f})
+			}
+			for _, g := range res.Gaps {
+				o.Events.Emit(progress.Event{Task: t.ID, Kind: "gap", Detail: g})
+			}
 		}
 		o.Events.Emit(progress.Event{Task: t.ID, Kind: kind, Model: res.Model, Detail: detail, Cost: res.Cost, Step: res.Steps, Duration: time.Since(start)})
 		o.afterTask(ctx)

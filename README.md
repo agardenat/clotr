@@ -491,6 +491,7 @@ clotr run --chat --direct
 | `--with-evidence` (`run`, `session`) | annexe la sortie complète de chaque preuve citée, voir Preuves |
 | `--export docx\|pdf` (`run`, `session`) | produit aussi le rapport en document via `report_export.mcp`, voir Export du rapport en document |
 | `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |
+| `--panic` (`run`) | mode incident avec journal en direct des preuves, constats et lacunes, voir Mode panique |
 | `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
 
 La demande `-` est lue sur stdin. Ctrl-C annule proprement les agents en cours.
@@ -523,6 +524,16 @@ Si stdout est un terminal, `run` et `session` affichent le rapport mis en forme 
 - **Ctrl-C pour conclure** : un premier Ctrl-C demande la conclusion : les tâches en cours concluent à leur étape suivante avec ce qu'elles ont (« conclusion demandée »), celles pas encore lancées sont abandonnées (« non lancée »), la vérification des constats est sautée, ou abandonnée si elle est en cours (y compris en attente de nouvel essai), et le rapport est produit. Un second Ctrl-C interrompt le run comme sans `--incident`.
 
 `--incident` est incompatible avec `--direct` et `--chat`.
+
+### Mode panique
+
+`run --panic` est le mode incident avec un journal en direct, pour vérifier en parallèle ce que font les agents sans attendre le rapport. En plus des causes, s'affichent au-dessus du tableau de progression :
+
+- au démarrage, le dossier des preuves du tour, où chaque sortie d'outil est écrite dès que l'appel se termine (`<dossier>/<id>.txt`, avec la tâche, l'outil et les arguments en tête) ;
+- chaque appel d'outil terminé : tâche, id de preuve, outil, arguments (300 caractères au plus), taille de la sortie et durée, ou l'erreur ; les appels à `cause_report` n'y figurent pas, la cause étant déjà affichée ;
+- à la fin de chaque tâche, ses constats (avec leurs preuves `[Exxx]`) et ce qu'elle n'a pas couvert.
+
+Hors terminal ou avec `--plain`, ces éléments sont des lignes `preuve`, `constat` et `non couvert` de la progression. `--panic` implique `--incident` et a les mêmes incompatibilités.
 
 ### Réponse directe
 

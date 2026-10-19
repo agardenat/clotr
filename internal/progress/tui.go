@@ -100,6 +100,10 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.Kind {
 		case "lead":
 			return b, b.println(stLead.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
+		case "evidence":
+			return b, b.println(stFaint.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
+		case "finding", "gap":
+			return b, b.println(ansi.Wrap(m.Task+" · "+i18n.T("journal."+m.Kind, m.Detail), max(b.width-1, 20), ""))
 		case "concluding":
 			return b, b.println(stWarn.Render(ansi.Wrap(m.Detail, max(b.width-1, 20), "")))
 		}
