@@ -34,7 +34,7 @@ const (
 var sensitivePath = regexp.MustCompile(`(?i)keytab|secret|password|token`)
 
 type httpAuth struct {
-	userEnv, passEnv, passVault, label string
+	userEnv, passEnv, passVault, label, header, scheme string
 }
 
 type httpConn struct {
@@ -78,7 +78,19 @@ func checkHTTPOptions(o options) error {
 			return i18n.E("tpl.http.method_allow", m)
 		}
 	}
-	return checkAuthOptions(o)
+	a := o.sub("auth")
+	for k := range a {
+		if !slices.Contains([]string{"user_env", "password_env", "password_vault", "label", "header", "scheme"}, k) {
+			return i18n.E("tpl.http.auth_key", k)
+		}
+	}
+	if _, ok := a["scheme"]; ok && a.str("header") == "" {
+		return i18n.E("tpl.http.auth_scheme")
+	}
+	if a.str("header") != "" && a.str("user_env") != "" {
+		return i18n.E("tpl.http.auth_user")
+	}
+	return nil
 }
 
 func checkAuthOptions(o options) error {
@@ -122,7 +134,7 @@ func newHTTPConn(name string, o options) (*httpConn, error) {
 		return nil, fmt.Errorf("timeout: %w", err)
 	}
 	if a := o.sub("auth"); len(a) > 0 {
-		hc.auth = &httpAuth{userEnv: a.str("user_env"), passEnv: a.str("password_env"), passVault: a.str("password_vault"), label: defaultStr(a.str("label"), name)}
+		hc.auth = &httpAuth{userEnv: a.str("user_env"), passEnv: a.str("password_env"), passVault: a.str("password_vault"), label: defaultStr(a.str("label"), name), header: a.str("header"), scheme: a.str("scheme")}
 	}
 	return hc, nil
 }
@@ -424,7 +436,14 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 		if !ok {
 			return nil, i18n.E("tpl.http.creds", conn)
 		}
-		req.SetBasicAuth(c.User, c.Pass)
+		switch {
+		case hc.auth.header == "":
+			req.SetBasicAuth(c.User, c.Pass)
+		case hc.auth.scheme != "":
+			req.Header.Set(hc.auth.header, hc.auth.scheme+" "+c.Pass)
+		default:
+			req.Header.Set(hc.auth.header, c.Pass)
+		}
 	}
 	client, err := in.httpClientFor(hc, reqTLS, proxyOverride)
 	if err != nil {

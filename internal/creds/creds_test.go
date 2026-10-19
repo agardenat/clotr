@@ -71,3 +71,31 @@ func TestResolveVaultUsername(t *testing.T) {
 		t.Fatal("secret sans username et sans terminal accepté")
 	}
 }
+
+func TestResolveSecret(t *testing.T) {
+	calls := 0
+	readVault := ReadVault
+	ReadVault = func(_ context.Context, ref string) (string, error) {
+		calls++
+		if ref == "kv/forge#token" {
+			return "fromvault", nil
+		}
+		return "", errors.New("introuvable")
+	}
+	OpenTTY = func() (*Console, error) { return nil, errors.New("pas de terminal") }
+	t.Cleanup(func() { ReadVault, OpenTTY = readVault, openConsole })
+	ctx := context.Background()
+	if p, err := ResolveSecret(ctx, "", "kv/forge#token", "repo (api)"); err != nil || p.Pass != "fromvault" || p.User != "" || calls != 1 {
+		t.Fatalf("Vault: %+v %v %d", p, err, calls)
+	}
+	if _, err := ResolveSecret(ctx, "", "kv/forge#token", "repo (api)"); err != nil || calls != 1 {
+		t.Fatalf("cache: %v %d", err, calls)
+	}
+	t.Setenv("FORGE_TOKEN", "fromenv")
+	if p, err := ResolveSecret(ctx, "FORGE_TOKEN", "", "repo2 (api)"); err != nil || p.Pass != "fromenv" {
+		t.Fatalf("variable: %+v %v", p, err)
+	}
+	if _, err := ResolveSecret(ctx, "", "kv/other", "repo3 (api)"); err == nil || !strings.Contains(err.Error(), "token missing") {
+		t.Fatalf("jeton absent: %v", err)
+	}
+}

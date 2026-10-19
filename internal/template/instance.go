@@ -112,10 +112,13 @@ type Instance struct {
 
 	getenv    func(string) string
 	readFile  func(string) ([]byte, error)
+	realPath  func(string) (string, error)
+	listDir   func(string, int, int) ([]dirEntry, bool, error)
 	now       func() time.Time
 	transport http.RoundTripper
 	clients   map[string]*http.Client
 	files     []string
+	dirs      []string
 	creds     map[string]creds.Pair
 	pending   *activation
 }
@@ -135,18 +138,29 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 	if err != nil {
 		return nil, fmt.Errorf("instance %s: %w", name, err)
 	}
-	in := &Instance{Name: name, T: t, params: params, conns: map[string]options{}, https: map[string]*httpConn{}, memo: map[string]*memoEntry{}, creds: map[string]creds.Pair{}, getenv: os.Getenv, readFile: os.ReadFile, now: time.Now}
+	in := &Instance{Name: name, T: t, params: params, conns: map[string]options{}, https: map[string]*httpConn{}, memo: map[string]*memoEntry{}, creds: map[string]creds.Pair{}, getenv: os.Getenv, readFile: os.ReadFile, realPath: filepath.EvalSymlinks, listDir: walkDir, now: time.Now}
+	var rendered []string
 	for i, f := range t.Files {
 		r, err := Render(f, params)
 		if err != nil {
 			return nil, fmt.Errorf("instance %s: files[%d]: %w", name, i, err)
 		}
 		if r = strings.TrimSpace(r); r != "" {
-			in.files = append(in.files, r)
+			rendered = append(rendered, r)
 		}
+	}
+	if in.files, in.dirs, err = splitFiles(rendered); err != nil {
+		return nil, fmt.Errorf("instance %s: files: %w", name, err)
 	}
 	for _, cn := range sortedKeys(t.Connectors) {
 		c := t.Connectors[cn]
+		on, err := whenTrue(c.When, params)
+		if err != nil {
+			return nil, fmt.Errorf("instance %s: connectors.%s.when: %w", name, cn, err)
+		}
+		if !on {
+			continue
+		}
 		r, err := renderAny(map[string]any(c.Options), params)
 		if err != nil {
 			return nil, fmt.Errorf("instance %s: connectors.%s: %w", name, cn, err)
@@ -165,7 +179,7 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 		}
 	}
 	for i, ts := range t.Tools {
-		on, err := toolEnabled(ts, params)
+		on, err := whenTrue(ts.When, params)
 		if err != nil {
 			return nil, fmt.Errorf("instance %s: tools[%d].when: %w", name, i, err)
 		}
@@ -272,7 +286,14 @@ func (in *Instance) Prepare(ctx context.Context) error {
 		if _, ok := in.creds[cn]; ok {
 			continue
 		}
-		p, err := creds.Resolve(ctx, hc.auth.userEnv, hc.auth.passEnv, hc.auth.passVault, in.Name+" ("+hc.auth.label+")")
+		label := in.Name + " (" + hc.auth.label + ")"
+		var p creds.Pair
+		var err error
+		if hc.auth.header != "" {
+			p, err = creds.ResolveSecret(ctx, hc.auth.passEnv, hc.auth.passVault, label)
+		} else {
+			p, err = creds.Resolve(ctx, hc.auth.userEnv, hc.auth.passEnv, hc.auth.passVault, label)
+		}
 		if err != nil {
 			return err
 		}
@@ -827,11 +848,11 @@ func defaultStr(s, def string) string {
 	return s
 }
 
-func toolEnabled(ts ToolSpec, params map[string]any) (bool, error) {
-	if ts.When == "" {
+func whenTrue(when string, params map[string]any) (bool, error) {
+	if when == "" {
 		return true, nil
 	}
-	r, err := Render(ts.When, params)
+	r, err := Render(when, params)
 	if err != nil {
 		return false, err
 	}

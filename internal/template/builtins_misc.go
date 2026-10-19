@@ -24,7 +24,6 @@ import (
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 
-	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/i18n"
 )
@@ -208,51 +207,6 @@ func builtinB64Decode(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tup
 		return nil, fmt.Errorf("base64.decode: %w", err)
 	}
 	return starlark.Bytes(out), nil
-}
-
-func (in *Instance) fileAllowed(p string) (string, error) {
-	want := config.ExpandHome(p)
-	for _, f := range in.files {
-		if config.ExpandHome(f) == want {
-			return want, nil
-		}
-	}
-	return "", i18n.E("tpl.file_undeclared", p)
-}
-
-func (in *Instance) fileModule() *starlarkstruct.Module {
-	return &starlarkstruct.Module{
-		Name: "file",
-		Members: starlark.StringDict{
-			"read": starlark.NewBuiltin("file.read", func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-				var p string
-				if err := starlark.UnpackArgs(b.Name(), args, kwargs, "path", &p); err != nil {
-					return nil, err
-				}
-				full, err := in.fileAllowed(p)
-				if err != nil {
-					return nil, err
-				}
-				data, err := in.readFile(full)
-				if err != nil {
-					return nil, fmt.Errorf("file.read %s: %w", p, err)
-				}
-				return starlark.String(data), nil
-			}),
-			"exists": starlark.NewBuiltin("file.exists", func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-				var p string
-				if err := starlark.UnpackArgs(b.Name(), args, kwargs, "path", &p); err != nil {
-					return nil, err
-				}
-				full, err := in.fileAllowed(p)
-				if err != nil {
-					return nil, err
-				}
-				_, err = in.readFile(full)
-				return starlark.Bool(err == nil), nil
-			}),
-		},
-	}
 }
 
 func (in *Instance) builtinEnv(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
