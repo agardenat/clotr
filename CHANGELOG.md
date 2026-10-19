@@ -4,6 +4,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- `run --panic` : mode incident avec journal en direct, pour vérifier en parallèle. Le dossier des preuves du tour est affiché au démarrage ; chaque appel d'outil terminé s'affiche avec son id de preuve, ses arguments, la taille de sa sortie et sa durée (ou son erreur), et chaque tâche affiche ses constats et ce qu'elle n'a pas couvert dès sa fin, sans attendre la synthèse.
+
 ## [0.25.0] - 2026-10-19
 
 ### Ajouté

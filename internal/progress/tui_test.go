@@ -126,3 +126,16 @@ func TestBoardTrailingLineOnlyWhenFinished(t *testing.T) {
 		t.Fatal("ligne finale absente : la sortie suivante écraserait la dernière ligne")
 	}
 }
+
+func TestBoardPrintsJournalLines(t *testing.T) {
+	b := newBoard(10)
+	b.Update(tickMsg(time.Now()))
+	for _, kind := range []string{"evidence", "finding", "gap"} {
+		if _, cmd := b.Update(eventMsg(Event{Task: "t1", Kind: kind, Detail: "d"})); cmd == nil {
+			t.Fatalf("%s : ligne non imprimée", kind)
+		}
+	}
+	if r, ok := b.idx["t1"]; ok && r.tools != 0 {
+		t.Fatal("ligne de journal comptée comme appel d'outil")
+	}
+}

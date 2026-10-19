@@ -19,6 +19,7 @@ import (
 	"github.com/agardenat/clotr/internal/catalog"
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/lead"
 	"github.com/agardenat/clotr/internal/llm"
 	"github.com/agardenat/clotr/internal/progress"
 	"github.com/agardenat/clotr/internal/tools"
@@ -57,6 +58,7 @@ type Runner struct {
 	ConcludeNotes   func(task string) string
 	Inbox           func(reader tools.Caller) string
 	Evidence        *evidence.Store
+	Journal         bool
 	Chat            llm.Chatter
 	Tools           *tools.Registry
 	Audit           *audit.Logger
@@ -524,6 +526,9 @@ func (s *session) execTools(ctx context.Context, step int, calls []llm.ToolCall)
 			if s.r.Evidence != nil && !strings.HasPrefix(tc.Function.Name, "memory_") && !strings.HasPrefix(tc.Function.Name, "evidence_") {
 				id := s.r.Evidence.Add(s.spec.TaskID, tc.Function.Name, tc.Function.Arguments, res, err)
 				rec["evidence"] = id
+				if s.r.Journal && tc.Function.Name != lead.ToolName {
+					s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "evidence", Detail: journalLine(id, tc.Function.Name, tc.Function.Arguments, len(res), time.Since(t0), err)})
+				}
 				res = "[" + id + "] " + s.r.Tools.Clip(res, id)
 			} else {
 				res = s.r.Tools.Clip(res, "")
@@ -587,6 +592,14 @@ func newSessionID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func journalLine(id, tool, args string, size int, d time.Duration, err error) string {
+	args = truncate(strings.Join(strings.Fields(args), " "), 300)
+	if err != nil {
+		return i18n.T("journal.error", id, tool, args, truncate(err.Error(), 200))
+	}
+	return i18n.T("journal.evidence", id, tool, args, size, d.Truncate(time.Millisecond))
 }
 
 func truncate(s string, n int) string {

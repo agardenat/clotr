@@ -614,3 +614,38 @@ func TestAccessRuleAndDNSToolWithTasks(t *testing.T) {
 		t.Fatalf("outil DNS non ajouté: %v %v", p.Tasks[0].Tools, err)
 	}
 }
+
+type recEvents struct {
+	mu     sync.Mutex
+	events []progress.Event
+}
+
+func (r *recEvents) Emit(e progress.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, e)
+}
+
+func TestJournalShowsFindingsWhenTaskEnds(t *testing.T) {
+	for _, journal := range []bool{false, true} {
+		o, _ := newOrch(t, []string{dagPlan}, nil)
+		ev := &recEvents{}
+		o.Events, o.Journal = ev, journal
+		if _, err := o.Run(context.Background(), "analyse"); err != nil {
+			t.Fatal(err)
+		}
+		found := map[string]bool{}
+		for i, e := range ev.events {
+			if e.Kind != "finding" {
+				continue
+			}
+			found[e.Task] = true
+			if e.Detail != "[INFO] "+e.Task+" vu" || i+1 >= len(ev.events) || ev.events[i+1].Task != e.Task || ev.events[i+1].Kind != "done" {
+				t.Fatalf("constat %d %+v, suivi de %+v", i, e, ev.events[i+1:])
+			}
+		}
+		if journal != (len(found) == 4) || (!journal && len(found) != 0) {
+			t.Fatalf("journal=%v, constats affichés pour %v", journal, found)
+		}
+	}
+}
