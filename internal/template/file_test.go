@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -68,20 +69,29 @@ func TestFileDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := instanceTools(t, in)
-	out, err := call["list"](map[string]any{"path": root})
-	if err != nil {
-		t.Fatal(err)
+	list := func(depth int) []string {
+		t.Helper()
+		out, err := call["list"](map[string]any{"path": root, "depth": depth})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r struct{ Entries []string }
+		if err := json.Unmarshal([]byte(out), &r); err != nil {
+			t.Fatal(err)
+		}
+		return r.Entries
 	}
+	entries := list(1)
 	for _, want := range []string{"file " + filepath.Join(root, "a.yaml"), "dir " + filepath.Join(root, "sub"), "link " + filepath.Join(root, "escape.txt")} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("list sans %q : %s", want, out)
+		if !slices.Contains(entries, want) {
+			t.Fatalf("list sans %q : %v", want, entries)
 		}
 	}
-	if strings.Contains(out, "b.yaml") {
-		t.Fatalf("profondeur 1 dépassée : %s", out)
+	if slices.Contains(entries, "file "+filepath.Join(root, "sub", "b.yaml")) {
+		t.Fatalf("profondeur 1 dépassée : %v", entries)
 	}
-	if out, err := call["list"](map[string]any{"path": root, "depth": 2}); err != nil || !strings.Contains(out, filepath.Join(root, "sub", "b.yaml")) {
-		t.Fatalf("profondeur 2 : %s %v", out, err)
+	if entries := list(2); !slices.Contains(entries, "file "+filepath.Join(root, "sub", "b.yaml")) {
+		t.Fatalf("profondeur 2 : %v", entries)
 	}
 	if out, err := call["read"](map[string]any{"path": filepath.Join(root, "sub", "b.yaml")}); err != nil || out != "b: 2\n" {
 		t.Fatalf("lecture : %q %v", out, err)
