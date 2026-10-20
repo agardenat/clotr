@@ -144,7 +144,13 @@ type Instance struct {
 	Template string         `yaml:"template"`
 	Enabled  *bool          `yaml:"enabled"`
 	Params   map[string]any `yaml:"params"`
+	SSHPaths PathRules      `yaml:"ssh_paths"`
 	Client   string         `yaml:"-"`
+}
+
+type PathRules struct {
+	Allow []string `yaml:"allow"`
+	Deny  []string `yaml:"deny"`
 }
 
 type Client struct {

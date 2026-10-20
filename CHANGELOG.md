@@ -4,6 +4,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- `ssh_paths` sur une instance (`allow`, `deny`) : ajoute des chemins lisibles ou interdits à ceux de son template, dont les `deny` restent appliqués, par exemple pour lire `/srv/nfs` sur les VM d'un client sans modifier le template.
+
 ## [0.27.0] - 2026-10-19
 
 ### Ajouté

@@ -123,6 +123,7 @@ var templateMsgs = map[string]msg{
 	"tpl.jq_json":              {"jq: unreadable JSON: %w", "jq : JSON illisible : %w"},
 	"tpl.parallel":             {"parallel: missing instance", "parallel : instance absente"},
 	"tpl.instance_connector":   {"instance %s: connector %s: %w", "instance %s : connecteur %s : %w"},
+	"tpl.instance_paths_ssh":   {"instance %s: ssh_paths requires a template with an ssh connector", "instance %s : ssh_paths exige un template avec un connecteur ssh"},
 	"tpl.http.option":          {"unknown option %q (%s)", "option %q inconnue (%s)"},
 	"tpl.http.auth":            {"unknown auth.%s (user_env, password_env, password_vault, label)", "auth.%s inconnue (user_env, password_env, password_vault, label)"},
 	"tpl.http.auth_key":        {"unknown auth.%s (user_env, password_env, password_vault, label, header, scheme)", "auth.%s inconnue (user_env, password_env, password_vault, label, header, scheme)"},
