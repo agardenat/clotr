@@ -200,6 +200,36 @@ func renderPaths(r ssh.PathRules, data map[string]any) (ssh.PathRules, error) {
 	return ssh.PathRules{Allow: allow, Deny: deny}, nil
 }
 
+func (in *Instance) ExtendPaths(extra config.PathRules) error {
+	if len(extra.Allow) == 0 && len(extra.Deny) == 0 {
+		return nil
+	}
+	if in.rules == nil {
+		return i18n.E("tpl.instance_paths_ssh", in.Name)
+	}
+	src := in.rules.Source()
+	merged := ssh.PathRules{Allow: slices.Clone(src.Allow), Deny: slices.Clone(src.Deny)}
+	for field, globs := range map[string][]string{"allow": extra.Allow, "deny": extra.Deny} {
+		for i, g := range globs {
+			g = strings.TrimSpace(g)
+			if g == "" || strings.Contains(g, "..") || unsafePath.MatchString(g) || strings.Contains(g, "{{") {
+				return fmt.Errorf("instance %s: %w", in.Name, i18n.E("tpl.param.ssh_path", field, i, g))
+			}
+			if field == "allow" {
+				merged.Allow = append(merged.Allow, path.Clean(g))
+			} else {
+				merged.Deny = append(merged.Deny, path.Clean(g))
+			}
+		}
+	}
+	rules, err := ssh.CompileRules(merged)
+	if err != nil {
+		return fmt.Errorf("instance %s: %w", in.Name, err)
+	}
+	in.rules = rules
+	return nil
+}
+
 func checkPaths(r ssh.PathRules) error {
 	static := ssh.PathRules{}
 	for field, globs := range map[string][]string{"allow": r.Allow, "deny": r.Deny} {

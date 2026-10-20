@@ -562,6 +562,9 @@ func newInstance(cfg *config.Config, ic config.Instance, t *template.Template) (
 	if err != nil {
 		return nil, err
 	}
+	if err := in.ExtendPaths(ic.SSHPaths); err != nil {
+		return nil, err
+	}
 	if ic.Client != "" {
 		in.Client, in.ClientTerms = ic.Client, append([]string{cl.Name}, cl.Aliases...)
 	}
@@ -1070,7 +1073,9 @@ func cmdTemplates(o *options, args []string, w io.Writer) error {
 		if _, ok := set.Get(in.Template); !ok {
 			state = i18n.T("instances.missing")
 		} else if t, _ := set.Get(in.Template); t != nil {
-			if _, err := template.NewInstance(in.Name, t, in.Params); err != nil {
+			if ti, err := template.NewInstance(in.Name, t, in.Params); err != nil {
+				state = err.Error()
+			} else if err := ti.ExtendPaths(in.SSHPaths); err != nil {
 				state = err.Error()
 			}
 		}

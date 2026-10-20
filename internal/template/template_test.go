@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/testutil"
@@ -127,6 +128,54 @@ func TestToolWhen(t *testing.T) {
 	}
 	if _, err := NewInstance("i", tpl, map[string]any{"mode": "oui"}); err == nil || !strings.Contains(err.Error(), "tools[2].when") {
 		t.Errorf("when invalide: %v", err)
+	}
+}
+
+func TestInstanceSSHPaths(t *testing.T) {
+	y := "name: x\ntargets: [{kind: a}]\nconnectors: {s: {driver: ssh}}\nssh_paths: {allow: [/etc/**], deny: [\"**/*.key\"]}\ntools: [{kind: ssh_read}]\n"
+	tpl, err := Parse([]byte(y), filepath.Join(t.TempDir(), "x.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := NewInstance("i", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.ExtendPaths(config.PathRules{Allow: []string{"/srv/nfs", "/srv/nfs/**"}, Deny: []string{"/srv/nfs/private/**"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/srv/nfs", "/srv/nfs/exports/a.conf", "/etc/hosts"} {
+		if _, err := in.rules.Check(p); err != nil {
+			t.Error(err)
+		}
+	}
+	for _, p := range []string{"/srv/nfs/private/x", "/srv/nfs/home/id.key", "/srv/other"} {
+		if _, err := in.rules.Check(p); err == nil {
+			t.Errorf("%s autorisé", p)
+		}
+	}
+	if !strings.Contains(in.pathsDesc(), "/srv/nfs/**") {
+		t.Errorf("description: %s", in.pathsDesc())
+	}
+	for _, bad := range []config.PathRules{{Allow: []string{"srv"}}, {Allow: []string{"/srv/../etc"}}, {Deny: []string{""}}} {
+		in, _ := NewInstance("i", tpl, nil)
+		if err := in.ExtendPaths(bad); err == nil {
+			t.Errorf("%+v accepté", bad)
+		}
+	}
+	noSSH, err := Parse([]byte("name: y\ntargets: [{kind: a}]\nconnectors: {h: {driver: http, base_url: \"https://x\"}}\ntools: [{kind: inventory}]\n"), filepath.Join(t.TempDir(), "y.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err = NewInstance("i", noSSH, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.ExtendPaths(config.PathRules{Allow: []string{"/srv"}}); err == nil || !strings.Contains(err.Error(), "ssh connector") {
+		t.Errorf("sans ssh: %v", err)
+	}
+	if err := in.ExtendPaths(config.PathRules{}); err != nil {
+		t.Error(err)
 	}
 }
 

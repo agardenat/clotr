@@ -179,6 +179,19 @@ instances:
       proxy_url: socks5h://localhost:1080
 ```
 
+`ssh_paths` sur une instance dont le template a un connecteur `ssh` ajoute des chemins à ceux du template, sans les remplacer : `allow` étend la lecture, `deny` ajoute des interdictions, et les `deny` du template restent appliqués. Les chemins de `allow` sont absolus et sans `..` ; comme dans le template, un répertoire et son contenu s'autorisent séparément (`/srv/data` liste le répertoire, `/srv/data/**` donne accès aux fichiers).
+
+```yaml
+instances:
+  - name: vm-prod
+    template: ssh-hosts
+    params:
+      networks: [{cidr: 10.20.0.0/24}]
+    ssh_paths:
+      allow: [/srv/data, /srv/data/**]
+      deny: [/srv/data/private/**]
+```
+
 ### Script
 
 Le script définit `discover(ctx)` et déclare ses outils au chargement :
