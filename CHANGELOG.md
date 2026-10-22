@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-22
+
 ### Ajouté
 - Niveaux d'accès choisis au lancement avec `run --access read|exec|create` (défaut `read`, jamais lu dans la configuration ni repris par `run -s`) : `exec` ouvre les commandes sur les hôtes et pods existants, `create` en plus les ressources éphémères créées et supprimées par clotr. Le niveau est affiché au démarrage, enregistré dans le tour de la session et l'audit, et décrit aux agents.
 - Templates : `commands` (`allow`, `deny`, motifs d'argv avec `*`, `?` et `**` final), étendu par l'instance. Une commande de `allow` s'exécute sans question, une commande de `deny` est refusée, toute autre est soumise à l'utilisateur sur le terminal (oui, non, toujours pour ce run) et refusée sans terminal ; décisions tracées dans l'audit (`exec_decision`).
