@@ -681,7 +681,7 @@ func TestCVEMode(t *testing.T) {
 	if !slices.Contains(rep.Plan.Tasks[1].Tools, cve.ReportTool) {
 		t.Fatalf("outils: %v", rep.Plan.Tasks[1].Tools)
 	}
-	if !strings.HasPrefix(rep.Markdown, "## ") || !strings.Contains(rep.Markdown, "| 🚨 | CVE-2026-0001 | k8s/prod/web |") || !strings.HasSuffix(rep.Markdown, "# Rapport") {
+	if !strings.HasPrefix(rep.Markdown, "## ") || !strings.Contains(rep.Markdown, "| 🚨 | k8s/prod/web | 🚨 |") || !strings.HasSuffix(rep.Markdown, "# Rapport") {
 		t.Fatalf("rapport: %s", rep.Markdown)
 	}
 	if !strings.Contains(o.incidentRule(), "Mode CVE") {

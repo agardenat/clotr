@@ -157,7 +157,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 	defs := r.Tools.Defs(spec.Tools)
 	maxSteps := max(r.MaxSteps, 1)
 	var lastStep time.Duration
-	var produced []toolMsg
+	var produced, calls []toolMsg
 	seen := map[string]bool{}
 	idle, checks := 0, 0
 	reached := ""
@@ -278,12 +278,16 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 		} else {
 			idle++
 		}
+		calls = append(calls, toolMsg{idx: len(msgs), step: step})
 		msgs = append(msgs, msg)
 		for _, m := range s.execTools(ctx, step, msg.ToolCalls) {
 			produced = append(produced, toolMsg{idx: len(msgs), step: step})
 			msgs = append(msgs, m)
 		}
-		r.compact(msgs, produced, step)
+		pressure := contextPressure(resp.Usage.PromptTokens, s.model.Context)
+		if level := r.compact(msgs, produced, calls, step, pressure); level > 0 {
+			r.Audit.Log("history_compacted", map[string]any{"task": spec.TaskID, "step": step, "model": s.out.Model, "prompt_tokens": resp.Usage.PromptTokens, "context": s.model.Context, "level": level})
+		}
 		if spec.Reached != nil {
 			reached = spec.Reached()
 		}
@@ -291,7 +295,26 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 	}
 }
 
-type toolMsg struct{ idx, step int }
+type toolMsg struct{ idx, step, size int }
+
+const defaultContext = 128000
+
+func contextPressure(prompt, window int) float64 {
+	if window <= 0 {
+		window = defaultContext
+	}
+	return float64(prompt) / float64(window)
+}
+
+func cutRunes(s string, n int) string {
+	if n >= len(s) {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
 
 func canonicalArgs(raw string) string {
 	var v any
@@ -304,25 +327,61 @@ func canonicalArgs(raw string) string {
 
 var evidencePrefix = regexp.MustCompile(`^\[(E(?:\d+\.)?\d{3,})\] `)
 
-func (r *Runner) compact(msgs []llm.Message, produced []toolMsg, step int) {
+func (r *Runner) compact(msgs []llm.Message, produced, calls []toolMsg, step int, pressure float64) int {
 	if r.ToolChars <= 0 || r.KeepSteps <= 0 {
-		return
+		return 0
 	}
-	for _, p := range produced {
+	level, limit, argLimit := 0, r.ToolChars, 0
+	switch {
+	case pressure >= 0.75:
+		level, limit, argLimit = 2, min(r.ToolChars, 120), 120
+	case pressure >= 0.5:
+		level, limit, argLimit = 1, min(r.ToolChars, 300), 300
+	}
+	for i := range produced {
+		p := &produced[i]
 		if p.step > step-r.KeepSteps {
 			break
 		}
 		m := &msgs[p.idx]
-		id := evidencePrefix.FindStringSubmatch(m.Content)
-		if id == nil || len(m.Content) <= r.ToolChars || strings.Contains(m.Content, compactMark) {
+		body := m.Content
+		if k := strings.Index(body, "\n"+compactMark); k >= 0 {
+			body = body[:k]
+		}
+		if p.size == 0 {
+			p.size = len(m.Content)
+		}
+		id := evidencePrefix.FindStringSubmatch(body)
+		if len(body) <= limit || (id == nil && level == 0) {
 			continue
 		}
-		cut := r.ToolChars
-		for cut > 0 && !utf8.RuneStart(m.Content[cut]) {
-			cut--
+		hint := "refaire l'appel si besoin"
+		if id != nil {
+			hint = "relire avec evidence_read id=" + id[1] + ", avec pattern ou offset"
 		}
-		m.Content = m.Content[:cut] + fmt.Sprintf("\n%s (%d caractères au total) : relire avec evidence_read id=%s, avec pattern ou offset]", compactMark, len(m.Content), id[1])
+		m.Content = cutRunes(body, limit) + fmt.Sprintf("\n%s (%d caractères au total) : %s]", compactMark, p.size, hint)
 	}
+	if argLimit == 0 {
+		return level
+	}
+	for _, c := range calls {
+		if c.step > step-r.KeepSteps {
+			break
+		}
+		m := &msgs[c.idx]
+		if len(m.Content) > argLimit {
+			m.Content = cutRunes(m.Content, argLimit) + "…"
+		}
+		for j := range m.ToolCalls {
+			a := m.ToolCalls[j].Function.Arguments
+			if len(a) <= argLimit || strings.HasPrefix(a, `{"raccourci":`) {
+				continue
+			}
+			short, _ := json.Marshal(map[string]string{"raccourci": cutRunes(a, argLimit) + "…"})
+			m.ToolCalls[j].Function.Arguments = string(short)
+		}
+	}
+	return level
 }
 
 const compactMark = "[… sortie raccourcie dans l'historique"

@@ -3,6 +3,7 @@ package cve
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -112,14 +113,12 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 	}
 
 	sec := s.Section()
-	for _, want := range []string{"| CVE-2026-0001 | PHP | 8.2 < 8.2.27 | 8.2.27 | [E001] |", "🚨 1", "✅ 1", "| 🚨 | CVE-2026-0001 | k8s/prod/web/app |"} {
+	for _, want := range []string{"| CVE-2026-0001 | PHP | 8.2 < 8.2.27 | 8.2.27 | [E001] |", "🚨 1", "✅ 1", "| 🚨 | k8s/prod/web/app | 🚨 | php 8.2.4 < 8.2.27 | [E002] |", "- `vm` (1) : web1"} {
 		if !strings.Contains(sec, want) {
 			t.Fatalf("%q absent de\n%s", want, sec)
 		}
 	}
-	if strings.Index(sec, "🚨 | CVE") > strings.Index(sec, "✅ | CVE") {
-		t.Fatal("vulnérables d'abord")
-	}
+
 }
 
 func TestUnverifiedAdvisory(t *testing.T) {
@@ -174,5 +173,36 @@ func TestReminder(t *testing.T) {
 	ev.Add("t2", "k8s_pod_exec", "{}", "out", nil)
 	if got := s.Inbox(reader); strings.Contains(got, "Rappel") {
 		t.Fatalf("compteur non remis à zéro par cve_report: %q", got)
+	}
+}
+
+func TestSectionCompact(t *testing.T) {
+	ev := evidence.Open(t.TempDir(), 1)
+	e := ev.Add("t1", "x", "{}", "o", nil)
+	s := New([]string{"CVE-A-0001", "CVE-B-0002"}, memory.NewStore(), ev, audit.Nop())
+	s.IDs = []string{"CVE-2026-0010", "CVE-2026-0011"}
+	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
+	rep := func(cve, asset, status, detail string) {
+		t.Helper()
+		if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"`+cve+`","asset":"`+asset+`","status":"`+status+`","detail":"`+detail+`","evidence":["`+e+`"]}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 50 {
+		a := fmt.Sprintf("k8s/prod/ns%d/app-%d/main", i%3, i)
+		rep("CVE-2026-0010", a, "clean", strings.Repeat("aucun php dans l'image ", 10))
+		rep("CVE-2026-0011", a, "clean", strings.Repeat("aucun php dans l'image ", 10))
+	}
+	rep("CVE-2026-0010", "k8s/prod/ns0/legacy/php", "vulnerable", "php 8.1.2")
+	rep("CVE-2026-0011", "k8s/prod/ns0/legacy/php", "clean", "fpm absent")
+	rep("CVE-2026-0010", "vm/web1", "clean", "rpm sans php")
+	sec := s.Section()
+	for _, want := range []string{"🚨 1 vulnerable · ❓ 1 undetermined · ✅ 50 clean (52 assets)", "| 🚨 | k8s/prod/ns0/legacy/php | 🚨 | ✅ | php 8.1.2 |", "| ❓ | vm/web1 | ✅ | — |", "- `k8s/prod/ns0` (17) : app-0/main, app-12/main"} {
+		if !strings.Contains(sec, want) {
+			t.Fatalf("%q absent de\n%s", want, sec)
+		}
+	}
+	if strings.Contains(sec, "aucun php dans l'image") || len(sec) > 4000 {
+		t.Fatalf("détails des sains repris ou tableau trop long (%d)", len(sec))
 	}
 }

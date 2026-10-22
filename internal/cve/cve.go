@@ -400,26 +400,132 @@ func (s *Store) Section() string {
 		}
 		b.WriteString("\n")
 	}
-	if len(finds) > 0 {
-		order := map[string]int{Vulnerable: 0, Unknown: 1, Clean: 2}
-		slices.SortStableFunc(finds, func(x, y Finding) int {
-			if d := order[x.Status] - order[y.Status]; d != 0 {
-				return d
-			}
-			if c := strings.Compare(x.CVE, y.CVE); c != 0 {
-				return c
-			}
-			return strings.Compare(x.Asset, y.Asset)
-		})
-		counts := map[string]int{}
-		for _, f := range finds {
-			counts[f.Status]++
+	if len(finds) == 0 {
+		return strings.TrimSuffix(b.String(), "\n")
+	}
+	rows := assetRows(finds)
+	counts := map[string]int{}
+	for _, r := range rows {
+		counts[r.worst(s.IDs)]++
+	}
+	fmt.Fprintf(&b, "🚨 %d %s · ❓ %d %s · ✅ %d %s (%d %s)\n\n", counts[Vulnerable], i18n.R("cve.st.vulnerable"), counts[Unknown], i18n.R("cve.st.unknown"), counts[Clean], i18n.R("cve.st.clean"), len(rows), i18n.R("cve.assets"))
+	order := map[string]int{Vulnerable: 0, Unknown: 1, Clean: 2}
+	slices.SortStableFunc(rows, func(x, y *assetRow) int {
+		if d := order[x.worst(s.IDs)] - order[y.worst(s.IDs)]; d != 0 {
+			return d
 		}
-		fmt.Fprintf(&b, "🚨 %d %s · ❓ %d %s · ✅ %d %s\n\n", counts[Vulnerable], i18n.R("cve.st.vulnerable"), counts[Unknown], i18n.R("cve.st.unknown"), counts[Clean], i18n.R("cve.st.clean"))
-		b.WriteString("| | CVE | " + i18n.R("cve.col.asset") + " | " + i18n.R("cve.col.detail") + " | " + i18n.R("cve.col.evidence") + " |\n|---|---|---|---|---|\n")
-		for _, f := range finds {
-			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", Icon(f.Status), f.CVE, cell(f.Asset), cell(f.Detail), strings.Join(f.Evidence, ""))
+		return strings.Compare(x.asset, y.asset)
+	})
+	var clean []*assetRow
+	head := false
+	for _, r := range rows {
+		w := r.worst(s.IDs)
+		if w == Clean {
+			clean = append(clean, r)
+			continue
+		}
+		if !head {
+			b.WriteString("| | " + i18n.R("cve.col.asset"))
+			for _, id := range s.IDs {
+				b.WriteString(" | " + id)
+			}
+			b.WriteString(" | " + i18n.R("cve.col.detail") + " | " + i18n.R("cve.col.evidence") + " |\n|" + strings.Repeat("---|", len(s.IDs)+4) + "\n")
+			head = true
+		}
+		fmt.Fprintf(&b, "| %s | %s", Icon(w), cell(r.asset))
+		var details, ev []string
+		for _, id := range s.IDs {
+			f, ok := r.by[id]
+			if !ok {
+				b.WriteString(" | —")
+				continue
+			}
+			b.WriteString(" | " + Icon(f.Status))
+			if f.Status != Clean && !slices.Contains(details, f.Detail) {
+				details = append(details, f.Detail)
+			}
+			for _, e := range f.Evidence {
+				if !slices.Contains(ev, e) {
+					ev = append(ev, e)
+				}
+			}
+		}
+		fmt.Fprintf(&b, " | %s | %s |\n", cell(shorten(strings.Join(details, " / "), maxDetail)), strings.Join(ev, ""))
+	}
+	if len(clean) > 0 {
+		if head {
+			b.WriteString("\n")
+		}
+		b.WriteString("**✅ " + i18n.R("cve.clean_title") + "** (" + i18n.R("cve.clean_note") + ")\n\n")
+		var groups []string
+		members := map[string][]string{}
+		for _, r := range clean {
+			g, leaf := splitAsset(r.asset)
+			if _, ok := members[g]; !ok {
+				groups = append(groups, g)
+			}
+			members[g] = append(members[g], leaf)
+		}
+		for _, g := range groups {
+			fmt.Fprintf(&b, "- `%s` (%d) : %s\n", g, len(members[g]), strings.Join(members[g], ", "))
 		}
 	}
 	return strings.TrimSuffix(b.String(), "\n")
+}
+
+type assetRow struct {
+	asset string
+	by    map[string]Finding
+}
+
+func (r *assetRow) worst(ids []string) string {
+	w := Clean
+	for _, id := range ids {
+		f, ok := r.by[id]
+		switch {
+		case ok && f.Status == Vulnerable:
+			return Vulnerable
+		case !ok || f.Status == Unknown:
+			w = Unknown
+		}
+	}
+	return w
+}
+
+func assetRows(finds []Finding) []*assetRow {
+	var rows []*assetRow
+	index := map[string]*assetRow{}
+	for _, f := range finds {
+		k := strings.ToLower(f.Asset)
+		r, ok := index[k]
+		if !ok {
+			r = &assetRow{asset: f.Asset, by: map[string]Finding{}}
+			index[k] = r
+			rows = append(rows, r)
+		}
+		r.by[f.CVE] = f
+	}
+	return rows
+}
+
+const maxDetail = 240
+
+func shorten(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
+func splitAsset(asset string) (group, leaf string) {
+	parts := strings.Split(asset, "/")
+	n := len(parts) - 1
+	if len(parts) >= 4 {
+		n = 3
+	}
+	if n <= 0 {
+		return "", asset
+	}
+	return strings.Join(parts[:n], "/"), strings.Join(parts[n:], "/")
 }

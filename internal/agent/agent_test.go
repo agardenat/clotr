@@ -772,3 +772,55 @@ func TestJournalShowsEachEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestHistoryCompactionUnderPressure(t *testing.T) {
+	reg := tools.NewRegistry(100000)
+	reg.Add(testutil.FakeTool{ToolName: "big", Fn: func(context.Context, json.RawMessage) (string, error) {
+		return strings.Repeat("ligne de log très longue\n", 400), nil
+	}})
+	reg.Add(testutil.FakeTool{ToolName: "evidence_read", Fn: func(context.Context, json.RawMessage) (string, error) {
+		return strings.Repeat("relu ", 400), nil
+	}})
+	var seen [][]llm.Message
+	var prompt atomic.Int32
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		seen = append(seen, append([]llm.Message(nil), req.Messages...))
+		if len(req.Tools) == 0 {
+			return testutil.Reply(`{"findings":["ok"]}`), nil
+		}
+		resp := testutil.Reply("", testutil.Call("big", map[string]string{"detail": strings.Repeat("détail ", 100)}), testutil.Call("evidence_read", map[string]string{"id": "E001"}))
+		resp.Usage.PromptTokens = int(prompt.Load())
+		return resp, nil
+	}}
+	run := func(p int32) []llm.Message {
+		seen = nil
+		prompt.Store(p)
+		r := runner(chat, reg)
+		r.MaxSteps = 5
+		r.KeepSteps, r.ToolChars = 1, 1500
+		r.Evidence = evidence.Open(t.TempDir(), 1)
+		if _, err := r.Run(context.Background(), Spec{TaskID: "t1", System: "s", User: "u", Tools: []string{"big", "evidence_read"}, Candidates: models}); err != nil {
+			t.Fatal(err)
+		}
+		return seen[len(seen)-1]
+	}
+	low := run(1000)
+	if a := low[2].ToolCalls[0].Function.Arguments; strings.Contains(a, "raccourci") || len(low[3].Content) < 1500 || strings.Contains(low[4].Content, "raccourcie") {
+		t.Fatalf("compaction renforcée sans pression: %q / %d / %.80q", a, len(low[3].Content), low[4].Content)
+	}
+	high := run(100000)
+	a := high[2].ToolCalls[0].Function.Arguments
+	var v map[string]string
+	if json.Unmarshal([]byte(a), &v) != nil || !strings.HasSuffix(v["raccourci"], "…") || len(a) > 200 {
+		t.Fatalf("arguments anciens: %q", a)
+	}
+	if c := high[3].Content; len(c) > 300 || !strings.Contains(c, "evidence_read id=E001") {
+		t.Fatalf("sortie archivée: %d %.200q", len(c), c)
+	}
+	if c := high[4].Content; len(c) > 300 || !strings.Contains(c, "refaire l'appel") {
+		t.Fatalf("sortie non archivée: %d %.200q", len(c), c)
+	}
+	if c := high[len(high)-2].Content; strings.Contains(c, "raccourcie") {
+		t.Fatal("dernière étape raccourcie")
+	}
+}
