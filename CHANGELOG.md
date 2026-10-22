@@ -4,6 +4,10 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- `access` dans le fichier d'un client (`read`, `exec`, `create`) : niveau d'accès de ses instances quand `--access` n'est pas donné ; `--access` le remplace pour toutes les instances, `--access read` compris. Les instances proposées hors `read` sont affichées au démarrage avec leur niveau, enregistrées dans le tour et l'audit, et la consigne du niveau est donnée aux agents par instance.
+- Une configuration qui utilise `access` dans un client est refusée par les versions antérieures.
+
 ## [0.29.0] - 2026-10-22
 
 ### Ajouté

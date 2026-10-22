@@ -802,6 +802,12 @@ func (in *Instance) EnvironmentLines() []string {
 		return nil
 	}
 	lines := []string{fmt.Sprintf("- Instance %s (template %s : %s). Outils : %s", in.Name, in.T.Name, in.T.Description, strings.Join(in.ToolNames(), ", "))}
+	switch in.access {
+	case access.Exec:
+		lines = append(lines, "  "+accessExecHint)
+	case access.Create:
+		lines = append(lines, "  "+accessExecHint+" "+accessCreateHint)
+	}
 	if in.pending != nil {
 		if inv.DiscoveredAt.IsZero() {
 			lines = append(lines, "  Instance activée seulement si une tâche appelle l'un de ses outils (identifiants demandés à l'utilisateur s'ils ne sont pas dans l'environnement, puis découverte) ; inventaire pas encore découvert, cibles issues de la configuration.")
@@ -840,6 +846,11 @@ func (in *Instance) EnvironmentLines() []string {
 	}
 	return append(lines, "  "+CommonHint)
 }
+
+const (
+	accessExecHint   = "Niveau d'accès exec : les outils d'exécution de cette instance lancent des commandes sur les hôtes et pods existants ; seulement des commandes sans effet de bord (versions, paquets, état), jamais de modification ; une commande hors de la liste autorisée est soumise à l'utilisateur, qui peut la refuser."
+	accessCreateHint = "Niveau d'accès create : les outils de création lancent des ressources éphémères propres à clotr (ex. un pod avec une image donnée), libres d'usage et supprimées automatiquement en fin de run."
+)
 
 const CommonHint = "Règle commune à tous les templates : rester factuel et ne jamais supposer le comportement, les valeurs par défaut ou la signification des messages des produits de cette plateforme ; en cas de doute, chercher dans la documentation officielle de l'éditeur (recherche web si elle est disponible), sinon le noter comme non vérifié."
 

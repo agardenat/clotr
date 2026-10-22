@@ -86,6 +86,7 @@ type options struct {
 	exportFmt    string
 	exportPath   string
 	accessFlag   string
+	accessSet    bool
 	access       access.Level
 }
 
@@ -210,6 +211,7 @@ func newRoot() *cobra.Command {
 		Example: i18n.T("cli.run.example"),
 		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.accessSet = cmd.Flags().Changed("access")
 			return cmdRun(cmd.Context(), o, args, cmd.OutOrStdout())
 		},
 	}
@@ -693,12 +695,6 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		}
 	}
 	rt.setupInstances(ctx, o, filter, warn)
-	switch o.access {
-	case access.Exec:
-		envLines = append(envLines, "- Niveau d'accès du run : exec. Les outils d'exécution lancent des commandes sur les hôtes et pods existants : seulement des commandes sans effet de bord (versions, paquets, état), jamais de modification ; une commande hors de la liste autorisée est soumise à l'utilisateur, qui peut la refuser.")
-	case access.Create:
-		envLines = append(envLines, "- Niveau d'accès du run : create. Les outils d'exécution lancent des commandes sur les hôtes et pods existants : seulement des commandes sans effet de bord (versions, paquets, état), jamais de modification ; une commande hors de la liste autorisée est soumise à l'utilisateur, qui peut la refuser. Les outils de création lancent des ressources éphémères propres à clotr (ex. un pod avec une image donnée), libres d'usage et supprimées automatiquement en fin de run.")
-	}
 	rt.baseEnv = envLines
 	for _, in := range rt.instances {
 		envLines = append(envLines, rt.instanceEnv[in.Name]...)
@@ -761,7 +757,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		if !ok {
 			continue
 		}
-		in, err := newInstance(cfg, ic, t, o.access)
+		in, err := newInstance(cfg, ic, t, o.levelFor(cfg, ic))
 		if err == nil {
 			err = in.Defer(ctx, cfg.Templates.CacheDir, cfg.Templates.CacheTTL.Duration, false)
 		}
@@ -777,7 +773,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 			warn(i18n.T("cli.warn.template_missing", ic.Name, ic.Template))
 			continue
 		}
-		in, err := newInstance(cfg, ic, t, o.access)
+		in, err := newInstance(cfg, ic, t, o.levelFor(cfg, ic))
 		if err == nil {
 			in.Audit = rt.audit.Log
 			in.Warn = warn
@@ -1207,9 +1203,6 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	n := turn.N
 	sess.Turns[n-1].Tools = o.tools
 	sess.Turns[n-1].Exclude = o.exclude
-	if o.access != access.Read {
-		sess.Turns[n-1].Access = o.access.String()
-	}
 	rt.evidence.Begin(filepath.Join(turnDir, "evidence"), n)
 	if err := rt.audit.Reopen(turnDir, "audit"); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.audit"), err)
@@ -1219,10 +1212,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	if rt.journal {
 		fmt.Fprintln(os.Stderr, i18n.T("journal.dir", filepath.Join(turnDir, "evidence")))
 	}
-	if o.access != access.Read {
-		fmt.Fprintln(os.Stderr, i18n.T("access.line", o.access))
-	}
-	rt.audit.Log("run_start", map[string]any{"request": request, "version": version, "tools": rt.registry.Names(), "session": sess.Name, "turn": n, "memory_loaded": len(rt.memory.All()), "web": o.webAllowed, "direct": o.direct, "access": o.access.String()})
+	rt.audit.Log("run_start", map[string]any{"request": request, "version": version, "tools": rt.registry.Names(), "session": sess.Name, "turn": n, "memory_loaded": len(rt.memory.All()), "web": o.webAllowed, "direct": o.direct, "access": o.access.String(), "access_set": o.accessSet})
 	mention := request
 	forced := slices.Clone(o.tools)
 	for _, t := range sess.Turns[:n-1] {
@@ -1231,6 +1221,11 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	}
 	rt.warnFiltered(mention)
 	reg, env := rt.scope(forced, mention)
+	if levels := accessSummary(rt.instances, reg); levels != "" {
+		sess.Turns[n-1].Access = levels
+		fmt.Fprintln(os.Stderr, i18n.T("access.line", levels))
+		rt.audit.Log("access", map[string]any{"levels": levels})
+	}
 	orch := rt.orchestrator(events, reg, env)
 	orch.History, orch.Turn = history, n
 	orch.AfterTask = rt.budgetRefresher(events)
@@ -1287,6 +1282,42 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	}
 	res.info = append(res.info, i18n.T("session.line", sess.Name, n, sess.Dir()))
 	return res
+}
+
+func (o *options) levelFor(cfg *config.Config, ic config.Instance) access.Level {
+	if o.accessSet {
+		return o.access
+	}
+	cl, _ := cfg.Client(ic.Client)
+	l, _ := access.Parse(cl.Access)
+	return l
+}
+
+func offeredInstances(instances []*template.Instance, reg *tools.Registry) []*template.Instance {
+	names := reg.Names()
+	var out []*template.Instance
+	for _, in := range instances {
+		if slices.ContainsFunc(names, func(n string) bool { return strings.HasPrefix(n, in.ToolPrefix()) }) {
+			out = append(out, in)
+		}
+	}
+	return out
+}
+
+func accessSummary(instances []*template.Instance, reg *tools.Registry) string {
+	by := map[access.Level][]string{}
+	for _, in := range offeredInstances(instances, reg) {
+		if in.Access() != access.Read {
+			by[in.Access()] = append(by[in.Access()], in.Name)
+		}
+	}
+	var parts []string
+	for _, l := range []access.Level{access.Exec, access.Create} {
+		if len(by[l]) > 0 {
+			parts = append(parts, i18n.T("access.instances", l, strings.Join(by[l], ", ")))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func confirmCommand(ctx context.Context, question string) (access.Answer, error) {
