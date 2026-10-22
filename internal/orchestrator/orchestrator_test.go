@@ -672,7 +672,7 @@ func TestCVEMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Results[0].TaskID != "t0" || !strings.Contains(tl.input["t0"], "Fiches CVE") || !strings.Contains(tl.input["t0"], "CVE-2026-0001") {
+	if rep.Results[0].TaskID != "t0" || !strings.Contains(tl.input["t0"], "Fiches, avant toute planification") || !strings.Contains(tl.input["t0"], "CVE-2026-0001") {
 		t.Fatalf("t0: %q", tl.input["t0"])
 	}
 	if !strings.Contains(tl.input["planner"], "Fiches CVE établies") || strings.Contains(tl.input["planner"], "tri d'incident") {

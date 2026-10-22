@@ -206,3 +206,42 @@ func TestSectionCompact(t *testing.T) {
 		t.Fatalf("détails des sains repris ou tableau trop long (%d)", len(sec))
 	}
 }
+
+func TestSubjectsAndCompromise(t *testing.T) {
+	if got := Extract("avis ghsa-ABCD-1234-wxyz et CVE-2026-0001"); !slices.Equal(got, []string{"GHSA-abcd-1234-wxyz", "CVE-2026-0001"}) {
+		t.Fatal(got)
+	}
+	if got := Subjects("auto", "vérifie CVE-2026-0001"); !slices.Equal(got, []string{"CVE-2026-0001"}) {
+		t.Fatal(got)
+	}
+	if got := Subjects("LiteLLM 1.107.0  supply chain", "vérifie les passerelles"); !slices.Equal(got, []string{"LiteLLM 1.107.0 supply chain"}) {
+		t.Fatal(got)
+	}
+	if got := Subjects("", "rien"); len(got) != 0 {
+		t.Fatal(got)
+	}
+	ev := evidence.Open(t.TempDir(), 1)
+	e := ev.Add("t1", "x", "{}", "o", nil)
+	subject := "LiteLLM 1.107.0 supply chain"
+	s := New([]string{subject}, memory.NewStore(), ev, audit.Nop())
+	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"litellm 1.107.0 SUPPLY chain","kind":"compromise","product":"litellm (PyPI)","affected":"1.107.0","fixed":"1.106.x","detection":"pip show litellm","commands":["pip show litellm"],"iocs":["/tmp/.x","evil.example"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	a := s.Advisories()[0]
+	if a.CVE != subject || a.Kind != KindCompr || len(a.IOCs) != 2 || !strings.Contains(a.line(), "(compromission)") || !strings.Contains(a.line(), "evil.example") {
+		t.Fatalf("fiche: %+v", a)
+	}
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"`+subject+`","kind":"ransomware","product":"x","affected":"x","fixed":"x","detection":"x","commands":["x"]}`)); err == nil {
+		t.Fatal("kind invalide accepté")
+	}
+	for asset, st := range map[string]string{"gw/clovis": "compromised", "gw/onellm": "vulnerable", "gw/other": "clean"} {
+		if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"`+subject+`","asset":"`+asset+`","status":"`+st+`","detail":"d","evidence":["`+e+`"]}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sec := s.Section()
+	if !strings.Contains(sec, "☠️ 1 compromised · 🚨 1 vulnerable") || strings.Index(sec, "| ☠️ | gw/clovis") > strings.Index(sec, "| 🚨 | gw/onellm") || strings.Index(sec, "| ☠️ | gw/clovis") < 0 {
+		t.Fatalf("section:\n%s", sec)
+	}
+}
