@@ -57,6 +57,7 @@ type Runner struct {
 	StallSteps      int
 	ConcludeNotes   func(task string) string
 	Inbox           func(reader tools.Caller) string
+	InboxFormat     string
 	Evidence        *evidence.Store
 	Journal         bool
 	Chat            llm.Chatter
@@ -194,7 +195,11 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 		}
 		if !final && step > 1 && r.Inbox != nil {
 			if news := r.Inbox(tools.Caller{Task: spec.TaskID, Model: s.model.Ref(), Sovereign: s.model.Sovereign}); news != "" {
-				msgs = append(msgs, llm.Message{Role: "user", Content: fmt.Sprintf(inboxMsg, news)})
+				format := inboxMsg
+				if r.InboxFormat != "" {
+					format = r.InboxFormat
+				}
+				msgs = append(msgs, llm.Message{Role: "user", Content: fmt.Sprintf(format, news)})
 				r.Audit.Log("inbox", map[string]any{"task": spec.TaskID, "step": step, "content": news})
 			}
 		}

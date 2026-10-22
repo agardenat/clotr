@@ -659,7 +659,7 @@ func TestCVEMode(t *testing.T) {
 	o.CVE = cve.New([]string{"CVE-2026-0001"}, o.Memory, ev, audit.Nop())
 	o.Tools.Add(o.CVE.Tools()...)
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
-	if _, err := o.CVE.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0001","product":"PHP","affected":"< 8.2.27","fixed":"8.2.27","detection":"php -v","evidence":["`+src+`"]}`)); err != nil {
+	if _, err := o.CVE.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0001","product":"PHP","affected":"< 8.2.27","fixed":"8.2.27","detection":"php -v","commands":["php -v"],"evidence":["`+src+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if o.advisoriesDone() == "" {

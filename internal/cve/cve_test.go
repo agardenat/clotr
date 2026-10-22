@@ -49,7 +49,10 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 	if !slices.Equal(s.Missing(), []string{"CVE-2026-0001"}) {
 		t.Fatal(s.Missing())
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-9999","product":"x","affected":"x","fixed":"x","detection":"x"}`)); err == nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","detection":"x"}`)); err == nil || !strings.Contains(err.Error(), "commands") {
+		t.Fatalf("fiche sans commandes: %v", err)
+	}
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-9999","product":"x","affected":"x","fixed":"x","detection":"x","commands":["x"]}`)); err == nil {
 		t.Fatal("CVE hors demande acceptée")
 	}
 	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"cve-2026-0001","product":"PHP","affected":"8.2 < 8.2.27","fixed":"8.2.27","detection":"php -v","commands":["php -v","rpm -qa  | grep -i php"],"evidence":["`+src+`"]}`)); err != nil {
@@ -122,7 +125,7 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 func TestUnverifiedAdvisory(t *testing.T) {
 	s := New([]string{"CVE-2026-0002"}, memory.NewStore(), evidence.Open(t.TempDir(), 1), audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0002","product":"x","affected":"y","fixed":"z","detection":"w"}`)); err != nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0002","product":"x","affected":"y","fixed":"z","detection":"w","commands":["x --version"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if a := s.Advisories()[0]; a.Verified || !strings.Contains(a.line(), "NON VÉRIFIÉE") {
@@ -130,5 +133,46 @@ func TestUnverifiedAdvisory(t *testing.T) {
 	}
 	if s.Section() == "" {
 		t.Fatal("section vide")
+	}
+}
+
+func TestReminder(t *testing.T) {
+	ev := evidence.Open(t.TempDir(), 1)
+	s := New([]string{"CVE-2026-0003"}, memory.NewStore(), ev, audit.Nop())
+	reader := tools.Caller{Task: "t2"}
+	for i := range ReminderEvery - 1 {
+		ev.Add("t2", "k8s_pod_exec", "{}", "out", nil)
+		ev.Add("t2", "evidence_read", "{}", "out", nil)
+		if i == 0 {
+			ev.Add("t0", "k8s_pod_exec", "{}", "out", nil)
+		}
+	}
+	if got := s.Inbox(reader); got != "" {
+		t.Fatalf("rappel trop tôt: %q", got)
+	}
+	last := ev.Add("t2", "k8s_run_pod", "{}", "out", nil)
+	got := s.Inbox(reader)
+	if !strings.Contains(got, "Rappel : 4 sorties") || !strings.Contains(got, ReportTool) {
+		t.Fatalf("rappel: %q", got)
+	}
+	if s.Inbox(reader) != "" {
+		t.Fatal("rappel répété sans nouvelle sortie")
+	}
+	for range ReminderEvery {
+		ev.Add("t0", "k8s_pod_exec", "{}", "out", nil)
+	}
+	if s.Inbox(tools.Caller{Task: "t0"}) != "" {
+		t.Fatal("rappel à la tâche des fiches")
+	}
+	for range ReminderEvery - 1 {
+		ev.Add("t2", "k8s_pod_exec", "{}", "out", nil)
+	}
+	ctx := tools.WithCaller(context.Background(), reader)
+	if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0003","asset":"a/b","status":"unknown","detail":"d","evidence":["`+last+`"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	ev.Add("t2", "k8s_pod_exec", "{}", "out", nil)
+	if got := s.Inbox(reader); strings.Contains(got, "Rappel") {
+		t.Fatalf("compteur non remis à zéro par cve_report: %q", got)
 	}
 }
