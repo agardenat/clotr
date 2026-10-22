@@ -20,6 +20,7 @@ import (
 	"go.starlark.net/starlarkstruct"
 	"go.starlark.net/syntax"
 
+	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/i18n"
 )
 
@@ -40,6 +41,7 @@ type scriptTool struct {
 	desc   starlark.Value
 	schema json.RawMessage
 	fn     starlark.Callable
+	level  access.Level
 }
 
 type memoEntry struct {
@@ -55,7 +57,7 @@ const (
 	localLoading  = "clotr.loading"
 )
 
-var scriptPredeclared = []string{"http", "ssh", "jq", "json", "time", "math", "crypto", "base64", "file", "env", "parallel", "catch", "sprintf", "logstats", "redact", "instance", "tool", "struct", "re", "url", "compact_json", "yaml"}
+var scriptPredeclared = []string{"http", "ssh", "jq", "json", "time", "math", "crypto", "base64", "file", "env", "parallel", "catch", "sprintf", "logstats", "redact", "instance", "tool", "struct", "re", "url", "compact_json", "yaml", "sleep"}
 
 func checkScript(t *Template) error {
 	_, _, err := starlark.SourceProgramOptions(fileOptions, t.ScriptPath, t.ScriptSrc, func(name string) bool {
@@ -93,6 +95,36 @@ func (in *Instance) predeclared() starlark.StringDict {
 		"url":          urlModule,
 		"compact_json": starlark.NewBuiltin("compact_json", builtinCompactJSON),
 		"yaml":         yamlModule,
+		"sleep":        starlark.NewBuiltin("sleep", in.builtinSleep),
+	}
+}
+
+const maxSleep = 60 * gotime.Second
+
+func (in *Instance) builtinSleep(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var secs starlark.Value
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "seconds", &secs); err != nil {
+		return nil, err
+	}
+	f, ok := starlark.AsFloat(secs)
+	if !ok || f < 0 {
+		return nil, i18n.E("tpl.star.sleep", secs.String())
+	}
+	if thread.Local(localLoading) != nil {
+		return nil, i18n.E("tpl.star.sleep_load")
+	}
+	d := min(gotime.Duration(f*float64(gotime.Second)), maxSleep)
+	return starlark.None, in.sleep(threadCtx(thread), d)
+}
+
+func sleepCtx(ctx context.Context, d gotime.Duration) error {
+	t := gotime.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -234,8 +266,13 @@ func (in *Instance) builtinTool(thread *starlark.Thread, b *starlark.Builtin, ar
 	var desc starlark.Value
 	var schema *starlark.Dict
 	var fn starlark.Callable
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name", &name, "description", &desc, "schema", &schema, "fn", &fn); err != nil {
+	var lvl string
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name", &name, "description", &desc, "schema", &schema, "fn", &fn, "access?", &lvl); err != nil {
 		return nil, err
+	}
+	level, err := access.Parse(lvl)
+	if err != nil {
+		return nil, fmt.Errorf("tool %s: %w", name, err)
 	}
 	if !identRe.MatchString(name) {
 		return nil, i18n.E("tpl.star.tool_name", name)
@@ -260,13 +297,13 @@ func (in *Instance) builtinTool(thread *starlark.Thread, b *starlark.Builtin, ar
 			return nil, i18n.E("tpl.star.tool_dup", name)
 		}
 	}
-	in.script.tools = append(in.script.tools, &scriptTool{name: name, desc: desc, schema: raw, fn: fn})
+	in.script.tools = append(in.script.tools, &scriptTool{name: name, desc: desc, schema: raw, fn: fn, level: level})
 	return starlark.None, nil
 }
 
 func (in *Instance) checkToolNames() error {
 	seen := map[string]bool{}
-	for _, n := range in.ToolNames() {
+	for _, n := range in.allToolNames() {
 		if seen[n] {
 			return i18n.E("tpl.star.tool_twice", n)
 		}
@@ -284,14 +321,26 @@ func (in *Instance) checkToolNames() error {
 }
 
 func (in *Instance) ToolNames() []string {
+	return in.toolNames(in.access)
+}
+
+func (in *Instance) allToolNames() []string {
+	return in.toolNames(access.Create)
+}
+
+func (in *Instance) toolNames(level access.Level) []string {
 	var names []string
 	if in.script != nil {
 		for _, st := range in.script.tools {
-			names = append(names, in.Name+"_"+st.name)
+			if level.Allows(st.level) {
+				names = append(names, in.Name+"_"+st.name)
+			}
 		}
 	}
 	for _, ts := range in.tools {
-		names = append(names, in.Name+"_"+ts.ToolName())
+		if level.Allows(kinds[ts.Kind].level) {
+			names = append(names, in.Name+"_"+ts.ToolName())
+		}
 	}
 	return names
 }

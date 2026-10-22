@@ -224,6 +224,29 @@ func Confirm(question string) (bool, error) {
 	return false, nil
 }
 
+func Ask(ctx context.Context, question string) (string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	tty, err := OpenTTY()
+	if err != nil {
+		return "", i18n.E("creds.notty")
+	}
+	defer tty.Close()
+	if !term.IsTerminal(tty.In.Fd()) {
+		return "", i18n.E("creds.notty")
+	}
+	if Suspend != nil {
+		defer Suspend()()
+	}
+	fmt.Fprint(tty.Out, question)
+	return readInterruptible(ctx, tty, func() (string, error) {
+		return bufio.NewReader(tty.In).ReadString('\n')
+	})
+}
+
 func orNone(s string) string {
 	if s == "" {
 		return "-"

@@ -19,6 +19,7 @@ import (
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 
+	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/driver/ssh"
@@ -98,8 +99,12 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 	name := "test"
 	var params, env, files, credsD *starlark.Dict
 	var httpMock, sshMock starlark.Value
-	var now string
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name?", &name, "params?", &params, "http?", &httpMock, "ssh?", &sshMock, "env?", &env, "files?", &files, "now?", &now, "creds?", &credsD); err != nil {
+	var now, level, confirm string
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name?", &name, "params?", &params, "http?", &httpMock, "ssh?", &sshMock, "env?", &env, "files?", &files, "now?", &now, "creds?", &credsD, "access?", &level, "confirm?", &confirm); err != nil {
+		return nil, err
+	}
+	lvl, err := access.Parse(level)
+	if err != nil {
 		return nil, err
 	}
 	given := map[string]any{}
@@ -115,6 +120,13 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 		return nil, err
 	}
 	ti := &testInstance{in: in}
+	in.SetAccess(lvl)
+	in.Confirm = func(_ context.Context, q string) (access.Answer, error) {
+		ti.mu.Lock()
+		ti.questions = append(ti.questions, q)
+		ti.mu.Unlock()
+		return access.ParseAnswer(confirm), nil
+	}
 	in.Print = func(msg string) { fmt.Println("  " + msg) }
 	envMap := dictStrings(env)
 	in.getenv = func(k string) string { return envMap[k] }
@@ -141,6 +153,7 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 		}
 		in.now = func() time.Time { return ts }
 	}
+	in.sleep = func(context.Context, time.Duration) error { return nil }
 	in.transport = &mockTransport{ti: ti, mock: httpMock}
 	in.pool = &mockSSH{ti: ti, mock: sshMock}
 	given2 := dictTuples(credsD)
@@ -222,10 +235,11 @@ func dictTuples(d *starlark.Dict) map[string][]string {
 }
 
 type testInstance struct {
-	in       *Instance
-	mu       sync.Mutex
-	requests []map[string]any
-	commands []map[string]any
+	in        *Instance
+	mu        sync.Mutex
+	requests  []map[string]any
+	commands  []map[string]any
+	questions []string
 }
 
 func (ti *testInstance) String() string        { return "template.instance(" + ti.in.Name + ")" }
@@ -234,7 +248,7 @@ func (ti *testInstance) Freeze()               {}
 func (ti *testInstance) Truth() starlark.Bool  { return true }
 func (ti *testInstance) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable") }
 func (ti *testInstance) AttrNames() []string {
-	return []string{"call", "commands", "discover", "environment", "error", "fn", "requests", "tools"}
+	return []string{"call", "cleanup", "commands", "discover", "environment", "error", "fn", "questions", "requests", "tools", "tracked"}
 }
 
 func (ti *testInstance) Attr(name string) (starlark.Value, error) {
@@ -312,6 +326,28 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 			}
 			return toStarlark(out)
 		}), nil
+	case "questions":
+		return starlark.NewBuiltin(name, func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			ti.mu.Lock()
+			defer ti.mu.Unlock()
+			return toStarlark(append([]string(nil), ti.questions...))
+		}), nil
+	case "tracked":
+		return starlark.NewBuiltin(name, func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			return toStarlark(append([]string{}, ti.in.Tracked()...))
+		}), nil
+	case "cleanup":
+		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			var out []any
+			for _, r := range ti.in.Cleanup(threadCtx(thread)) {
+				e := ""
+				if r.Err != nil {
+					e = r.Err.Error()
+				}
+				out = append(out, map[string]any{"resource": r.Resource, "error": e})
+			}
+			return toStarlark(out)
+		}), nil
 	case "requests":
 		return starlark.NewBuiltin(name, func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 			ti.mu.Lock()
@@ -357,7 +393,7 @@ func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	m.ti.mu.Lock()
 	m.ti.requests = append(m.ti.requests, rec)
 	m.ti.mu.Unlock()
-	status, out, hdr, err := m.respond(rec)
+	status, out, hdr, msgs, err := m.respond(rec)
 	if err != nil {
 		return nil, err
 	}
@@ -365,14 +401,38 @@ func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for k, v := range hdr {
 		h.Set(k, v)
 	}
+	if strings.EqualFold(req.Header.Get("Upgrade"), "websocket") && msgs != nil {
+		if status == http.StatusOK {
+			status = http.StatusSwitchingProtocols
+		}
+		if h.Get("Sec-WebSocket-Accept") == "" {
+			h.Set("Sec-WebSocket-Accept", wsAccept(req.Header.Get("Sec-WebSocket-Key")))
+		}
+		if p := req.Header.Get("Sec-WebSocket-Protocol"); h.Get("Sec-WebSocket-Protocol") == "" && p != "" {
+			h.Set("Sec-WebSocket-Protocol", strings.TrimSpace(strings.Split(p, ",")[0]))
+		}
+		var buf bytes.Buffer
+		for _, msg := range msgs {
+			_ = encodeFrame(&buf, wsBinary, msg, false)
+		}
+		_ = encodeFrame(&buf, wsClose, []byte{0x03, 0xE8}, false)
+		return &http.Response{StatusCode: status, Header: h, Body: &mockWS{Reader: &buf}, Request: req}, nil
+	}
 	return &http.Response{StatusCode: status, Header: h, Body: io.NopCloser(bytes.NewReader(out)), Request: req}, nil
 }
 
-func (m *mockTransport) respond(rec map[string]any) (int, []byte, map[string]string, error) {
+type mockWS struct {
+	io.Reader
+}
+
+func (m *mockWS) Write(p []byte) (int, error) { return len(p), nil }
+func (m *mockWS) Close() error                { return nil }
+
+func (m *mockTransport) respond(rec map[string]any) (int, []byte, map[string]string, [][]byte, error) {
 	var resp starlark.Value
 	switch mk := m.mock.(type) {
 	case nil, starlark.NoneType:
-		return 0, nil, nil, i18n.E("tpl.test.no_http_mock")
+		return 0, nil, nil, nil, i18n.E("tpl.test.no_http_mock")
 	case *starlark.Dict:
 		key := fmt.Sprintf("%s %s", rec["method"], rec["path"])
 		v, found, _ := mk.Get(starlark.String(key))
@@ -380,24 +440,24 @@ func (m *mockTransport) respond(rec map[string]any) (int, []byte, map[string]str
 			v, found, _ = mk.Get(starlark.String("*"))
 		}
 		if !found {
-			return http.StatusNotFound, []byte(i18n.T("tpl.test.no_route") + key), nil, nil
+			return http.StatusNotFound, []byte(i18n.T("tpl.test.no_route") + key), nil, nil, nil
 		}
 		resp = v
 		if fn, ok := v.(starlark.Callable); ok {
 			r, err := callMock(fn, rec)
 			if err != nil {
-				return 0, nil, nil, err
+				return 0, nil, nil, nil, err
 			}
 			resp = r
 		}
 	case starlark.Callable:
 		r, err := callMock(mk, rec)
 		if err != nil {
-			return 0, nil, nil, err
+			return 0, nil, nil, nil, err
 		}
 		resp = r
 	default:
-		return 0, nil, nil, i18n.E("tpl.test.http_mock")
+		return 0, nil, nil, nil, i18n.E("tpl.test.http_mock")
 	}
 	return decodeMockResponse(resp)
 }
@@ -416,14 +476,14 @@ func callMock(fn starlark.Callable, rec map[string]any) (starlark.Value, error) 
 	return v, nil
 }
 
-func decodeMockResponse(v starlark.Value) (int, []byte, map[string]string, error) {
+func decodeMockResponse(v starlark.Value) (int, []byte, map[string]string, [][]byte, error) {
 	g, err := fromStarlark(v)
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, nil, err
 	}
 	m, ok := g.(map[string]any)
 	if !ok {
-		return 0, nil, nil, i18n.E("tpl.test.http_response")
+		return 0, nil, nil, nil, i18n.E("tpl.test.http_response")
 	}
 	status := 200
 	if s, ok := m["status"].(int64); ok {
@@ -433,7 +493,7 @@ func decodeMockResponse(v starlark.Value) (int, []byte, map[string]string, error
 	if j, ok := m["json"]; ok {
 		raw, err := starlarkJSONAny(j)
 		if err != nil {
-			return 0, nil, nil, err
+			return 0, nil, nil, nil, err
 		}
 		out = raw
 	} else if b, ok := m["body"].(string); ok {
@@ -445,7 +505,14 @@ func decodeMockResponse(v starlark.Value) (int, []byte, map[string]string, error
 			hdr[k] = fmt.Sprint(v)
 		}
 	}
-	return status, out, hdr, nil
+	var msgs [][]byte
+	if l, ok := m["messages"].([]any); ok {
+		msgs = [][]byte{}
+		for _, e := range l {
+			msgs = append(msgs, []byte(fmt.Sprint(e)))
+		}
+	}
+	return status, out, hdr, msgs, nil
 }
 
 type mockSSH struct {

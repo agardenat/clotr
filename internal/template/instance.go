@@ -20,6 +20,7 @@ import (
 
 	"go.starlark.net/starlark"
 
+	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/driver/ssh"
@@ -90,6 +91,7 @@ type Instance struct {
 	Warn  func(msg string)
 
 	Activating func()
+	Confirm    func(ctx context.Context, question string) (access.Answer, error)
 
 	Client      string
 	ClientTerms []string
@@ -115,12 +117,19 @@ type Instance struct {
 	realPath  func(string) (string, error)
 	listDir   func(string, int, int) ([]dirEntry, bool, error)
 	now       func() time.Time
+	sleep     func(context.Context, time.Duration) error
 	transport http.RoundTripper
 	clients   map[string]*http.Client
 	files     []string
 	dirs      []string
 	creds     map[string]creds.Pair
 	pending   *activation
+
+	access   access.Level
+	commands *access.Commands
+	accessMu sync.Mutex
+	always   map[string]bool
+	tracked  []*trackedRes
 }
 
 type activation struct {
@@ -138,7 +147,7 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 	if err != nil {
 		return nil, fmt.Errorf("instance %s: %w", name, err)
 	}
-	in := &Instance{Name: name, T: t, params: params, conns: map[string]options{}, https: map[string]*httpConn{}, memo: map[string]*memoEntry{}, creds: map[string]creds.Pair{}, getenv: os.Getenv, readFile: os.ReadFile, realPath: filepath.EvalSymlinks, listDir: walkDir, now: time.Now}
+	in := &Instance{Name: name, T: t, params: params, conns: map[string]options{}, https: map[string]*httpConn{}, memo: map[string]*memoEntry{}, creds: map[string]creds.Pair{}, getenv: os.Getenv, readFile: os.ReadFile, realPath: filepath.EvalSymlinks, listDir: walkDir, now: time.Now, sleep: sleepCtx}
 	var rendered []string
 	for i, f := range t.Files {
 		r, err := Render(f, params)
@@ -151,6 +160,9 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 	}
 	if in.files, in.dirs, err = splitFiles(rendered); err != nil {
 		return nil, fmt.Errorf("instance %s: files: %w", name, err)
+	}
+	if in.commands, err = access.CompileCommands(t.Commands); err != nil {
+		return nil, fmt.Errorf("instance %s: commands: %w", name, err)
 	}
 	for _, cn := range sortedKeys(t.Connectors) {
 		c := t.Connectors[cn]

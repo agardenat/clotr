@@ -14,6 +14,13 @@ connectors:
     base_url: "{{.api_url}}"
     auth: {user_env: "{{.user_env}}", password_env: "{{.password_env}}", label: API demo}
     allow: ["^/api/"]
+    levels:
+      exec:
+        allow: ["^/api/nodes/[^/]+/run$"]
+        argv_param: cmd
+      create:
+        methods: [POST, DELETE]
+        allow: ["^/api/jobs(/[^/]+)?$"]
   rpc:
     driver: http
     base_url: "{{.api_url}}"
@@ -37,6 +44,8 @@ tools:
   - kind: ssh_grep
   - kind: log_stats
 companions: [inventory, node_status]
+commands:
+  allow: ["status --short"]
 ssh_paths:
   allow: [/var/log, /var/log/**]
   deny: ["**/*.key"]

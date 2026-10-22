@@ -15,6 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/i18n"
 )
 
@@ -145,6 +146,7 @@ type Instance struct {
 	Enabled  *bool          `yaml:"enabled"`
 	Params   map[string]any `yaml:"params"`
 	SSHPaths PathRules      `yaml:"ssh_paths"`
+	Commands access.Rules   `yaml:"commands"`
 	Client   string         `yaml:"-"`
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/i18n"
 )
@@ -30,6 +31,7 @@ type Template struct {
 	Tools       []ToolSpec           `yaml:"tools"`
 	Companions  []string             `yaml:"companions"`
 	SSHPaths    ssh.PathRules        `yaml:"ssh_paths"`
+	Commands    access.Rules         `yaml:"commands"`
 	Hints       string               `yaml:"hints"`
 
 	Source     string `yaml:"-"`
@@ -195,6 +197,9 @@ func (t *Template) validate() error {
 		if err := checkPaths(t.SSHPaths); err != nil {
 			fail(err.Error())
 		}
+	}
+	if _, err := access.CompileCommands(t.Commands); err != nil {
+		fail("commands: " + err.Error())
 	}
 	if t.ScriptSrc != nil {
 		if err := checkScript(t); err != nil {
