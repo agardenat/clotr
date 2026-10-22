@@ -160,6 +160,7 @@ type Client struct {
 	Aliases   []string          `yaml:"aliases"`
 	Context   string            `yaml:"context"`
 	Vars      map[string]string `yaml:"vars"`
+	Access    string            `yaml:"access"`
 	Params    map[string]any    `yaml:"params"`
 	Instances []Instance        `yaml:"instances"`
 }
@@ -689,6 +690,9 @@ func (c *Config) validate() error {
 				fail(i18n.T("config.client_alias_dup", cl.Name, t, other))
 			}
 			terms[key] = cl.Name
+		}
+		if _, err := access.Parse(cl.Access); err != nil {
+			fail(i18n.T("config.client_access", cl.Name, err))
 		}
 		for k, v := range cl.Vars {
 			if !varName.MatchString(k) {

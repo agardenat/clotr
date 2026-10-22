@@ -42,6 +42,8 @@ var accessMsgs = map[string]msg{
 	"tpl.http.track_under":        {"track %q must be under the POST path %s", "track %q doit être sous le chemin du POST %s"},
 	"tpl.star.sleep":              {"sleep: number of seconds >= 0 expected, got %s", "sleep : nombre de secondes >= 0 attendu, %s reçu"},
 	"tpl.star.sleep_load":         {"sleep: not allowed while loading the script", "sleep : interdit au chargement du script"},
+	"config.client_access":        {"client %s: access: %v", "client %s : access : %v"},
+	"access.instances":            {"%s (%s)", "%s (%s)"},
 	"tpl.arg.list":                {"%s: list expected, got %s", "%s : liste attendue, %s reçu"},
 	"cli.flag.access":             {"access level for this run: read (default, read only), exec (commands on existing hosts and pods: commands.allow without asking, others confirmed), create (also ephemeral resources created and removed by clotr)", "niveau d'accès pour ce run : read (défaut, lecture seule), exec (commandes sur les hôtes et pods existants : commands.allow sans question, les autres confirmées), create (en plus, ressources éphémères créées et supprimées par clotr)"},
 }

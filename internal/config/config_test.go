@@ -140,6 +140,12 @@ func TestClients(t *testing.T) {
 	if cl, ok := c.Client("acme"); !ok || cl.Params["proxy_url"] != "socks5h://localhost:1080" || cl.Aliases[0] != "acmecorp" || cl.Instances != nil || cl.Vars["project_code"] != "PRJ-0000" {
 		t.Fatalf("client: %+v", cl)
 	}
+	if c, err := load(map[string]string{"acme": "name: acme\naccess: exec\ninstances:\n  - {name: acme-lake, template: x}\n"}); err != nil || c.Clients[0].Access != "exec" {
+		t.Fatalf("access: %v", err)
+	}
+	if _, err := load(map[string]string{"acme": "name: acme\naccess: root\ninstances:\n  - {name: acme-lake, template: x}\n"}); err == nil || !strings.Contains(err.Error(), "root") {
+		t.Fatalf("access invalide accepté: %v", err)
+	}
 	for name, bad := range map[string]map[string]string{
 		"nom différent du fichier": {"acme": "name: other\n"},
 		"nom d'instance":           {"solo": "name: solo\n"},

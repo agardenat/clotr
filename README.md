@@ -317,7 +317,7 @@ Les hôtes SSH peuvent être désignés par leur nom complet, leur IP, leur nom 
 
 ## Niveaux d'accès
 
-Le niveau d'accès se choisit à chaque lancement avec `run --access` ; il vaut `read` par défaut, n'est jamais lu dans la configuration et n'est pas repris par `run -s`. Il borne ce que les agents peuvent faire, quels que soient les droits des comptes utilisés.
+Le niveau d'accès borne ce que les agents peuvent faire, quels que soient les droits des comptes utilisés. Il vaut `read` par défaut ; `access` dans le fichier d'un client fixe celui de ses instances, et `run --access` fixe celui de toutes les instances pour ce lancement, en remplaçant celui des clients (`--access read` les ramène en lecture seule). Il n'est pas repris par `run -s`.
 
 | Niveau | Ce qui s'ajoute |
 |---|---|
@@ -325,7 +325,7 @@ Le niveau d'accès se choisit à chaque lancement avec `run --access` ; il vaut 
 | `exec` | commandes sur les hôtes et pods existants : outils `access = "exec"` des templates, `ssh_exec`, `http.stream` sur `levels.exec` |
 | `create` | en plus, ressources éphémères créées par clotr : outils `access = "create"`, méthodes de `levels.create` |
 
-Un outil réservé à un niveau supérieur n'est pas proposé aux agents ; une primitive appelée en dessous de son niveau échoue. Le niveau est affiché au démarrage s'il n'est pas `read`, enregistré dans le tour de la session (`access`) et dans l'audit (`run_start`), et décrit aux agents.
+Un outil réservé à un niveau supérieur n'est pas proposé aux agents ; une primitive appelée en dessous de son niveau échoue. Les instances proposées pour la demande qui ne sont pas en `read` sont affichées au démarrage avec leur niveau (`Niveau d'accès : exec (k8s-acme, vm-acme)`), enregistrées dans le tour de la session (`access`) et dans l'audit (`access`), et leur niveau est décrit aux agents.
 
 ### Commandes (`exec`)
 
@@ -498,6 +498,7 @@ instances:
 | `aliases` | autres termes qui désignent le client dans une demande ; un alias n'appartient qu'à un client |
 | `context` | description transmise aux agents avec les instances du client |
 | `vars` | références du client (codes client, projet…), clés `[a-z][a-z0-9_]*` : `{{.<clé>}}` est remplacé dans les valeurs des `params` du client et de ses instances (une clé inconnue désactive l'instance, avec un avertissement), et les références sont transmises aux agents avec le `context`, pour les outils qui les attendent (serveurs MCP de tickets ou d'inventaire) |
+| `access` | niveau d'accès de ses instances quand `--access` n'est pas donné : `read` (défaut), `exec` ou `create`, voir Niveaux d'accès |
 | `params` | valeurs par défaut des paramètres de ses instances (proxy, compte et clé SSH…) : appliquées seulement aux paramètres que le template de l'instance déclare, la valeur de l'instance l'emporte |
 | `instances` | même format que `instances` du fichier principal ; les noms restent uniques sur toute la configuration |
 
@@ -564,7 +565,7 @@ clotr run --access exec "version de PHP dans les pods du namespace web" -t prod
 | `--export docx\|pdf` (`run`, `session`) | produit aussi le rapport en document via `report_export.mcp`, voir Export du rapport en document |
 | `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |
 | `--panic` (`run`) | mode incident avec journal en direct des preuves, constats et lacunes, voir Mode panique |
-| `--access read\|exec\|create` (`run`) | niveau d'accès du run, `read` par défaut, voir Niveaux d'accès |
+| `--access read\|exec\|create` (`run`) | niveau d'accès de toutes les instances pour ce run, prioritaire sur `access` des clients, voir Niveaux d'accès |
 | `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
 
 La demande `-` est lue sur stdin. Ctrl-C annule proprement les agents en cours.
