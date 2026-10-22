@@ -15,6 +15,10 @@ ROUTES = {
     "POST /rpc/describeNode": rpc_mock,
     "GET /api/status": {"json": {"services": [{"name": "web"}, {"name": "db"}]}},
     "GET /api/nodes/n1": {"json": {"health": "GOOD"}},
+    "GET /api/nodes/n1/run": {"messages": ["\x01ok\n", "\x02warn"]},
+    "POST /api/jobs": {"status": 201, "json": {}},
+    "DELETE /api/jobs/j1": {"json": {}},
+    "DELETE /api/jobs/j2": {"json": {}},
 }
 
 def ssh_mock(host, cmd):
@@ -98,3 +102,31 @@ def test_ssh():
 def test_missing_credentials_file():
     inst = new(files = {})
     assert.fails(lambda: inst.discover(), "file.read")
+
+def test_access():
+    inst = new()
+    inst.discover()
+    assert.true("node_run" not in inst.tools())
+    assert.true("job" not in inst.tools())
+    inst = new(access = "exec")
+    inst.discover()
+    assert.true("job" not in inst.tools())
+    assert.eq(inst.call("node_run", {"node": "n1", "argv": ["status", "--short"]}), "1 ok\n\n2 warn")
+    req = [r for r in inst.requests() if r["path"] == "/api/nodes/n1/run"][0]
+    assert.eq(req["query"]["cmd"], "status,--short")
+    assert.eq(req["headers"]["sec-websocket-protocol"], "demo.v1")
+    assert.contains(inst.error("node_run", {"node": "n1", "argv": ["reboot"]}), "reboot")
+    assert.eq(len(inst.questions()), 1)
+    inst = new(access = "exec", confirm = "always")
+    inst.discover()
+    assert.eq(inst.call("node_run", {"node": "n1", "argv": ["uptime"]}), "1 ok\n\n2 warn")
+    inst.call("node_run", {"node": "n1", "argv": ["uptime"]})
+    assert.eq(len(inst.questions()), 1)
+    inst = new(access = "create")
+    inst.discover()
+    assert.eq(inst.call("job", {"name": "j1", "remove": True}), "201")
+    assert.eq(inst.call("job", {"name": "j2"}), "201")
+    assert.eq(inst.tracked(), ["api /api/jobs/j2"])
+    assert.eq(inst.cleanup(), [{"resource": "test api /api/jobs/j2", "error": ""}])
+    assert.eq(inst.tracked(), [])
+    assert.contains(inst.error("raw", {"path": "/api/jobs/j9", "method": "DELETE"}), "created by clotr")

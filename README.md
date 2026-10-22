@@ -1,6 +1,6 @@
 # clotr
 
-Agent CLI d'analyse d'infrastructure en lecture seule (fichiers de configuration, serveurs MCP et toute cible décrite par un template), exécuté sans interaction une fois lancé. Les modèles sont découverts sur un ou plusieurs endpoints OpenAI-compatibles, puis chaque sous-agent reçoit le modèle adapté à son rôle.
+Agent CLI d'analyse d'infrastructure, en lecture seule par défaut (fichiers de configuration, serveurs MCP et toute cible décrite par un template), exécuté sans interaction une fois lancé. Le niveau d'accès se règle au lancement, voir Niveaux d'accès. Les modèles sont découverts sur un ou plusieurs endpoints OpenAI-compatibles, puis chaque sous-agent reçoit le modèle adapté à son rôle.
 
 Binaire Go statique, sans dépendance d'exécution.
 
@@ -151,21 +151,22 @@ Tout ce qu'un agent envoie à un modèle non souverain passe par un point unique
 
 Un template décrit un type de cible ; une instance de la config l'applique à un environnement réel. Le binaire n'embarque aucun template : il charge à chaque exécution les fichiers `*.yaml` de `templates.dir` (défaut `~/.config/clotr/templates`) et les scripts qu'ils référencent. Deux fichiers portant le même `name` sont refusés, et un fichier invalide est ignoré avec un avertissement. `clotr templates` liste les templates chargés et les instances, `clotr templates <nom>` affiche le YAML et le script.
 
-Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appels d'API, authentification, découverte, interprétation des réponses, outils) est écrite dans le script du template, en [Starlark](https://github.com/google/starlark-go/blob/master/doc/spec.md). Le moteur fournit des primitives génériques et applique les garde-fous de lecture seule. Les templates ne sont pas fournis avec l'outil ; `templates.dir` peut être un clone d'un dépôt de templates.
+Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appels d'API, authentification, découverte, interprétation des réponses, outils) est écrite dans le script du template, en [Starlark](https://github.com/google/starlark-go/blob/master/doc/spec.md). Le moteur fournit des primitives génériques et applique les garde-fous de lecture seule et des niveaux d'accès. Les templates ne sont pas fournis avec l'outil ; `templates.dir` peut être un clone d'un dépôt de templates.
 
 ### Format
 
 - `keywords` : termes qui, présents dans une demande, font proposer l'instance aux agents (en plus du nom de l'instance, du template et des cibles), voir Activation d'une instance ;
 - `params` : paramètres de l'instance, typés (`string`, `url`, `int`, `bool`, `env`, `path`, `enum`, `list` avec `item`), avec `required` et `default`. Un paramètre inconnu est rejeté ;
 - `connectors` : connexions nommées, dont les options sont rendues avec les paramètres (`{{.proxy_url}}`). `when` : condition rendue avec les paramètres, comme pour `tools` ; un connecteur dont la condition est fausse n'est pas créé et ses identifiants ne sont jamais demandés :
-  - `http` : `base_url`, `methods` (défaut `[GET]`), `allow` (expressions régulières sur le chemin), `headers`, `auth` (`user_env`, `password_env`, `password_vault`, `label` : authentification basic, saisie sur le terminal si les variables sont vides, voir Secrets Vault ; avec `header`, le secret seul est envoyé dans cet en-tête, précédé de `scheme` s'il est donné, ex. `header: Authorization` et `scheme: Bearer`, sans utilisateur), `deny` (expressions régulières de chemins refusés, voir Garde-fous), `proxy`, `proxy_port`, `verify_tls`, `ca_file`, `timeout` (défaut 60s), `max_bytes` (défaut 32 Mio) ;
+  - `http` : `base_url`, `methods` (défaut `[GET]`), `allow` (expressions régulières sur le chemin), `headers`, `auth` (`user_env`, `password_env`, `password_vault`, `label` : authentification basic, saisie sur le terminal si les variables sont vides, voir Secrets Vault ; avec `header`, le secret seul est envoyé dans cet en-tête, précédé de `scheme` s'il est donné, ex. `header: Authorization` et `scheme: Bearer`, sans utilisateur), `deny` (expressions régulières de chemins refusés, voir Garde-fous), `proxy`, `proxy_port`, `verify_tls`, `ca_file`, `timeout` (défaut 60s), `max_bytes` (défaut 32 Mio), `levels` (chemins et méthodes ouverts seulement à partir d'un niveau d'accès : `exec` avec `allow` et `argv_param`, `create` avec `methods` et `allow`, voir Niveaux d'accès) ;
   - `ssh` (un seul par template) : `user`, `key`, `key_vault` (clé privée lue dans un secret Vault, `chemin[#champ]`, champ par défaut `private_key`), `auth` (`user_env`, `password_env`, `password_vault`, `label` : mot de passe saisi sur le terminal seulement s'il est nécessaire, voir Outils SSH), `port`, `proxy`, `proxy_port`, `host_key`, `sudo`, `max_conns`, `known_hosts` ;
 - `targets` : cibles statiques. `foreach: <paramètre list>` crée une cible par élément ; un champ vide de l'élément hérite du paramètre de même nom. Les attributs `ssh_user`, `ssh_key_path`, `ssh_key_vault` et `ssh_port` d'une cible remplacent ceux du connecteur ssh ;
 - `script` : fichier Starlark, chemin relatif au YAML ;
 - `files`, `env` : fichiers et variables d'environnement que le script peut lire ; les chemins de `files` sont rendus avec les paramètres (`"{{.config_path}}"`), une entrée rendue vide est ignorée. Une entrée terminée par `/**` autorise tout le répertoire (`"{{.repo_dir}}/**"`, chemin absolu) : le chemin demandé est résolu, liens symboliques compris, et doit rester dans le répertoire ;
-- `tools` : outils génériques du moteur (`inventory`, `ssh_list`, `ssh_read`, `ssh_tail`, `ssh_grep`, `ssh_disk`, `ssh_resolve`, `log_stats`), avec `name` et `description` optionnels, et `when` : condition rendue avec les paramètres (`"{{.ssh}}"`), l'outil n'est créé que si elle vaut vrai (vide = faux, valeur non booléenne refusée) ;
+- `tools` : outils génériques du moteur (`inventory`, `ssh_list`, `ssh_read`, `ssh_tail`, `ssh_grep`, `ssh_disk`, `ssh_resolve`, `log_stats`, et `ssh_exec` à partir du niveau `exec`), avec `name` et `description` optionnels, et `when` : condition rendue avec les paramètres (`"{{.ssh}}"`), l'outil n'est créé que si elle vaut vrai (vide = faux, valeur non booléenne refusée) ;
 - `companions` : outils ajoutés d'office à toute tâche qui utilise un outil de l'instance ;
 - `ssh_paths` : `allow` et `deny` (globs, `**` récursif), rendus avec les paramètres (`"{{.data_dir}}/logs/**"`) : une entrée rendue vide est ignorée (`"{{if .data_dir}}…{{end}}"`), une entrée rendue doit rester sans `..` et, dans `allow`, absolue ;
+- `commands` : `allow` et `deny`, motifs de commandes exécutées sans confirmation ou refusées à partir du niveau `exec` (voir Niveaux d'accès) ;
 - `hints` : consignes transmises au planner et aux agents.
 
 Les outils sont préfixés par le nom de l'instance (`<instance>_<outil>`).
@@ -191,6 +192,8 @@ instances:
       allow: [/srv/data, /srv/data/**]
       deny: [/srv/data/private/**]
 ```
+
+`commands` sur une instance ajoute de même des motifs à ceux du template (`allow`, `deny`).
 
 ### Script
 
@@ -224,19 +227,22 @@ tool(
 - `lines` : lignes d'environnement globales ;
 - `warnings` et `data` (libre).
 
-`description` peut être une fonction, appelée après la découverte. Un outil renvoie un texte, ou une valeur convertie en JSON. `fail()` renvoie une erreur à l'agent.
+`description` peut être une fonction, appelée après la découverte. `access = "exec"` ou `access = "create"` réserve l'outil à ce niveau d'accès : en dessous, il n'est pas proposé aux agents. Un outil renvoie un texte, ou une valeur convertie en JSON. `fail()` renvoie une erreur à l'agent.
 
 | Primitive | Rôle |
 |---|---|
-| `http.request(conn, method, path, base=, query=, json=, body=, headers=, jq=, max_bytes=, tls=, proxy=)` | requête via un connecteur `http` ; renvoie `status`, `headers`, `body`, `url` et `data` (résultats de `jq`). `base` remplace `base_url`, `proxy` le proxy du connecteur, `tls` (`ca`, `cert`, `key` en PEM, `insecure`) l'autorité de certification et ajoute un certificat client, pour cet appel |
+| `http.request(conn, method, path, base=, query=, json=, body=, headers=, jq=, max_bytes=, tls=, proxy=)` | requête via un connecteur `http` ; renvoie `status`, `headers`, `body`, `url` et `data` (résultats de `jq`). `base` remplace `base_url`, `proxy` le proxy du connecteur, `tls` (`ca`, `cert`, `key` en PEM, `insecure`) l'autorité de certification et ajoute un certificat client, pour cet appel. `track` : chemin de l'objet créé par un POST de `levels.create`, voir Niveaux d'accès |
+| `http.stream(conn, path, argv=, label=, query=, protocols=, headers=, base=, max_bytes=, timeout=, tls=, proxy=)` | connexion WebSocket (GET avec upgrade) sur un chemin de `levels.exec.allow`, à partir du niveau `exec` ; `argv` est contrôlé par `commands` puis ajouté à la requête sous le nom `levels.exec.argv_param` ; `label` désigne la cible dans la confirmation. Renvoie `status`, `protocol`, `messages` (bytes, dans l'ordre reçu), `truncated`, `close_code`, `close_reason`, `body` (réponse sans upgrade) ; le protocole applicatif (canaux) est décodé par le script |
 | `http.snippet(text, max)` | résumé d'un corps de réponse (titre si page HTML) |
 | `ssh.list`, `ssh.read`, `ssh.tail` (`filter`), `ssh.grep`, `ssh.disk`, `ssh.stat_tail`, `ssh.recent` | commandes SSH fixes sur un hôte de l'inventaire ; `ssh.format(res)` met en forme un résultat, `ssh.allowed(path)` teste `ssh_paths` |
+| `ssh.exec(host, argv, target=)` | commande `argv` sur un hôte de l'inventaire, à partir du niveau `exec`, contrôlée par `commands` ; renvoie `stdout`, `stderr`, `exit`, `truncated` |
 | `jq(expr, data)` | filtre JSON exécuté en Go ; renvoie la liste des résultats |
 | `json`, `yaml`, `time`, `math`, `re`, `url`, `base64` | encodage (`yaml.decode`, `yaml.encode`), dates et durées, calcul, expressions régulières, URL |
 | `crypto.sign(key, msg)`, `crypto.key_type(key)` | signature ed25519 (graine base64 ou PKCS#8) ou RSA SHA-256 |
 | `file.read`, `file.exists`, `file.list(path, depth=1, max=5000)`, `env` | fichiers et variables déclarés dans `files` et `env` ; `file.list` parcourt un répertoire déclaré avec `/**` et renvoie `entries` (`path`, `type` : `file`, `dir` ou `link`, `size`, `target`), sans suivre les liens, et `truncated` |
 | `parallel(fn, items, limit=4)` | exécution concurrente ; `value` ou `error` par élément |
 | `catch(fn, *args)` | appel protégé ; `value` ou `error` |
+| `sleep(seconds)` | attente (60 s au plus par appel), interrompue avec le run ; interdite au chargement |
 | `instance.name`, `instance.params`, `instance.inventory()`, `instance.target(nom)`, `instance.find_host(hôte, target=)`, `instance.memo(clé, fn)` | instance courante, inventaire, cache par instance |
 | `sprintf`, `compact_json`, `logstats`, `redact` | formatage à la Go, JSON compact, statistiques de log, masquage des secrets |
 | `load("module.star", …)` | bibliothèque `.star` du même répertoire |
@@ -245,13 +251,14 @@ tool(
 
 - `http` : la méthode doit figurer dans `methods`, et toute méthode autre que GET ou HEAD exige une liste `allow`. Le chemin est absolu et sans `..`. Un chemin qui contient `keytab`, `secret`, `password` ou `token` est refusé, sauf si le connecteur déclare `deny` : ses expressions régulières remplacent alors cette liste (`deny: []` la retire, le script devient seul responsable des données sensibles). La réponse est plafonnée à `max_bytes` (512 Mio au plus). Chaque requête est tracée dans l'audit (`http_call`).
 - `ssh` : voir Outils SSH.
+- `levels` : voir Niveaux d'accès. Le `deny` du connecteur reste appliqué à tous les niveaux.
 - Le script n'accède au disque, au réseau et à l'environnement qu'à travers ces primitives. Il est interrompu avec le run et soumis à un plafond de pas d'exécution.
 
 ### Tests
 
 `clotr templates test <nom> [--dir <répertoire>]` exécute les fonctions `test_*` de `<script>_test.star`, sans réseau :
-- `template.instance(params=, http=, ssh=, env=, files=, creds=, now=)` crée une instance avec un faux serveur HTTP (dict `"MÉTHODE /chemin"` → réponse, ou fonction) et un faux SSH (fonction `(hôte, commande)`) ;
-- `inst.discover()`, `inst.call(outil, args)`, `inst.error(outil, args)`, `inst.environment()`, `inst.tools()`, `inst.requests()` (requêtes reçues, avec `proxy` et `tls` passés à l'appel), `inst.commands()`, `inst.fn(nom, *args)` ;
+- `template.instance(params=, http=, ssh=, env=, files=, creds=, now=, access=, confirm=)` crée une instance avec un faux serveur HTTP (dict `"MÉTHODE /chemin"` → réponse, ou fonction ; une réponse avec `messages` répond à `http.stream`) et un faux SSH (fonction `(hôte, commande)`) ; `access` fixe le niveau d'accès (défaut `read`), `confirm` la réponse aux confirmations de commandes (`yes`, `always`, défaut : refus) ; `sleep` n'attend pas ;
+- `inst.discover()`, `inst.call(outil, args)`, `inst.error(outil, args)`, `inst.environment()`, `inst.tools()`, `inst.requests()` (requêtes reçues, avec `proxy` et `tls` passés à l'appel), `inst.commands()`, `inst.questions()` (confirmations demandées), `inst.tracked()` (objets suivis), `inst.cleanup()`, `inst.fn(nom, *args)` ;
 - `assert.eq`, `assert.true`, `assert.contains`, `assert.not_contains`, `assert.fails`.
 
 ### Activation d'une instance
@@ -308,7 +315,55 @@ Les hôtes SSH peuvent être désignés par leur nom complet, leur IP, leur nom 
 
 `<instance>_ssh_resolve` résout un nom tel que le voit un hôte : `getent ahosts` sur l'hôte (sans sudo), donc à travers le proxy de l'instance et avec le DNS du réseau de l'hôte, `/etc/hosts` compris. Il donne le nom canonique, les adresses et, si `ssh_paths` autorise `/etc/resolv.conf`, les lignes `nameserver`/`search` de l'hôte. Le nom est validé (lettres, chiffres, `-`, `_`, `.`) avant d'être passé à la commande.
 
-## Lecture seule
+## Niveaux d'accès
+
+Le niveau d'accès se choisit à chaque lancement avec `run --access` ; il vaut `read` par défaut, n'est jamais lu dans la configuration et n'est pas repris par `run -s`. Il borne ce que les agents peuvent faire, quels que soient les droits des comptes utilisés.
+
+| Niveau | Ce qui s'ajoute |
+|---|---|
+| `read` (défaut) | rien : lecture seule, voir ci-dessous |
+| `exec` | commandes sur les hôtes et pods existants : outils `access = "exec"` des templates, `ssh_exec`, `http.stream` sur `levels.exec` |
+| `create` | en plus, ressources éphémères créées par clotr : outils `access = "create"`, méthodes de `levels.create` |
+
+Un outil réservé à un niveau supérieur n'est pas proposé aux agents ; une primitive appelée en dessous de son niveau échoue. Le niveau est affiché au démarrage s'il n'est pas `read`, enregistré dans le tour de la session (`access`) et dans l'audit (`run_start`), et décrit aux agents.
+
+### Commandes (`exec`)
+
+Une commande est un `argv` (programme puis arguments) : jamais de shell côté clotr, aucun caractère de contrôle. Sur SSH, chaque argument est quoté et la commande est lancée sans sudo, entrée standard fermée. Elle est confrontée aux motifs `commands` du template et de l'instance :
+- un motif est une suite d'arguments séparés par des espaces ; `*` et `?` sont des jokers à l'intérieur d'un argument, `**` en dernière position accepte tous les arguments suivants (`rpm -q *`, `php -v`, `ls **`) ;
+- `deny` : refusée ;
+- `allow` : exécutée sans question ;
+- sinon, la commande exacte est soumise à l'utilisateur sur le terminal (tableau suspendu, comme la saisie d'un mot de passe) avec l'instance et la cible : `o` l'exécute, `t` l'accepte pour le reste du run (même argv, même instance), toute autre réponse la refuse. Sans terminal, elle est refusée.
+
+Chaque décision est tracée dans l'audit (`exec_decision` : `allowed`, `denied`, `confirmed`, `always`, `refused`, `own`), chaque exécution dans `remote_exec` ou `http_stream`.
+
+```yaml
+connectors:
+  api:
+    driver: http
+    methods: [GET]
+    allow: ["^/v1/"]
+    levels:
+      exec:
+        allow: ["^/v1/boxes/[^/]+/exec$"]
+        argv_param: command
+      create:
+        methods: [POST, DELETE]
+        allow: ["^/v1/boxes(/[^/]+)?$"]
+commands:
+  allow: ["php -v", "openssl version", "rpm -q *"]
+  deny: ["rm **"]
+```
+
+### Ressources éphémères (`create`)
+
+Au niveau `create`, une méthode de `levels.create.methods` sur un chemin de `levels.create.allow` (hors `deny` du connecteur) est permise ainsi :
+- un POST doit déclarer `track`, le chemin de l'objet qu'il crée, placé sous le chemin du POST et couvert par `levels.create.allow` ; l'objet n'est suivi que si la création réussit (2xx), un conflit ne le fait pas suivre ;
+- les autres méthodes d'écriture (DELETE, PUT, PATCH…) ne visent qu'un objet suivi : clotr ne modifie ni ne supprime rien qu'il n'a pas créé pendant le run ;
+- les commandes envoyées par `http.stream` sous un objet suivi ne sont pas soumises à `commands` : cet objet est propre au run ;
+- en fin de tour (réponse, erreur ou Ctrl-C), clotr supprime les objets encore suivis (DELETE, avec l'adresse, le proxy, le TLS et les en-têtes de la création) ; chaque suppression est tracée (`cleanup`) et affichée, un échec avec l'objet à supprimer à la main.
+
+### Lecture seule (`read`)
 
 Le CLI n'expose aucun outil d'écriture et n'exécute aucune commande locale. Les seules commandes distantes sont celles des outils SSH des templates, construites par clotr à partir d'une liste fixe (voir Templates).
 
@@ -318,7 +373,7 @@ Le CLI n'expose aucun outil d'écriture et n'exécute aucune commande locale. Le
 | `mcp_<serveur>` | outils du serveur | seuls sont exposés les outils annotés `readOnlyHint: true` ou listés dans `allow`. `deny` est prioritaire. |
 | `<instance>_*` | outils du template | voir Templates : requêtes HTTP limitées par les garde-fous des connecteurs, SSH limité à des commandes fixes, aux hôtes de l'inventaire et aux chemins autorisés. |
 
-Les sorties d'outils envoyées au modèle sont tronquées à `limits.tool_output_max_chars` ; la preuve archive la sortie complète, que `evidence_read` relit par motif ou par plage de lignes sans refaire l'appel. Les droits effectifs dépendent des comptes utilisés (connecteurs des templates, serveurs MCP), qui doivent être en lecture seule.
+Les groupes `fs` et `mcp_<serveur>` restent en lecture seule à tous les niveaux. Les sorties d'outils envoyées au modèle sont tronquées à `limits.tool_output_max_chars` ; la preuve archive la sortie complète, que `evidence_read` relit par motif ou par plage de lignes sans refaire l'appel. Les droits effectifs dépendent des comptes utilisés (connecteurs des templates, serveurs MCP).
 
 ## Installation
 
@@ -482,6 +537,10 @@ clotr run --direct "taille de /var/log sur les hôtes de prod ?"
 clotr run --chat --direct
 ```
 
+```sh
+clotr run --access exec "version de PHP dans les pods du namespace web" -t prod
+```
+
 | Option | Effet |
 |---|---|
 | `-c, --config` | fichier de configuration |
@@ -505,6 +564,7 @@ clotr run --chat --direct
 | `--export docx\|pdf` (`run`, `session`) | produit aussi le rapport en document via `report_export.mcp`, voir Export du rapport en document |
 | `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |
 | `--panic` (`run`) | mode incident avec journal en direct des preuves, constats et lacunes, voir Mode panique |
+| `--access read\|exec\|create` (`run`) | niveau d'accès du run, `read` par défaut, voir Niveaux d'accès |
 | `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
 
 La demande `-` est lue sur stdin. Ctrl-C annule proprement les agents en cours.
@@ -647,7 +707,8 @@ internal/session/       sessions et tours
 internal/budget/        budget et coûts par provider
 internal/tools/         registre et outils files, mcp
 internal/template/      moteur de templates : chargement, paramètres, hôte Starlark, primitives, outils génériques, tests
-internal/driver/ssh/    SSH en lecture seule : commandes fixes, chemins autorisés, known_hosts
+internal/access/        niveaux d'accès (read, exec, create) et motifs de commandes
+internal/driver/ssh/    SSH : commandes fixes en lecture seule, argv quoté au niveau exec, chemins autorisés, known_hosts
 internal/creds/         identifiants : variables d'environnement, Vault ou saisie
 internal/vault/         lecture d'un secret Vault (KV v1/v2) avec la configuration du poste
 internal/audit/         journal JSONL

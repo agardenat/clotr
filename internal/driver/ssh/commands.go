@@ -150,6 +150,14 @@ func (b Builder) List(dir string, depth, limit int, sortBy string) string {
 	return fmt.Sprintf("%sfind %s -maxdepth %d -printf '%%y %%s %%TY-%%Tm-%%Td %%TH:%%TM %%p\\n' 2>&1%s | head -n %d", b.prefix(), Quote(dir), depth, sorter, limit)
 }
 
+func Exec(argv []string) string {
+	q := make([]string, len(argv))
+	for i, a := range argv {
+		q[i] = Quote(a)
+	}
+	return "exec " + strings.Join(q, " ") + " </dev/null"
+}
+
 func (b Builder) Resolve(name string, resolvConf bool) string {
 	cmd := "getent ahosts " + Quote(name) + `; echo "--- exit $?"`
 	if resolvConf {

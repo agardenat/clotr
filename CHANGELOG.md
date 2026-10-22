@@ -4,6 +4,15 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Niveaux d'accès choisis au lancement avec `run --access read|exec|create` (défaut `read`, jamais lu dans la configuration ni repris par `run -s`) : `exec` ouvre les commandes sur les hôtes et pods existants, `create` en plus les ressources éphémères créées et supprimées par clotr. Le niveau est affiché au démarrage, enregistré dans le tour de la session et l'audit, et décrit aux agents.
+- Templates : `commands` (`allow`, `deny`, motifs d'argv avec `*`, `?` et `**` final), étendu par l'instance. Une commande de `allow` s'exécute sans question, une commande de `deny` est refusée, toute autre est soumise à l'utilisateur sur le terminal (oui, non, toujours pour ce run) et refusée sans terminal ; décisions tracées dans l'audit (`exec_decision`).
+- Templates : `tool(..., access = "exec"|"create")` réserve un outil à un niveau ; outil générique `ssh_exec` et primitive `ssh.exec(host, argv)` (argv quoté, sans shell ni sudo) au niveau `exec`.
+- Templates : `levels` d'un connecteur `http`. `levels.exec` (`allow`, `argv_param`) ouvre `http.stream`, connexion WebSocket dont l'argv est contrôlé par `commands` ; `levels.create` (`methods`, `allow`) ouvre l'écriture au niveau `create` : un POST déclare l'objet créé (`track`, sous le chemin du POST), toute autre écriture ne vise qu'un objet créé pendant le run, et les objets encore suivis sont supprimés en fin de tour, y compris après Ctrl-C (audit `cleanup`). Le `deny` du connecteur reste appliqué à tous les niveaux.
+- Templates : primitive `sleep(seconds)` (60 s au plus par appel, interrompue avec le run), par exemple pour suivre un objet créé.
+- `clotr templates test` : `template.instance(access=, confirm=)`, réponses `messages` du faux serveur pour `http.stream`, `inst.questions()`, `inst.tracked()`, `inst.cleanup()`.
+- Une configuration ou un template qui utilise `commands` ou `levels` est refusé par les versions antérieures.
+
 ## [0.28.0] - 2026-10-20
 
 ### Ajouté

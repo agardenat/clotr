@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
+	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/audit"
 	"github.com/agardenat/clotr/internal/budget"
 	"github.com/agardenat/clotr/internal/catalog"
@@ -84,6 +85,8 @@ type options struct {
 	panic        bool
 	exportFmt    string
 	exportPath   string
+	accessFlag   string
+	access       access.Level
 }
 
 type app struct {
@@ -224,6 +227,7 @@ func newRoot() *cobra.Command {
 	run.Flags().BoolVar(&o.incident, "incident", false, i18n.T("cli.flag.incident"))
 	run.Flags().BoolVar(&o.panic, "panic", false, i18n.T("cli.flag.panic"))
 	run.Flags().StringVar(&o.exportFmt, "export", "", i18n.T("cli.flag.export"))
+	run.Flags().StringVar(&o.accessFlag, "access", "", i18n.T("cli.flag.access"))
 
 	sessionsCmd := &cobra.Command{
 		Use:   "sessions",
@@ -541,7 +545,7 @@ func renderVars(v any, vars map[string]any) (any, error) {
 	return v, nil
 }
 
-func newInstance(cfg *config.Config, ic config.Instance, t *template.Template) (*template.Instance, error) {
+func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, level access.Level) (*template.Instance, error) {
 	cl, _ := cfg.Client(ic.Client)
 	params := map[string]any{}
 	for k, v := range cl.Params {
@@ -565,6 +569,10 @@ func newInstance(cfg *config.Config, ic config.Instance, t *template.Template) (
 	if err := in.ExtendPaths(ic.SSHPaths); err != nil {
 		return nil, err
 	}
+	if err := in.ExtendCommands(ic.Commands); err != nil {
+		return nil, err
+	}
+	in.SetAccess(level)
 	if ic.Client != "" {
 		in.Client, in.ClientTerms = ic.Client, append([]string{cl.Name}, cl.Aliases...)
 	}
@@ -685,6 +693,12 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		}
 	}
 	rt.setupInstances(ctx, o, filter, warn)
+	switch o.access {
+	case access.Exec:
+		envLines = append(envLines, "- Niveau d'accès du run : exec. Les outils d'exécution lancent des commandes sur les hôtes et pods existants : seulement des commandes sans effet de bord (versions, paquets, état), jamais de modification ; une commande hors de la liste autorisée est soumise à l'utilisateur, qui peut la refuser.")
+	case access.Create:
+		envLines = append(envLines, "- Niveau d'accès du run : create. Les outils d'exécution lancent des commandes sur les hôtes et pods existants : seulement des commandes sans effet de bord (versions, paquets, état), jamais de modification ; une commande hors de la liste autorisée est soumise à l'utilisateur, qui peut la refuser. Les outils de création lancent des ressources éphémères propres à clotr (ex. un pod avec une image donnée), libres d'usage et supprimées automatiquement en fin de run.")
+	}
 	rt.baseEnv = envLines
 	for _, in := range rt.instances {
 		envLines = append(envLines, rt.instanceEnv[in.Name]...)
@@ -747,7 +761,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		if !ok {
 			continue
 		}
-		in, err := newInstance(cfg, ic, t)
+		in, err := newInstance(cfg, ic, t, o.access)
 		if err == nil {
 			err = in.Defer(ctx, cfg.Templates.CacheDir, cfg.Templates.CacheTTL.Duration, false)
 		}
@@ -763,10 +777,11 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 			warn(i18n.T("cli.warn.template_missing", ic.Name, ic.Template))
 			continue
 		}
-		in, err := newInstance(cfg, ic, t)
+		in, err := newInstance(cfg, ic, t, o.access)
 		if err == nil {
 			in.Audit = rt.audit.Log
 			in.Warn = warn
+			in.Confirm = confirmCommand
 			if !o.quiet {
 				name, tname := ic.Name, t.Name
 				in.Activating = func() { fmt.Fprintln(os.Stderr, i18n.T("instance.discovering", name, tname)) }
@@ -1077,6 +1092,8 @@ func cmdTemplates(o *options, args []string, w io.Writer) error {
 				state = err.Error()
 			} else if err := ti.ExtendPaths(in.SSHPaths); err != nil {
 				state = err.Error()
+			} else if err := ti.ExtendCommands(in.Commands); err != nil {
+				state = err.Error()
 			}
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", in.Name, in.Template, state)
@@ -1190,6 +1207,9 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	n := turn.N
 	sess.Turns[n-1].Tools = o.tools
 	sess.Turns[n-1].Exclude = o.exclude
+	if o.access != access.Read {
+		sess.Turns[n-1].Access = o.access.String()
+	}
 	rt.evidence.Begin(filepath.Join(turnDir, "evidence"), n)
 	if err := rt.audit.Reopen(turnDir, "audit"); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.audit"), err)
@@ -1199,7 +1219,10 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	if rt.journal {
 		fmt.Fprintln(os.Stderr, i18n.T("journal.dir", filepath.Join(turnDir, "evidence")))
 	}
-	rt.audit.Log("run_start", map[string]any{"request": request, "version": version, "tools": rt.registry.Names(), "session": sess.Name, "turn": n, "memory_loaded": len(rt.memory.All()), "web": o.webAllowed, "direct": o.direct})
+	if o.access != access.Read {
+		fmt.Fprintln(os.Stderr, i18n.T("access.line", o.access))
+	}
+	rt.audit.Log("run_start", map[string]any{"request": request, "version": version, "tools": rt.registry.Names(), "session": sess.Name, "turn": n, "memory_loaded": len(rt.memory.All()), "web": o.webAllowed, "direct": o.direct, "access": o.access.String()})
 	mention := request
 	forced := slices.Clone(o.tools)
 	for _, t := range sess.Turns[:n-1] {
@@ -1230,11 +1253,12 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		report, runErr = orch.Run(ctx, request)
 		interruptHook.Store(nil)
 	}
+	cleaned := rt.cleanup(ctx)
 	used := rt.usedModels(report)
 	costs := rt.budget.Summary()
 	rt.audit.Log("run_end", map[string]any{"error": errString(runErr), "models": used, "costs": costs, "memory": rt.memory.Stats()})
 	rt.saveTurn(sess, n, turnDir, report, runErr, used, costs)
-	res := turnOutcome{report: report, err: runErr, n: n, dir: turnDir, used: used, costs: costs}
+	res := turnOutcome{report: report, err: runErr, n: n, dir: turnDir, used: used, costs: costs, info: cleaned}
 	if len(used) > 0 {
 		var parts, foreign []string
 		for _, u := range used {
@@ -1265,7 +1289,35 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	return res
 }
 
+func confirmCommand(ctx context.Context, question string) (access.Answer, error) {
+	s, err := creds.Ask(ctx, question)
+	if err != nil {
+		return access.No, err
+	}
+	return access.ParseAnswer(s), nil
+}
+
+func (rt *app) cleanup(ctx context.Context) []string {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	var out []string
+	for _, in := range rt.instances {
+		for _, r := range in.Cleanup(ctx) {
+			if r.Err != nil {
+				out = append(out, i18n.T("cli.warning")+" "+i18n.T("access.cleanup_failed", r.Resource, r.Err))
+			} else {
+				out = append(out, i18n.T("access.cleanup_ok", r.Resource))
+			}
+		}
+	}
+	return out
+}
+
 func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
+	var err error
+	if o.access, err = access.Parse(o.accessFlag); err != nil {
+		return err
+	}
 	if o.panic {
 		o.incident = true
 	}

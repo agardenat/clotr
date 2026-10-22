@@ -13,6 +13,7 @@ import (
 
 	"go.starlark.net/starlark"
 
+	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/tools"
@@ -21,18 +22,20 @@ import (
 
 type kind struct {
 	ssh   bool
+	level access.Level
 	build func(in *Instance, name, desc string) tools.Tool
 }
 
 var kinds = map[string]kind{
-	"inventory":   {false, inventoryTool},
-	"ssh_list":    {true, sshListTool},
-	"ssh_read":    {true, sshReadTool},
-	"ssh_tail":    {true, sshTailTool},
-	"ssh_grep":    {true, sshGrepTool},
-	"ssh_disk":    {true, sshDiskTool},
-	"ssh_resolve": {true, sshResolveTool},
-	"log_stats":   {true, logStatsTool},
+	"inventory":   {false, access.Read, inventoryTool},
+	"ssh_list":    {true, access.Read, sshListTool},
+	"ssh_read":    {true, access.Read, sshReadTool},
+	"ssh_tail":    {true, access.Read, sshTailTool},
+	"ssh_grep":    {true, access.Read, sshGrepTool},
+	"ssh_disk":    {true, access.Read, sshDiskTool},
+	"ssh_resolve": {true, access.Read, sshResolveTool},
+	"log_stats":   {true, access.Read, logStatsTool},
+	"ssh_exec":    {true, access.Exec, sshExecTool},
 }
 
 type fnTool struct {
@@ -52,7 +55,9 @@ func (in *Instance) Tools() []tools.Tool {
 	var out []tools.Tool
 	if in.script != nil {
 		for _, st := range in.script.tools {
-			out = append(out, in.scriptToolAdapter(st))
+			if in.access.Allows(st.level) {
+				out = append(out, in.scriptToolAdapter(st))
+			}
 		}
 	}
 	var cached []bool
@@ -60,6 +65,9 @@ func (in *Instance) Tools() []tools.Tool {
 		cached = append(cached, false)
 	}
 	for _, ts := range in.tools {
+		if !in.access.Allows(kinds[ts.Kind].level) {
+			continue
+		}
 		out = append(out, kinds[ts.Kind].build(in, in.Name+"_"+ts.ToolName(), ts.Description))
 		cached = append(cached, ts.Kind == "inventory")
 	}
@@ -431,6 +439,40 @@ func sshResolveTool(in *Instance, name, desc string) tools.Tool {
 				return "", err
 			}
 			return resolveOutput(n, h, res.Stdout), nil
+		},
+	}
+}
+
+func sshExecTool(in *Instance, name, desc string) tools.Tool {
+	return fnTool{
+		name:   name,
+		desc:   withDesc(desc, "Exécute une commande sur un hôte en SSH, sans shell ni sudo (argv : programme puis arguments, aucune redirection ni substitution), et renvoie sa sortie (64 Kio max, secrets masqués) et son code de sortie.\n"+in.commandsDesc()),
+		schema: `{"type":"object","properties":{` + hostProps + `,"argv":{"type":"array","items":{"type":"string"},"description":"programme puis arguments, ex: [\"php\", \"-v\"]"}},"required":["host","argv"]}`,
+		call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			a, err := tools.Decode[struct {
+				Target string   `json:"target"`
+				Host   string   `json:"host"`
+				Argv   []string `json:"argv"`
+			}](raw)
+			if err != nil {
+				return "", err
+			}
+			t, h, err := in.findHost(a.Target, a.Host)
+			if err != nil {
+				return "", err
+			}
+			res, err := in.remoteExec(ctx, name, t, h, a.Argv, maxRead)
+			if err != nil {
+				return "", err
+			}
+			out := ssh.Redact(res.Stdout)
+			if res.Truncated {
+				out += "\n[sortie tronquée]"
+			}
+			if e := strings.TrimSpace(ssh.Redact(res.Stderr)); e != "" {
+				out += "\n[stderr] " + e
+			}
+			return fmt.Sprintf("%s\n[exit %d]", strings.TrimRight(out, "\n"), res.Exit), nil
 		},
 	}
 }

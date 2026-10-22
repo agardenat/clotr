@@ -1,0 +1,47 @@
+package i18n
+
+func init() {
+	add(accessMsgs)
+}
+
+var accessMsgs = map[string]msg{
+	"access.unknown":              {"access level %q is invalid (%s)", "niveau d'accès %q invalide (%s)"},
+	"access.pattern":              {"%s[%d] %q: %v", "%s[%d] %q : %v"},
+	"access.pattern_empty":        {"empty pattern", "motif vide"},
+	"access.pattern_chars":        {"control characters are not allowed", "caractères de contrôle interdits"},
+	"access.pattern_rest":         {"** is only allowed as the last argument, after the program", "** n'est permis qu'en dernier argument, après le programme"},
+	"access.argv_empty":           {"argv: program required", "argv : programme requis"},
+	"access.argv_chars":           {"argv: argument %q contains control characters", "argv : l'argument %q contient des caractères de contrôle"},
+	"access.line":                 {"Access level: %s", "Niveau d'accès : %s"},
+	"access.cleanup_ok":           {"removed %s", "supprimé : %s"},
+	"access.cleanup_failed":       {"NOT removed %s: %v (remove it manually)", "NON supprimé : %s : %v (à supprimer à la main)"},
+	"exec.ask":                    {"\n[clotr] instance %s, %s: run %s ? [y]es / [n]o / [a]lways for this run: ", "\n[clotr] instance %s, %s : exécuter %s ? [o]ui / [n]on / [t]oujours pour ce run : "},
+	"tpl.exec.denied":             {"command %s refused by commands.deny", "commande %s refusée par commands.deny"},
+	"tpl.exec.no_confirm":         {"command %s is not in commands.allow and cannot be confirmed (no terminal)", "commande %s hors de commands.allow et confirmation impossible (pas de terminal)"},
+	"tpl.exec.unconfirmed":        {"command %s not confirmed: %v", "commande %s non confirmée : %v"},
+	"tpl.exec.refused":            {"command %s refused by the user", "commande %s refusée par l'utilisateur"},
+	"tpl.access.required":         {"%s requires --access %s", "%s exige --access %s"},
+	"tpl.http.level":              {"levels: unknown level %q (exec, create)", "levels : niveau %q inconnu (exec, create)"},
+	"tpl.http.level_key":          {"levels.%s: unknown option %q (%s)", "levels.%s : option %q inconnue (%s)"},
+	"tpl.http.level_allow":        {"levels.%s: allow is required", "levels.%s : allow est requis"},
+	"tpl.http.level_methods":      {"levels.%s: methods is required", "levels.%s : methods est requis"},
+	"tpl.http.track_base":         {"track: only for a creation (POST) allowed by levels.create of connector %[2]s (method %[1]s)", "track : réservé à une création (POST) permise par levels.create du connecteur %[2]s (méthode %[1]s)"},
+	"tpl.http.track_required":     {"%s %s: track (path of the created object) is required", "%s %s : track (chemin de l'objet créé) est requis"},
+	"tpl.http.track_allow":        {"track %q is outside levels.create.allow of connector %s", "track %q hors de levels.create.allow du connecteur %s"},
+	"tpl.http.untracked":          {"%s %s: only allowed on an object created by clotr in this run", "%s %s : permis seulement sur un objet créé par clotr pendant ce run"},
+	"tpl.http.no_exec":            {"connector %s has no levels.exec", "le connecteur %s n'a pas de levels.exec"},
+	"tpl.http.exec_allow":         {"path %q is outside levels.exec.allow of connector %s", "chemin %q hors de levels.exec.allow du connecteur %s"},
+	"tpl.http.argv_required":      {"connector %s: argv is required (levels.exec.argv_param)", "connecteur %s : argv est requis (levels.exec.argv_param)"},
+	"tpl.http.argv_param":         {"connector %s: argv requires levels.exec.argv_param", "connecteur %s : argv exige levels.exec.argv_param"},
+	"tpl.http.stream_timeout":     {"timeout %q is invalid", "timeout %q invalide"},
+	"tpl.http.stream_timeout_hit": {"stream %s: timeout %s exceeded", "flux %s : délai %s dépassé"},
+	"tpl.http.stream_body":        {"stream %s: upgraded connection not writable", "flux %s : connexion WebSocket non inscriptible"},
+	"tpl.http.stream_accept":      {"stream %s: invalid Sec-WebSocket-Accept", "flux %s : Sec-WebSocket-Accept invalide"},
+	"tpl.http.stream_frame":       {"invalid WebSocket frame", "trame WebSocket invalide"},
+	"tpl.http.stream_big":         {"WebSocket frame too large (%d bytes)", "trame WebSocket trop grande (%d octets)"},
+	"tpl.http.track_under":        {"track %q must be under the POST path %s", "track %q doit être sous le chemin du POST %s"},
+	"tpl.star.sleep":              {"sleep: number of seconds >= 0 expected, got %s", "sleep : nombre de secondes >= 0 attendu, %s reçu"},
+	"tpl.star.sleep_load":         {"sleep: not allowed while loading the script", "sleep : interdit au chargement du script"},
+	"tpl.arg.list":                {"%s: list expected, got %s", "%s : liste attendue, %s reçu"},
+	"cli.flag.access":             {"access level for this run: read (default, read only), exec (commands on existing hosts and pods: commands.allow without asking, others confirmed), create (also ephemeral resources created and removed by clotr)", "niveau d'accès pour ce run : read (défaut, lecture seule), exec (commandes sur les hôtes et pods existants : commands.allow sans question, les autres confirmées), create (en plus, ressources éphémères créées et supprimées par clotr)"},
+}

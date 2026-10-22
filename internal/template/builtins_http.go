@@ -20,6 +20,7 @@ import (
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 
+	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/httpx"
 	"github.com/agardenat/clotr/internal/i18n"
@@ -50,9 +51,10 @@ type httpConn struct {
 	ownDeny  bool
 	opts     options
 	client   *http.Client
+	levels   map[access.Level]*connLevel
 }
 
-var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "deny", "proxy", "proxy_port", "verify_tls", "ca_file"}
+var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "deny", "proxy", "proxy_port", "verify_tls", "ca_file", "levels"}
 
 func checkHTTPOptions(o options) error {
 	for k := range o {
@@ -77,6 +79,9 @@ func checkHTTPOptions(o options) error {
 		if m != http.MethodGet && m != http.MethodHead && len(o.list("allow")) == 0 {
 			return i18n.E("tpl.http.method_allow", m)
 		}
+	}
+	if err := checkLevelOptions(o); err != nil {
+		return err
 	}
 	a := o.sub("auth")
 	for k := range a {
@@ -135,6 +140,9 @@ func newHTTPConn(name string, o options) (*httpConn, error) {
 	}
 	if a := o.sub("auth"); len(a) > 0 {
 		hc.auth = &httpAuth{userEnv: a.str("user_env"), passEnv: a.str("password_env"), passVault: a.str("password_vault"), label: defaultStr(a.str("label"), name), header: a.str("header"), scheme: a.str("scheme")}
+	}
+	if hc.levels, err = newConnLevels(o); err != nil {
+		return nil, err
 	}
 	return hc, nil
 }
@@ -262,6 +270,26 @@ func checkRequestPath(hc *httpConn, method, p string) (string, error) {
 	if !slices.Contains(hc.methods, method) {
 		return "", i18n.E("tpl.http.method_refused", method, hc.name, strings.Join(hc.methods, ", "))
 	}
+	clean, err := cleanRequestPath(hc, p)
+	if err != nil {
+		return "", err
+	}
+	if len(hc.allow) > 0 && !matchAny(hc.allow, clean) {
+		return "", i18n.E("tpl.http.path_allow", clean, hc.name)
+	}
+	return clean, nil
+}
+
+func matchAny(res []*regexp.Regexp, s string) bool {
+	for _, re := range res {
+		if re.MatchString(s) {
+			return true
+		}
+	}
+	return false
+}
+
+func cleanRequestPath(hc *httpConn, p string) (string, error) {
 	if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "?#") {
 		return "", i18n.E("tpl.http.path_form", p)
 	}
@@ -282,18 +310,6 @@ func checkRequestPath(hc *httpConn, method, p string) (string, error) {
 			return "", i18n.E("tpl.http.path_deny", clean, hc.name)
 		}
 	}
-	if len(hc.allow) > 0 {
-		ok := false
-		for _, re := range hc.allow {
-			if re.MatchString(clean) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return "", i18n.E("tpl.http.path_allow", clean, hc.name)
-		}
-	}
 	return clean, nil
 }
 
@@ -302,6 +318,7 @@ func (in *Instance) httpModule() *starlarkstruct.Module {
 		Name: "http",
 		Members: starlark.StringDict{
 			"request": starlark.NewBuiltin("http.request", in.builtinHTTPRequest),
+			"stream":  starlark.NewBuiltin("http.stream", in.builtinHTTPStream),
 			"snippet": starlark.NewBuiltin("http.snippet", builtinSnippet),
 		},
 	}
@@ -319,7 +336,8 @@ func builtinSnippet(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple
 func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var conn, method, p string
 	var baseV, queryV, jsonBody, bodyV, headersV, jqV, maxV, tlsV, proxyV starlark.Value
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "conn", &conn, "method", &method, "path", &p, "base?", &baseV, "query?", &queryV, "json?", &jsonBody, "body?", &bodyV, "headers?", &headersV, "jq?", &jqV, "max_bytes?", &maxV, "tls?", &tlsV, "proxy?", &proxyV); err != nil {
+	var track string
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "conn", &conn, "method", &method, "path", &p, "base?", &baseV, "query?", &queryV, "json?", &jsonBody, "body?", &bodyV, "headers?", &headersV, "jq?", &jqV, "max_bytes?", &maxV, "tls?", &tlsV, "proxy?", &proxyV, "track?", &track); err != nil {
 		return nil, err
 	}
 	reqTLS, err := requestTLS(tlsV)
@@ -365,119 +383,48 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 		return nil, i18n.E("tpl.http.connector", conn, strings.Join(sortedKeys(in.https), ", "))
 	}
 	method = strings.ToUpper(method)
-	clean, err := checkRequestPath(hc, method, p)
+	clean, err := in.checkHTTP(hc, method, p, track)
 	if err != nil {
 		return nil, err
 	}
-	if base == "" {
-		base = hc.base
+	c := &httpCall{hc: hc, method: method, base: base, clean: clean, tls: reqTLS, proxy: proxyOverride, limit: hc.maxBytes, tool: threadTool(thread)}
+	if c.query, err = queryValues(query); err != nil {
+		return nil, err
 	}
-	bu, err := url.Parse(strings.TrimRight(base, "/"))
-	if err != nil || (bu.Scheme != "http" && bu.Scheme != "https") || bu.Host == "" {
-		return nil, i18n.E("tpl.http.base_url", base)
-	}
-	u := *bu
-	u.Path = strings.TrimRight(bu.Path, "/") + clean
-	u.RawPath = ""
-	if query != nil {
-		q := url.Values{}
-		for _, it := range query.Items() {
-			k, _ := starlark.AsString(it[0])
-			switch v := it[1].(type) {
-			case *starlark.List:
-				for i := 0; i < v.Len(); i++ {
-					q.Add(k, plain(v.Index(i)))
-				}
-			default:
-				q.Set(k, plain(v))
-			}
-		}
-		u.RawQuery = q.Encode()
-	}
-	var reader io.Reader
-	contentType := ""
+	c.headers = dictHeaders(headers)
 	if jsonBody != nil && jsonBody != starlark.None {
 		raw, err := starlarkJSON(jsonBody)
 		if err != nil {
 			return nil, fmt.Errorf("json: %w", err)
 		}
-		reader, contentType = bytes.NewReader(raw), "application/json"
+		c.body, c.contentType = raw, "application/json"
 	} else if body != "" {
-		reader = strings.NewReader(body)
+		c.body = []byte(body)
 	}
-	limit := hc.maxBytes
 	if maxBytes > 0 {
-		limit = min(maxBytes, hardMaxBytes)
+		c.limit = min(maxBytes, hardMaxBytes)
 	}
-	ctx := threadCtx(thread)
-	if in.transport != nil {
-		ctx = context.WithValue(ctx, requestInfoKey{}, requestInfo{proxy: proxyOverride, tls: reqTLS})
-	}
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), reader)
+	rep, err := in.send(threadCtx(thread), c)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", httpx.UserAgent)
-	req.Header.Set("Accept", "application/json")
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
+	if len(rep.data) > c.limit {
+		return nil, i18n.E("tpl.http.too_big", method, rep.url.Path, c.limit>>20)
 	}
-	for k, v := range hc.headers {
-		req.Header.Set(k, v)
-	}
-	if headers != nil {
-		for _, it := range headers.Items() {
-			k, _ := starlark.AsString(it[0])
-			req.Header.Set(k, plain(it[1]))
-		}
-	}
-	if hc.auth != nil {
-		c, ok := in.creds[conn]
-		if !ok {
-			return nil, i18n.E("tpl.http.creds", conn)
-		}
+	if rep.status >= 200 && rep.status < 300 {
 		switch {
-		case hc.auth.header == "":
-			req.SetBasicAuth(c.User, c.Pass)
-		case hc.auth.scheme != "":
-			req.Header.Set(hc.auth.header, hc.auth.scheme+" "+c.Pass)
-		default:
-			req.Header.Set(hc.auth.header, c.Pass)
+		case track != "":
+			t, _ := cleanRequestPath(hc, track)
+			in.track(&trackedRes{conn: conn, path: t, base: c.base, tls: reqTLS, proxy: proxyOverride, headers: c.headers})
+		case method == http.MethodDelete:
+			in.untrack(conn, clean)
 		}
 	}
-	client, err := in.httpClientFor(hc, reqTLS, proxyOverride)
-	if err != nil {
-		return nil, err
-	}
-	start := time.Now()
-	resp, err := client.Do(req)
-	audit := map[string]any{"tool": threadTool(thread), "connector": conn, "method": method, "url": u.Scheme + "://" + u.Host + u.Path}
-	if err != nil {
-		audit["error"] = err.Error()
-		in.audit("http_call", audit)
-		return nil, fmt.Errorf("%s %s: %w", method, u.Path, err)
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
-	audit["status"], audit["bytes"], audit["duration_ms"] = resp.StatusCode, len(data), time.Since(start).Milliseconds()
-	if err != nil {
-		audit["error"] = err.Error()
-		in.audit("http_call", audit)
-		return nil, fmt.Errorf("%s %s: %w", method, u.Path, err)
-	}
-	in.audit("http_call", audit)
-	if len(data) > limit {
-		return nil, i18n.E("tpl.http.too_big", method, u.Path, limit>>20)
-	}
-	hdr := map[string]string{}
-	for k := range resp.Header {
-		hdr[strings.ToLower(k)] = resp.Header.Get(k)
-	}
-	fields := map[string]any{"status": resp.StatusCode, "headers": hdr, "url": u.String(), "path": u.Path, "body": string(data), "data": starlark.None}
-	if jqExpr != "" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	fields := map[string]any{"status": rep.status, "headers": rep.headers, "url": rep.url.String(), "path": rep.url.Path, "body": string(rep.data), "data": starlark.None}
+	if jqExpr != "" && rep.status >= 200 && rep.status < 300 {
 		var doc any
-		if err := json.Unmarshal(data, &doc); err != nil {
-			return nil, i18n.E("tpl.http.json", method, u.Path, err)
+		if err := json.Unmarshal(rep.data, &doc); err != nil {
+			return nil, i18n.E("tpl.http.json", method, rep.url.Path, err)
 		}
 		out, err := runJQ(jqExpr, doc)
 		if err != nil {
@@ -486,6 +433,145 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 		fields["data"], fields["body"] = out, ""
 	}
 	return makeStruct(fields)
+}
+
+type httpCall struct {
+	hc          *httpConn
+	method      string
+	base        string
+	clean       string
+	query       url.Values
+	body        []byte
+	contentType string
+	headers     map[string]string
+	tls         *netx.TLS
+	proxy       string
+	limit       int
+	tool        string
+}
+
+type httpReply struct {
+	status  int
+	headers map[string]string
+	url     *url.URL
+	data    []byte
+}
+
+func queryValues(d *starlark.Dict) (url.Values, error) {
+	q := url.Values{}
+	if d == nil {
+		return q, nil
+	}
+	for _, it := range d.Items() {
+		k, _ := starlark.AsString(it[0])
+		switch v := it[1].(type) {
+		case *starlark.List:
+			for i := 0; i < v.Len(); i++ {
+				q.Add(k, plain(v.Index(i)))
+			}
+		default:
+			q.Set(k, plain(v))
+		}
+	}
+	return q, nil
+}
+
+func dictHeaders(d *starlark.Dict) map[string]string {
+	out := map[string]string{}
+	if d == nil {
+		return out
+	}
+	for _, it := range d.Items() {
+		k, _ := starlark.AsString(it[0])
+		out[k] = plain(it[1])
+	}
+	return out
+}
+
+func (in *Instance) newRequest(ctx context.Context, c *httpCall) (*http.Request, *url.URL, error) {
+	if c.base == "" {
+		c.base = c.hc.base
+	}
+	bu, err := url.Parse(strings.TrimRight(c.base, "/"))
+	if err != nil || (bu.Scheme != "http" && bu.Scheme != "https") || bu.Host == "" {
+		return nil, nil, i18n.E("tpl.http.base_url", c.base)
+	}
+	u := *bu
+	u.Path = strings.TrimRight(bu.Path, "/") + c.clean
+	u.RawPath = ""
+	if len(c.query) > 0 {
+		u.RawQuery = c.query.Encode()
+	}
+	var reader io.Reader
+	if c.body != nil {
+		reader = bytes.NewReader(c.body)
+	}
+	if in.transport != nil {
+		ctx = context.WithValue(ctx, requestInfoKey{}, requestInfo{proxy: c.proxy, tls: c.tls})
+	}
+	req, err := http.NewRequestWithContext(ctx, c.method, u.String(), reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("User-Agent", httpx.UserAgent)
+	req.Header.Set("Accept", "application/json")
+	if c.contentType != "" {
+		req.Header.Set("Content-Type", c.contentType)
+	}
+	for k, v := range c.hc.headers {
+		req.Header.Set(k, v)
+	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
+	if c.hc.auth != nil {
+		cr, ok := in.creds[c.hc.name]
+		if !ok {
+			return nil, nil, i18n.E("tpl.http.creds", c.hc.name)
+		}
+		switch {
+		case c.hc.auth.header == "":
+			req.SetBasicAuth(cr.User, cr.Pass)
+		case c.hc.auth.scheme != "":
+			req.Header.Set(c.hc.auth.header, c.hc.auth.scheme+" "+cr.Pass)
+		default:
+			req.Header.Set(c.hc.auth.header, cr.Pass)
+		}
+	}
+	return req, &u, nil
+}
+
+func (in *Instance) send(ctx context.Context, c *httpCall) (*httpReply, error) {
+	req, u, err := in.newRequest(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	client, err := in.httpClientFor(c.hc, c.tls, c.proxy)
+	if err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	resp, err := client.Do(req)
+	audit := map[string]any{"tool": c.tool, "connector": c.hc.name, "method": c.method, "url": u.Scheme + "://" + u.Host + u.Path}
+	if err != nil {
+		audit["error"] = err.Error()
+		in.audit("http_call", audit)
+		return nil, fmt.Errorf("%s %s: %w", c.method, u.Path, err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(c.limit)+1))
+	audit["status"], audit["bytes"], audit["duration_ms"] = resp.StatusCode, len(data), time.Since(start).Milliseconds()
+	if err != nil {
+		audit["error"] = err.Error()
+		in.audit("http_call", audit)
+		return nil, fmt.Errorf("%s %s: %w", c.method, u.Path, err)
+	}
+	in.audit("http_call", audit)
+	hdr := map[string]string{}
+	for k := range resp.Header {
+		hdr[strings.ToLower(k)] = resp.Header.Get(k)
+	}
+	return &httpReply{status: resp.StatusCode, headers: hdr, url: u, data: data}, nil
 }
 
 func optString(name string, v starlark.Value) (string, error) {

@@ -68,6 +68,17 @@ def node_logs(args):
         out.append("### %s (%d)\n%s" % (f["path"], f["size"], ssh.format(res)))
     return redact("\n".join(out))
 
+def node_run(args):
+    r = http.stream("api", "/api/nodes/%s/run" % args["node"], argv = args["argv"], protocols = ["demo.v1"], label = "nœud " + args["node"])
+    return "\n".join(["%d %s" % (list(m.elems())[0], str(m[1:])) for m in r.messages])
+
+def job(args):
+    name = args["name"]
+    r = http.request("api", "POST", "/api/jobs", json = {"name": name}, track = "/api/jobs/" + name)
+    if args.get("remove"):
+        http.request("api", "DELETE", "/api/jobs/" + name)
+    return "%d" % r.status
+
 def loop(args):
     while True:
         pass
@@ -75,4 +86,6 @@ def loop(args):
 tool(name = "node_status", description = status_desc, schema = {"type": "object", "properties": {"target": {"type": "string"}, "view": {"type": "string"}}, "required": ["target"]}, fn = node_status)
 tool(name = "raw", description = "requête brute (tests des garde-fous)", schema = {"type": "object", "properties": {"path": {"type": "string"}}}, fn = raw)
 tool(name = "node_logs", description = "logs récents d'un hôte", schema = {"type": "object", "properties": {"host": {"type": "string"}}}, fn = node_logs)
+tool(name = "node_run", description = "commande sur un nœud", schema = {"type": "object"}, fn = node_run, access = "exec")
+tool(name = "job", description = "tâche éphémère", schema = {"type": "object"}, fn = job, access = "create")
 tool(name = "loop", description = "boucle infinie (test d'annulation)", schema = {"type": "object"}, fn = loop)
