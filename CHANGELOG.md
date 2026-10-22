@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-22
+
 ### Modifié
 - Historique des agents : le raccourcissement des étapes anciennes se renforce quand l'appel précédent occupe plus de la moitié (300 caractères) puis des trois quarts (120 caractères) du contexte du modèle, sorties sans preuve, texte et arguments des appels d'outils compris (audit `history_compacted`). Une longue tâche ne dépasse plus le contexte du modèle (cas réel : 257 000 tokens après 64 étapes, tâche en échec).
 - Mode CVE : tableau du rapport compact, une ligne par actif vulnérable ou indéterminé avec une colonne par CVE, actifs sains regroupés par périmètre sans leur détail (cas réel : 349 Ko pour 463 actifs, export impossible ; environ 20 Ko désormais).
