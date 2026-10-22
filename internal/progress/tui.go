@@ -103,7 +103,7 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return b, b.println(stLead.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
 		case "cve":
 			line := ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")
-			if m.Status == "vulnerable" {
+			if m.Status == "vulnerable" || m.Status == "compromised" {
 				line = stAlert.Render(line)
 			}
 			return b, b.println(line)

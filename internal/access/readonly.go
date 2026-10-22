@@ -161,15 +161,20 @@ var (
 		"readlink", "realpath", "basename", "dirname", "which", "whereis", "type", "uname", "id", "whoami", "groups",
 		"ps", "df", "du", "free", "uptime", "echo", "printf", "true", "false", "test", "[", "pwd", "nproc", "arch",
 		"getconf", "lsb_release", "sha1sum", "sha256sum", "sha512sum", "md5sum", "strings", "od", "tac", "nl", "comm",
-		"diff", "cmp", "getent", "locale", "lscpu", "column", "expr", "seq", "dpkg-query", "ldconfig")
-	versionArgs = []string{"-v", "-V", "--version", "-version", "version", "-m", "-i", "-M", "-l"}
-	versioned   = regexp.MustCompile(`^(php[0-9.]*|php-fpm[0-9.]*|php-cgi[0-9.]*|java|python[0-9.]*|node|nodejs|nginx|httpd|apache2|apachectl|apache2ctl|perl|ruby|go|mysql|mysqld|mariadb|postgres|psql|redis-server|curl|wget|git|openssl|dotnet|tomcat[0-9.]*|catalina\.sh|lighttpd|caddy|frankenphp|litespeed|lsphp[0-9.]*)$`)
-	dupTarget   = regexp.MustCompile(`^(\d+|-)$`)
-	sortOutput  = regexp.MustCompile(`^-[a-zA-Z]*o`)
-	pipName     = regexp.MustCompile(`^pip[0-9.]*$`)
-	findActions = set("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls")
-	rpmWrite    = set("-i", "-U", "-F", "-e", "--install", "--upgrade", "--freshen", "--erase", "--import", "--rebuilddb", "--initdb", "--setperms", "--setugids", "--restore", "--delsign", "--addsign", "--reinstall")
-	dpkgRead    = set("-l", "-L", "-s", "-S", "-p", "--list", "--listfiles", "--status", "--search", "--print-avail", "--print-architecture", "--version")
+		"diff", "cmp", "getent", "locale", "lscpu", "column", "expr", "seq", "dpkg-query", "ldconfig", "netstat",
+		"lsof", "last", "lastlog", "who", "w", "getfacl", "lsattr", "pgrep")
+	versionArgs   = []string{"-v", "-V", "--version", "-version", "version", "-m", "-i", "-M", "-l"}
+	versioned     = regexp.MustCompile(`^(php[0-9.]*|php-fpm[0-9.]*|php-cgi[0-9.]*|java|python[0-9.]*|node|nodejs|nginx|httpd|apache2|apachectl|apache2ctl|perl|ruby|go|mysql|mysqld|mariadb|postgres|psql|redis-server|curl|wget|git|openssl|dotnet|tomcat[0-9.]*|catalina\.sh|lighttpd|caddy|frankenphp|litespeed|lsphp[0-9.]*)$`)
+	dupTarget     = regexp.MustCompile(`^(\d+|-)$`)
+	sortOutput    = regexp.MustCompile(`^-[a-zA-Z]*o`)
+	pipName       = regexp.MustCompile(`^pip[0-9.]*$`)
+	findActions   = set("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls")
+	rpmWrite      = set("-i", "-U", "-F", "-e", "--install", "--upgrade", "--freshen", "--erase", "--import", "--rebuilddb", "--initdb", "--setperms", "--setugids", "--restore", "--delsign", "--addsign", "--reinstall")
+	ssWrite       = set("-K", "--kill")
+	journalWrite  = set("--rotate", "--flush", "--relinquish-var", "--smart-relinquish-var", "--sync", "--setup-keys", "--update-catalog")
+	ipWrite       = set("add", "del", "delete", "change", "replace", "set", "flush", "append", "save", "restore", "exec", "up", "down", "attach", "detach")
+	systemctlRead = set("list-units", "list-unit-files", "list-timers", "list-sockets", "list-dependencies", "list-jobs", "status", "show", "cat", "is-active", "is-enabled", "is-failed", "is-system-running", "get-default")
+	dpkgRead      = set("-l", "-L", "-s", "-S", "-p", "--list", "--listfiles", "--status", "--search", "--print-avail", "--print-architecture", "--version")
 )
 
 func set(items ...string) map[string]bool {
@@ -261,6 +266,55 @@ func readOnlyCall(args []arg) error {
 		}
 		if len(operands()) > 0 {
 			return fmt.Errorf("hostname avec argument modifie le nom")
+		}
+		return nil
+	case prog == "ss":
+		if err := literal(); err != nil {
+			return err
+		}
+		for _, a := range rest {
+			if ssWrite[a.s] {
+				return fmt.Errorf("ss %s ferme des connexions", a.s)
+			}
+		}
+		return nil
+	case prog == "crontab":
+		if len(rest) == 1 && first == "-l" || len(rest) == 3 && first == "-u" && rest[2].s == "-l" || len(rest) == 3 && first == "-l" && rest[1].s == "-u" {
+			return literal()
+		}
+		return fmt.Errorf("crontab : seul -l est en lecture seule")
+	case prog == "systemctl":
+		if err := literal(); err != nil {
+			return err
+		}
+		for _, a := range rest {
+			if strings.HasPrefix(a.s, "-") {
+				continue
+			}
+			if systemctlRead[a.s] {
+				return nil
+			}
+			return fmt.Errorf("systemctl %s modifie l'état", a.s)
+		}
+		return nil
+	case prog == "journalctl":
+		if err := literal(); err != nil {
+			return err
+		}
+		for _, a := range rest {
+			if journalWrite[a.s] || strings.HasPrefix(a.s, "--vacuum") {
+				return fmt.Errorf("journalctl %s écrit", a.s)
+			}
+		}
+		return nil
+	case prog == "ip":
+		if err := literal(); err != nil {
+			return err
+		}
+		for _, a := range rest {
+			if ipWrite[a.s] {
+				return fmt.Errorf("ip %s modifie la configuration réseau", a.s)
+			}
 		}
 		return nil
 	case prog == "command":

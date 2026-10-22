@@ -4,6 +4,10 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Mode CVE étendu aux compromissions : identifiants GHSA en plus des CVE, et `--cve="<sujet>"` pour une compromission sans identifiant (paquet malveillant, chaîne d'approvisionnement), dont le libellé sert d'identifiant. Fiche avec `kind` (`vulnerability` ou `compromise`) et indicateurs de compromission (`iocs`) ; statut ☠️ `compromised` quand un indicateur est observé sur un actif ; recommandations de retrait, de rotation des secrets et de recherche de traces pour les actifs exposés ou compromis.
+- Analyse de lecture seule : `ss` (sans `-K`), `netstat`, `lsof`, `crontab -l`, `systemctl` en consultation, `journalctl` sans rotation ni purge, `ip` en affichage, `last`, `who`, `w`, `pgrep`, `getfacl`, `lsattr`.
+
 ## [0.34.0] - 2026-10-22
 
 ### Modifié

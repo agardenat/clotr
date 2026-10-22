@@ -89,7 +89,7 @@ type options struct {
 	accessFlag   string
 	accessSet    bool
 	access       access.Level
-	cveMode      bool
+	cveFlag      string
 	cveIDs       []string
 }
 
@@ -231,7 +231,8 @@ func newRoot() *cobra.Command {
 	run.Flags().BoolVar(&o.raw, "raw", false, i18n.T("cli.flag.raw"))
 	run.Flags().BoolVar(&o.withEvidence, "with-evidence", false, i18n.T("cli.flag.with_evidence"))
 	run.Flags().BoolVar(&o.incident, "incident", false, i18n.T("cli.flag.incident"))
-	run.Flags().BoolVar(&o.cveMode, "cve", false, i18n.T("cli.flag.cve"))
+	run.Flags().StringVar(&o.cveFlag, "cve", "", i18n.T("cli.flag.cve"))
+	run.Flags().Lookup("cve").NoOptDefVal = "auto"
 	run.Flags().BoolVar(&o.panic, "panic", false, i18n.T("cli.flag.panic"))
 	run.Flags().StringVar(&o.exportFmt, "export", "", i18n.T("cli.flag.export"))
 	run.Flags().StringVar(&o.accessFlag, "access", "", i18n.T("cli.flag.access"))
@@ -1380,7 +1381,7 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if o.incident && (o.chat || o.direct != "") {
 		return i18n.E("cli.err.incident_modes")
 	}
-	if o.cveMode && (o.incident || o.chat || o.direct != "") {
+	if o.cveFlag != "" && (o.incident || o.chat || o.direct != "") {
 		return i18n.E("cve.modes")
 	}
 	if o.chat {
@@ -1393,8 +1394,8 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if o.cveMode {
-		if o.cveIDs = cve.Extract(request); len(o.cveIDs) == 0 {
+	if o.cveFlag != "" {
+		if o.cveIDs = cve.Subjects(o.cveFlag, request); len(o.cveIDs) == 0 {
 			return i18n.E("cve.no_id")
 		}
 	}
@@ -1406,7 +1407,7 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if err := o.checkExport(rt.cfg, sess.Confidential); err != nil {
 		return err
 	}
-	if o.cveMode {
+	if o.cveFlag != "" {
 		fmt.Fprintln(os.Stderr, i18n.T("cve.mode", strings.Join(o.cveIDs, ", ")))
 		if !o.webAllowed {
 			fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.no_web"))

@@ -109,10 +109,10 @@ func TestClientAccessLevel(t *testing.T) {
 }
 
 func TestCVEFlag(t *testing.T) {
-	if err := cmdRun(context.Background(), &options{cveMode: true, incident: true}, []string{"CVE-2026-0001"}, io.Discard); err == nil || !strings.Contains(err.Error(), "--cve") {
+	if err := cmdRun(context.Background(), &options{cveFlag: "auto", incident: true}, []string{"CVE-2026-0001"}, io.Discard); err == nil || !strings.Contains(err.Error(), "--cve") {
 		t.Fatalf("--cve avec --incident: %v", err)
 	}
-	if err := cmdRun(context.Background(), &options{cveMode: true}, []string{"failles php"}, io.Discard); err == nil || !strings.Contains(err.Error(), "CVE") {
+	if err := cmdRun(context.Background(), &options{cveFlag: "auto"}, []string{"failles php"}, io.Discard); err == nil || !strings.Contains(err.Error(), "CVE") {
 		t.Fatalf("--cve sans identifiant: %v", err)
 	}
 	run, _, _ := newRoot().Find([]string{"run"})
