@@ -383,7 +383,7 @@ func (in *Instance) builtinHTTPRequest(thread *starlark.Thread, b *starlark.Buil
 		return nil, i18n.E("tpl.http.connector", conn, strings.Join(sortedKeys(in.https), ", "))
 	}
 	method = strings.ToUpper(method)
-	clean, err := in.checkHTTP(hc, method, p, track)
+	clean, err := in.checkHTTP(threadCtx(thread), hc, method, p, track)
 	if err != nil {
 		return nil, err
 	}

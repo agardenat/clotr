@@ -51,7 +51,7 @@ func (in *Instance) remote(ctx context.Context, tool string, t *Target, h *Host,
 }
 
 func (in *Instance) remoteExec(ctx context.Context, tool string, t *Target, h *Host, argv []string, maxBytes int) (ssh.Result, error) {
-	if !in.access.Allows(access.Exec) {
+	if !in.allowed(ctx, access.Exec) {
 		return ssh.Result{}, i18n.E("tpl.access.required", "ssh exec", access.Exec)
 	}
 	if err := in.authorizeCommand(ctx, h.Name, argv); err != nil {

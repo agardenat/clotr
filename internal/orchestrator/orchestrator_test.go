@@ -14,6 +14,7 @@ import (
 	"github.com/agardenat/clotr/internal/audit"
 	"github.com/agardenat/clotr/internal/catalog"
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/cve"
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/llm"
 	"github.com/agardenat/clotr/internal/memory"
@@ -648,5 +649,42 @@ func TestJournalShowsFindingsWhenTaskEnds(t *testing.T) {
 		if journal != (len(found) == 4) || (!journal && len(found) != 0) {
 			t.Fatalf("journal=%v, constats affichés pour %v", journal, found)
 		}
+	}
+}
+
+func TestCVEMode(t *testing.T) {
+	o, tl := newOrch(t, []string{dagPlan}, nil)
+	ev := evidence.Open(t.TempDir(), 1)
+	src := ev.Add("t0", "web", "{}", "fixed in 8.2.27", nil)
+	o.CVE = cve.New([]string{"CVE-2026-0001"}, o.Memory, ev, audit.Nop())
+	o.Tools.Add(o.CVE.Tools()...)
+	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
+	if _, err := o.CVE.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0001","product":"PHP","affected":"< 8.2.27","fixed":"8.2.27","detection":"php -v","evidence":["`+src+`"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if o.advisoriesDone() == "" {
+		t.Fatal("fiches complètes non détectées")
+	}
+	if _, err := o.CVE.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"k8s/prod/web","status":"vulnerable","detail":"8.2.4","evidence":["`+src+`"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := o.Run(context.Background(), "CVE-2026-0001 sur prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Results[0].TaskID != "t0" || !strings.Contains(tl.input["t0"], "Fiches CVE") || !strings.Contains(tl.input["t0"], "CVE-2026-0001") {
+		t.Fatalf("t0: %q", tl.input["t0"])
+	}
+	if !strings.Contains(tl.input["planner"], "Fiches CVE établies") || strings.Contains(tl.input["planner"], "tri d'incident") {
+		t.Fatalf("planner: %q", tl.input["planner"])
+	}
+	if !slices.Contains(rep.Plan.Tasks[1].Tools, cve.ReportTool) {
+		t.Fatalf("outils: %v", rep.Plan.Tasks[1].Tools)
+	}
+	if !strings.HasPrefix(rep.Markdown, "## ") || !strings.Contains(rep.Markdown, "| 🚨 | CVE-2026-0001 | k8s/prod/web |") || !strings.HasSuffix(rep.Markdown, "# Rapport") {
+		t.Fatalf("rapport: %s", rep.Markdown)
+	}
+	if !strings.Contains(o.incidentRule(), "Mode CVE") {
+		t.Fatal("consigne CVE absente")
 	}
 }

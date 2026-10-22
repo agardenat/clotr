@@ -26,6 +26,7 @@ var (
 	stFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	stWarn    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	stLead    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+	stAlert   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
 )
 
 const (
@@ -100,6 +101,12 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.Kind {
 		case "lead":
 			return b, b.println(stLead.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
+		case "cve":
+			line := ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")
+			if m.Status == "vulnerable" {
+				line = stAlert.Render(line)
+			}
+			return b, b.println(line)
 		case "evidence":
 			return b, b.println(stFaint.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
 		case "finding", "gap":

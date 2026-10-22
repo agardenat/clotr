@@ -53,10 +53,13 @@ func (t fnTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
 
 func (in *Instance) Tools() []tools.Tool {
 	var out []tools.Tool
+	ceiling := in.offered()
+	var levels []access.Level
 	if in.script != nil {
 		for _, st := range in.script.tools {
-			if in.access.Allows(st.level) {
+			if ceiling.Allows(st.level) {
 				out = append(out, in.scriptToolAdapter(st))
+				levels = append(levels, st.level)
 			}
 		}
 	}
@@ -65,14 +68,16 @@ func (in *Instance) Tools() []tools.Tool {
 		cached = append(cached, false)
 	}
 	for _, ts := range in.tools {
-		if !in.access.Allows(kinds[ts.Kind].level) {
+		k := kinds[ts.Kind]
+		if !ceiling.Allows(k.level) {
 			continue
 		}
-		out = append(out, kinds[ts.Kind].build(in, in.Name+"_"+ts.ToolName(), ts.Description))
+		out = append(out, k.build(in, in.Name+"_"+ts.ToolName(), ts.Description))
 		cached = append(cached, ts.Kind == "inventory")
+		levels = append(levels, k.level)
 	}
 	for i, t := range out {
-		out[i] = activatingTool{t, in, cached[i]}
+		out[i] = activatingTool{t, in, cached[i], levels[i]}
 	}
 	return out
 }
@@ -81,9 +86,22 @@ type activatingTool struct {
 	tools.Tool
 	in     *Instance
 	cached bool
+	level  access.Level
+}
+
+func (t activatingTool) Description() string {
+	d := t.Tool.Description()
+	if granted := t.in.Access(); !granted.Allows(t.level) {
+		d = fmt.Sprintf("[Soumis à l'autorisation de l'utilisateur à chaque appel : niveau %s requis, instance en %s.] ", t.level, granted) + d
+	}
+	return d
 }
 
 func (t activatingTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
+	ctx, err := t.in.escalate(ctx, t.Name(), t.level, raw)
+	if err != nil {
+		return "", err
+	}
 	if !t.cached || !t.in.hasCachedInventory() {
 		if err := t.in.ensure(); err != nil {
 			return "", err

@@ -12,6 +12,7 @@ import (
 	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/netx"
+	"github.com/agardenat/clotr/internal/tools"
 )
 
 type connLevel struct {
@@ -82,11 +83,75 @@ func newConnLevels(o options) (map[access.Level]*connLevel, error) {
 }
 
 func (in *Instance) SetAccess(l access.Level) {
+	in.accessMu.Lock()
+	defer in.accessMu.Unlock()
 	in.access = l
 }
 
+func (in *Instance) SetCeiling(l access.Level) {
+	in.accessMu.Lock()
+	defer in.accessMu.Unlock()
+	in.ceiling = l
+}
+
 func (in *Instance) Access() access.Level {
+	in.accessMu.Lock()
+	defer in.accessMu.Unlock()
 	return in.access
+}
+
+func (in *Instance) offered() access.Level {
+	in.accessMu.Lock()
+	defer in.accessMu.Unlock()
+	return max(in.ceiling, in.access)
+}
+
+type grantKey struct{}
+
+func withGrant(ctx context.Context, l access.Level) context.Context {
+	return context.WithValue(ctx, grantKey{}, l)
+}
+
+func (in *Instance) allowed(ctx context.Context, required access.Level) bool {
+	if in.Access().Allows(required) {
+		return true
+	}
+	g, ok := ctx.Value(grantKey{}).(access.Level)
+	return ok && g.Allows(required)
+}
+
+func (in *Instance) escalate(ctx context.Context, tool string, required access.Level, raw []byte) (context.Context, error) {
+	granted := in.Access()
+	if granted.Allows(required) {
+		return ctx, nil
+	}
+	c := tools.CallerFrom(ctx)
+	f := map[string]any{"tool": tool, "task": c.Task, "granted": granted.String(), "required": required.String()}
+	if in.Confirm == nil {
+		f["decision"] = "refused"
+		in.audit("access_escalation", f)
+		return ctx, i18n.E("tpl.escalate.no_confirm", tool, required, in.Name, granted)
+	}
+	ans, err := in.Confirm(ctx, i18n.T("escalate.ask", in.Name, granted, defaultStr(c.Task, "?"), tool, oneLine(string(raw), 300), required))
+	switch {
+	case err != nil:
+		f["decision"], f["error"] = "refused", err.Error()
+		in.audit("access_escalation", f)
+		return ctx, i18n.E("tpl.escalate.unconfirmed", tool, err)
+	case ans == access.Always:
+		in.accessMu.Lock()
+		in.access = max(in.access, required)
+		in.accessMu.Unlock()
+		f["decision"] = "always"
+	case ans == access.Once:
+		f["decision"] = "confirmed"
+	default:
+		f["decision"] = "refused"
+		in.audit("access_escalation", f)
+		return ctx, i18n.E("tpl.escalate.refused", tool, required, in.Name, granted)
+	}
+	in.audit("access_escalation", f)
+	return withGrant(ctx, required), nil
 }
 
 func (in *Instance) ExtendCommands(extra access.Rules) error {
@@ -205,7 +270,7 @@ func (in *Instance) underTracked(conn, p string) bool {
 	})
 }
 
-func (in *Instance) checkHTTP(hc *httpConn, method, p, track string) (string, error) {
+func (in *Instance) checkHTTP(ctx context.Context, hc *httpConn, method, p, track string) (string, error) {
 	clean, err := checkRequestPath(hc, method, p)
 	if err == nil {
 		if track != "" {
@@ -224,7 +289,7 @@ func (in *Instance) checkHTTP(hc *httpConn, method, p, track string) (string, er
 	if !matchAny(cl.allow, lclean) {
 		return "", err
 	}
-	if !in.access.Allows(access.Create) {
+	if !in.allowed(ctx, access.Create) {
 		return "", i18n.E("tpl.access.required", method+" "+lclean, access.Create)
 	}
 	switch method {

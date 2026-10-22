@@ -325,7 +325,7 @@ Le niveau d'accès borne ce que les agents peuvent faire, quels que soient les d
 | `exec` | commandes sur les hôtes et pods existants : outils `access = "exec"` des templates, `ssh_exec`, `http.stream` sur `levels.exec` |
 | `create` | en plus, ressources éphémères créées par clotr : outils `access = "create"`, méthodes de `levels.create` |
 
-Un outil réservé à un niveau supérieur n'est pas proposé aux agents ; une primitive appelée en dessous de son niveau échoue. Les instances proposées pour la demande qui ne sont pas en `read` sont affichées au démarrage avec leur niveau (`Niveau d'accès : exec (k8s-acme, vm-acme)`), enregistrées dans le tour de la session (`access`) et dans l'audit (`access`), et leur niveau est décrit aux agents.
+Un outil réservé à un niveau supérieur n'est pas proposé aux agents, sauf en mode CVE où il l'est sous réserve d'autorisation appel par appel (voir Mode CVE) ; une primitive appelée en dessous de son niveau échoue. Les instances proposées pour la demande qui ne sont pas en `read` sont affichées au démarrage avec leur niveau (`Niveau d'accès : exec (k8s-acme, vm-acme)`), enregistrées dans le tour de la session (`access`) et dans l'audit (`access`), et leur niveau est décrit aux agents.
 
 ### Commandes (`exec`)
 
@@ -565,6 +565,7 @@ clotr run --access exec "version de PHP dans les pods du namespace web" -t prod
 | `--export docx\|pdf` (`run`, `session`) | produit aussi le rapport en document via `report_export.mcp`, voir Export du rapport en document |
 | `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |
 | `--panic` (`run`) | mode incident avec journal en direct des preuves, constats et lacunes, voir Mode panique |
+| `--cve` (`run`) | mode CVE : fiches des CVE de la demande, statut de chaque actif en direct, élévation sur autorisation, voir Mode CVE |
 | `--access read\|exec\|create` (`run`) | niveau d'accès de toutes les instances pour ce run, prioritaire sur `access` des clients, voir Niveaux d'accès |
 | `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
 
@@ -608,6 +609,22 @@ Si stdout est un terminal, `run` et `session` affichent le rapport mis en forme 
 - à la fin de chaque tâche, ses constats (avec leurs preuves `[Exxx]`) et ce qu'elle n'a pas couvert.
 
 Hors terminal ou avec `--plain`, ces éléments sont des lignes `preuve`, `constat` et `non couvert` de la progression. `--panic` implique `--incident` et a les mêmes incompatibilités.
+
+### Mode CVE
+
+`run --cve` vérifie l'exposition d'une infrastructure à des CVE, à partir de leurs identifiants dans la demande (`CVE-AAAA-NNNN`, au moins un) :
+
+```sh
+clotr run --cve "CVE-2026-0001 et CVE-2026-0002 sur les clusters k8s de acme"
+```
+
+- **Fiches d'abord** : avant le plan, une tâche `t0` établit la fiche de chaque CVE depuis des sources vérifiées (recherche web) : produit, versions touchées et corrigées, conditions d'exposition, moyen de détection sur un actif. L'outil `cve_advisory` l'affiche aussitôt et la transmet à toutes les tâches ; `t0` se termine dès que toutes les fiches sont enregistrées. Sans recherche web, un avertissement est affiché au démarrage et une fiche sans preuve de source est marquée non vérifiée.
+- **Statut de chaque actif en direct** : le planner découpe la vérification par périmètre (instance, cluster, groupe d'hôtes) ; les agents signalent chaque actif avec `cve_report` (preuves `[Exxx]` existantes obligatoires) dès que son statut est établi, affiché aussitôt au-dessus du tableau de progression : ✅ sain (une preuve couvre la CVE : composant absent de l'inventaire, version corrigée), 🚨 vulnérable (version touchée, ligne en rouge), ❓ indéterminé (binaire absent du PATH, image non inspectée, accès refusé), avec ce qui manque. Un actif re-signalé change de statut (« était ❓ »). Les statuts sont transmis aux autres tâches, enregistrés en mémoire de session (`kind: cve`) et dans l'audit (`cve_advisory`, `cve_report`).
+- **Rapport** : clotr place en tête un tableau des fiches et des statuts (vulnérables d'abord, avec le décompte), généré depuis les signalements ; la synthèse suit. La sortie `--json` les donne dans `cve`.
+- **Élévation à la demande** : les outils au-delà du niveau d'accès d'une instance (jusqu'à `create`) sont proposés aux agents, marqués « soumis à l'autorisation de l'utilisateur ». Chaque appel est soumis sur le terminal avec l'instance, son niveau, la tâche, l'outil et ses arguments : `o` l'autorise pour cet appel, `t` relève le niveau de l'instance pour le reste du run, toute autre réponse le refuse (l'agent signale alors l'actif ❓). Sans terminal, refusé. Décisions dans l'audit (`access_escalation`). Les règles `commands` s'appliquent en plus.
+- **Ctrl-C pour conclure**, comme en mode incident.
+
+`--cve` est incompatible avec `--incident`, `--panic`, `--direct` et `--chat`.
 
 ### Réponse directe
 
@@ -709,6 +726,7 @@ internal/budget/        budget et coûts par provider
 internal/tools/         registre et outils files, mcp
 internal/template/      moteur de templates : chargement, paramètres, hôte Starlark, primitives, outils génériques, tests
 internal/access/        niveaux d'accès (read, exec, create) et motifs de commandes
+internal/cve/           mode CVE : fiches, statuts des actifs, tableau du rapport
 internal/driver/ssh/    SSH : commandes fixes en lecture seule, argv quoté au niveau exec, chemins autorisés, known_hosts
 internal/creds/         identifiants : variables d'environnement, Vault ou saisie
 internal/vault/         lecture d'un secret Vault (KV v1/v2) avec la configuration du poste

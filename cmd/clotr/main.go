@@ -28,6 +28,7 @@ import (
 	"github.com/agardenat/clotr/internal/catalog"
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
+	"github.com/agardenat/clotr/internal/cve"
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/httpx"
 	"github.com/agardenat/clotr/internal/i18n"
@@ -88,6 +89,8 @@ type options struct {
 	accessFlag   string
 	accessSet    bool
 	access       access.Level
+	cveMode      bool
+	cveIDs       []string
 }
 
 type app struct {
@@ -108,6 +111,7 @@ type app struct {
 	webTools    []string
 	evidence    *evidence.Store
 	leads       *lead.Store
+	cves        *cve.Store
 	journal     bool
 	filtered    []*template.Instance
 	closers     []func()
@@ -227,6 +231,7 @@ func newRoot() *cobra.Command {
 	run.Flags().BoolVar(&o.raw, "raw", false, i18n.T("cli.flag.raw"))
 	run.Flags().BoolVar(&o.withEvidence, "with-evidence", false, i18n.T("cli.flag.with_evidence"))
 	run.Flags().BoolVar(&o.incident, "incident", false, i18n.T("cli.flag.incident"))
+	run.Flags().BoolVar(&o.cveMode, "cve", false, i18n.T("cli.flag.cve"))
 	run.Flags().BoolVar(&o.panic, "panic", false, i18n.T("cli.flag.panic"))
 	run.Flags().StringVar(&o.exportFmt, "export", "", i18n.T("cli.flag.export"))
 	run.Flags().StringVar(&o.accessFlag, "access", "", i18n.T("cli.flag.access"))
@@ -716,6 +721,10 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 			rt.journal = o.panic
 			rt.registry.Add(rt.leads.Tool())
 		}
+		if len(o.cveIDs) > 0 {
+			rt.cves = cve.New(o.cveIDs, rt.memory, rt.evidence, rt.audit)
+			rt.registry.Add(rt.cves.Tools()...)
+		}
 	}
 	rt.environment = strings.Join(envLines, "\n")
 	if cfg.WebSearch.MCP != "" {
@@ -778,6 +787,9 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 			in.Audit = rt.audit.Log
 			in.Warn = warn
 			in.Confirm = confirmCommand
+			if len(o.cveIDs) > 0 {
+				in.SetCeiling(access.Create)
+			}
 			if !o.quiet {
 				name, tname := ic.Name, t.Name
 				in.Activating = func() { fmt.Fprintln(os.Stderr, i18n.T("instance.discovering", name, tname)) }
@@ -875,6 +887,10 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		rt.leads.Events = events
 		runner.Inbox = rt.leads.Inbox
 	}
+	if rt.cves != nil {
+		rt.cves.Events = events
+		runner.Inbox = rt.cves.Inbox
+	}
 	return &orchestrator.Orchestrator{
 		Cfg:         rt.cfg,
 		Router:      rt.router,
@@ -887,6 +903,7 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		Language:    rt.lang,
 		WebTools:    rt.webTools,
 		Incident:    rt.leads != nil,
+		CVE:         rt.cves,
 		Journal:     rt.journal,
 	}
 }
@@ -1203,6 +1220,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	n := turn.N
 	sess.Turns[n-1].Tools = o.tools
 	sess.Turns[n-1].Exclude = o.exclude
+	sess.Turns[n-1].CVE = o.cveIDs
 	rt.evidence.Begin(filepath.Join(turnDir, "evidence"), n)
 	if err := rt.audit.Reopen(turnDir, "audit"); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.audit"), err)
@@ -1241,7 +1259,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	if o.direct != "" {
 		report, runErr = orch.Direct(ctx, request, o.directRole())
 	} else {
-		if orch.Incident {
+		if orch.Incident || orch.CVE != nil {
 			conclude := orch.ConcludeNow
 			interruptHook.Store(&conclude)
 		}
@@ -1355,6 +1373,9 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if o.incident && (o.chat || o.direct != "") {
 		return i18n.E("cli.err.incident_modes")
 	}
+	if o.cveMode && (o.incident || o.chat || o.direct != "") {
+		return i18n.E("cve.modes")
+	}
 	if o.chat {
 		return cmdChat(ctx, o, args)
 	}
@@ -1365,6 +1386,11 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if o.cveMode {
+		if o.cveIDs = cve.Extract(request); len(o.cveIDs) == 0 {
+			return i18n.E("cve.no_id")
+		}
+	}
 	sess, rt, err := openRun(ctx, o)
 	if err != nil {
 		return err
@@ -1372,6 +1398,12 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	defer rt.close()
 	if err := o.checkExport(rt.cfg, sess.Confidential); err != nil {
 		return err
+	}
+	if o.cveMode {
+		fmt.Fprintln(os.Stderr, i18n.T("cve.mode", strings.Join(o.cveIDs, ", ")))
+		if !o.webAllowed {
+			fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.no_web"))
+		}
 	}
 	events := newProgress(o, rt.cfg.Limits.MaxSteps, sess.Name)
 	defer events.Close()
@@ -1390,6 +1422,9 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 		doc := map[string]any{"plan": report.Plan, "results": report.Results, "report": md, "model": report.Model, "models_used": res.used, "costs": res.costs, "memory": rt.memory.All()}
 		if rt.leads != nil {
 			doc["leads"] = rt.leads.Leads()
+		}
+		if rt.cves != nil {
+			doc["cve"] = map[string]any{"advisories": rt.cves.Advisories(), "findings": rt.cves.Findings()}
 		}
 		out, _ := json.MarshalIndent(doc, "", "  ")
 		if err := writeReport(w, o.output, append(out, '\n'), nil); err != nil {

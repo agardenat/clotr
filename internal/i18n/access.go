@@ -44,6 +44,10 @@ var accessMsgs = map[string]msg{
 	"tpl.star.sleep_load":         {"sleep: not allowed while loading the script", "sleep : interdit au chargement du script"},
 	"config.client_access":        {"client %s: access: %v", "client %s : access : %v"},
 	"access.instances":            {"%s (%s)", "%s (%s)"},
+	"escalate.ask":                {"\n[clotr] instance %s is at access level %s: task %s calls %s %s, which requires %[6]s. Allow? [y]es / [n]o / [a]lways (%[6]s for %[1]s, this run): ", "\n[clotr] instance %s au niveau d'accès %s : la tâche %s appelle %s %s, qui exige %[6]s. Autoriser ? [o]ui / [n]on / [t]oujours (%[6]s pour %[1]s, ce run) : "},
+	"tpl.escalate.no_confirm":     {"%s requires access level %s, instance %s is at %s, and the user cannot be asked (no terminal)", "%s exige le niveau d'accès %s, l'instance %s est en %s et l'utilisateur ne peut pas être consulté (pas de terminal)"},
+	"tpl.escalate.unconfirmed":    {"%s not authorized: %v", "%s non autorisé : %v"},
+	"tpl.escalate.refused":        {"%s refused by the user: it requires access level %s, instance %s is at %s", "%s refusé par l'utilisateur : il exige le niveau d'accès %s, l'instance %s est en %s"},
 	"tpl.arg.list":                {"%s: list expected, got %s", "%s : liste attendue, %s reçu"},
 	"cli.flag.access":             {"access level for this run: read (default, read only), exec (commands on existing hosts and pods: commands.allow without asking, others confirmed), create (also ephemeral resources created and removed by clotr)", "niveau d'accès pour ce run : read (défaut, lecture seule), exec (commandes sur les hôtes et pods existants : commands.allow sans question, les autres confirmées), create (en plus, ressources éphémères créées et supprimées par clotr)"},
 }
