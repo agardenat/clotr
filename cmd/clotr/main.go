@@ -789,6 +789,12 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 			in.Confirm = confirmCommand
 			if len(o.cveIDs) > 0 {
 				in.SetCeiling(access.Create)
+				in.Trusted = func() []string {
+					if rt.cves == nil {
+						return nil
+					}
+					return rt.cves.Commands()
+				}
 			}
 			if !o.quiet {
 				name, tname := ic.Name, t.Name

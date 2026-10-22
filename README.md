@@ -329,13 +329,13 @@ Un outil réservé à un niveau supérieur n'est pas proposé aux agents, sauf e
 
 ### Commandes (`exec`)
 
-Une commande est un `argv` (programme puis arguments) : jamais de shell côté clotr, aucun caractère de contrôle. Sur SSH, chaque argument est quoté et la commande est lancée sans sudo, entrée standard fermée. Elle est confrontée aux motifs `commands` du template et de l'instance :
-- un motif est une suite d'arguments séparés par des espaces ; `*` et `?` sont des jokers à l'intérieur d'un argument, `**` en dernière position accepte tous les arguments suivants (`rpm -q *`, `php -v`, `ls **`) ;
-- `deny` : refusée ;
-- `allow` : exécutée sans question ;
-- sinon, la commande exacte est soumise à l'utilisateur sur le terminal (tableau suspendu, comme la saisie d'un mot de passe) avec l'instance et la cible : `o` l'exécute, `t` l'accepte pour le reste du run (même argv, même instance), toute autre réponse la refuse. Sans terminal, elle est refusée.
+Une commande est un `argv` (programme puis arguments), aucun caractère de contrôle ; un script shell se passe en `["sh", "-c", "…"]`. Sur SSH, chaque argument est quoté et la commande est lancée sans sudo, entrée standard fermée. Elle est contrôlée dans cet ordre :
+1. motifs `commands` du template et de l'instance : un motif est une suite d'arguments séparés par des espaces ; `*` et `?` sont des jokers à l'intérieur d'un argument, `**` en dernière position accepte tous les arguments suivants (`rpm -q *`, `php -v`, `ls **`). `deny` : refusée ; `allow` : exécutée sans question ;
+2. en mode CVE, commandes de détection des fiches (`commands` de `cve_advisory`), réputées fiables : exécutées sans question si la commande est identique (espaces normalisés) ;
+3. analyse de lecture seule : la commande, ou le script de `sh -c` analysé par un analyseur shell (pipes, `;`, `&&`, `||`, `$(…)`, `if`, `for` admis), est exécutée sans question si chaque commande simple est un programme de lecture connu avec des options sans écriture, et si aucune redirection n'écrit ailleurs que dans `/dev/null`. Programmes de lecture : `ls`, `cat`, `head`, `tail`, `grep`, `wc`, `cut`, `stat`, `file`, `readlink`, `which`, `uname`, `id`, `ps`, `df`, `du`, `echo`, `test`, `dpkg-query`… ; sous condition : `find` sans `-delete`, `-exec`, `-ok`, `-fprint`, `sort` sans `-o`, `uniq` sans fichier de sortie, `date` sans réglage, `command -v`, `dpkg`, `rpm`, `apk`, `pip`, `npm`, `gem` en interrogation, `ldconfig -p`, les serveurs et interpréteurs connus (`php*`, `php-fpm*`, `java`, `python*`, `nginx`, `httpd`, `apachectl`, `openssl`…) avec leurs seules options de version (`-v`, `-V`, `--version`, `-version`, `version`, `-m`, `-i`, `-M`, `-l`), et tout programme appelé avec le seul argument `--version`. Refusés par l'analyse : programme désigné par une variable, une substitution ou un chemin relatif, `awk`, `sed`, `xargs`, `env`, shell imbriqué, fonction, exécution en arrière-plan, écriture, et toute commande qui contient un chemin ou un motif sensible (`/var/run/secrets`, `serviceaccount`, `environ`, clés, `*password*`, `*secret*`, `*token*`…) ;
+4. sinon, la commande exacte est soumise à l'utilisateur sur le terminal (tableau suspendu, comme la saisie d'un mot de passe) avec l'instance, la cible et la raison de l'analyse : `o` l'exécute, `t` l'accepte pour le reste du run (même argv, même instance), toute autre réponse la refuse. Sans terminal, elle est refusée.
 
-Chaque décision est tracée dans l'audit (`exec_decision` : `allowed`, `denied`, `confirmed`, `always`, `refused`, `own`), chaque exécution dans `remote_exec` ou `http_stream`.
+Chaque décision est tracée dans l'audit (`exec_decision` : `allowed`, `denied`, `trusted`, `readonly`, `confirmed`, `always`, `refused`, `own`), chaque exécution dans `remote_exec` ou `http_stream`.
 
 ```yaml
 connectors:

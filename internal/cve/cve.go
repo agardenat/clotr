@@ -46,6 +46,7 @@ type Advisory struct {
 	Fixed     string   `json:"fixed"`
 	Exposure  string   `json:"exposure,omitempty"`
 	Detection string   `json:"detection"`
+	Commands  []string `json:"commands,omitempty"`
 	Evidence  []string `json:"evidence,omitempty"`
 	Verified  bool     `json:"verified"`
 	Task      string   `json:"task"`
@@ -106,6 +107,16 @@ func (s *Store) Findings() []Finding {
 	return out
 }
 
+func (s *Store) Commands() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, a := range s.advisories {
+		out = append(out, a.Commands...)
+	}
+	return out
+}
+
 func (s *Store) Missing() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,11 +173,11 @@ type advisoryTool struct{ s *Store }
 func (advisoryTool) Name() string { return AdvisoryTool }
 
 func (advisoryTool) Description() string {
-	return "Enregistre la fiche d'une CVE de la demande, établie depuis des sources vérifiées (avis de l'éditeur, NVD, distribution) : produit et composant, versions touchées, versions corrigées, conditions d'exposition, moyen de détection sur un actif (commande de version, paquet, fichier). La fiche est affichée tout de suite à l'utilisateur et transmise à toutes les tâches. evidence : les preuves [Exxx] des sources (recherche web) ; sans source vérifiée, laisse evidence vide : la fiche est marquée non vérifiée. Une nouvelle fiche pour la même CVE remplace la précédente."
+	return "Enregistre la fiche d'une CVE de la demande, établie depuis des sources vérifiées (avis de l'éditeur, NVD, distribution) : produit et composant, versions touchées, versions corrigées, conditions d'exposition, moyen de détection sur un actif (commande de version, paquet, fichier). commands : les commandes de détection exactes, une ligne shell chacune (ex. « php -v », « rpm -qa | grep -i php ») : elles sont réputées fiables et s'exécutent sur les actifs sans confirmation de l'utilisateur ; n'y mets que des commandes sans effet de bord. La fiche est affichée tout de suite à l'utilisateur et transmise à toutes les tâches. evidence : les preuves [Exxx] des sources (recherche web) ; sans source vérifiée, laisse evidence vide : la fiche est marquée non vérifiée. Une nouvelle fiche pour la même CVE remplace la précédente."
 }
 
 func (advisoryTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"cve":{"type":"string","description":"identifiant, ex: CVE-2026-12345"},"product":{"type":"string","description":"produit et composant touchés"},"affected":{"type":"string","description":"versions touchées, ex: PHP 8.1 < 8.1.31, 8.2 < 8.2.27"},"fixed":{"type":"string","description":"versions corrigées ou correctif"},"exposure":{"type":"string","description":"conditions d'exposition (module, configuration, accès réseau), si connues"},"detection":{"type":"string","description":"comment vérifier un actif : commande de version, nom de paquet, fichier"},"evidence":{"type":"array","items":{"type":"string"},"description":"preuves des sources, ex: [\"E004\"]"}},"required":["cve","product","affected","fixed","detection"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"cve":{"type":"string","description":"identifiant, ex: CVE-2026-12345"},"product":{"type":"string","description":"produit et composant touchés"},"affected":{"type":"string","description":"versions touchées, ex: PHP 8.1 < 8.1.31, 8.2 < 8.2.27"},"fixed":{"type":"string","description":"versions corrigées ou correctif"},"exposure":{"type":"string","description":"conditions d'exposition (module, configuration, accès réseau), si connues"},"detection":{"type":"string","description":"comment vérifier un actif : commande de version, nom de paquet, fichier"},"commands":{"type":"array","items":{"type":"string"},"description":"commandes de détection exactes, une ligne shell chacune, sans effet de bord"},"evidence":{"type":"array","items":{"type":"string"},"description":"preuves des sources, ex: [\"E004\"]"}},"required":["cve","product","affected","fixed","detection"]}`)
 }
 
 func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
@@ -177,6 +188,7 @@ func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, er
 		Fixed     string           `json:"fixed"`
 		Exposure  string           `json:"exposure"`
 		Detection string           `json:"detection"`
+		Commands  tools.StringList `json:"commands"`
 		Evidence  tools.StringList `json:"evidence"`
 	}](raw)
 	if err != nil {
@@ -195,8 +207,17 @@ func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, er
 	if err != nil {
 		return "", err
 	}
+	var cmds []string
+	for _, cmd := range a.Commands {
+		if strings.ContainsAny(cmd, "\x00\n\r") {
+			return "", fmt.Errorf("commande %q : une seule ligne attendue", cmd)
+		}
+		if cmd = oneLine(cmd); cmd != "" && !slices.Contains(cmds, cmd) {
+			cmds = append(cmds, cmd)
+		}
+	}
 	c := tools.CallerFrom(ctx)
-	adv := &Advisory{CVE: id, Product: oneLine(a.Product), Affected: oneLine(a.Affected), Fixed: oneLine(a.Fixed), Exposure: oneLine(a.Exposure), Detection: oneLine(a.Detection), Evidence: ids, Verified: len(ids) > 0, Task: c.Task}
+	adv := &Advisory{CVE: id, Product: oneLine(a.Product), Affected: oneLine(a.Affected), Fixed: oneLine(a.Fixed), Exposure: oneLine(a.Exposure), Detection: oneLine(a.Detection), Commands: cmds, Evidence: ids, Verified: len(ids) > 0, Task: c.Task}
 	line := adv.line()
 	t.s.mu.Lock()
 	t.s.advisories = slices.DeleteFunc(t.s.advisories, func(x *Advisory) bool { return x.CVE == id })
@@ -215,6 +236,9 @@ func (a *Advisory) line() string {
 	s := fmt.Sprintf("%s : %s ; touchées : %s ; corrigées : %s ; détection : %s", a.CVE, a.Product, a.Affected, a.Fixed, a.Detection)
 	if a.Exposure != "" {
 		s += " ; exposition : " + a.Exposure
+	}
+	if len(a.Commands) > 0 {
+		s += " ; commandes de détection : `" + strings.Join(a.Commands, "` ; `") + "`"
 	}
 	if a.Verified {
 		return s + " " + strings.Join(a.Evidence, "")

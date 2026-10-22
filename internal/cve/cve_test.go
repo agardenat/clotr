@@ -52,8 +52,14 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-9999","product":"x","affected":"x","fixed":"x","detection":"x"}`)); err == nil {
 		t.Fatal("CVE hors demande acceptée")
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"cve-2026-0001","product":"PHP","affected":"8.2 < 8.2.27","fixed":"8.2.27","detection":"php -v","evidence":["`+src+`"]}`)); err != nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"cve-2026-0001","product":"PHP","affected":"8.2 < 8.2.27","fixed":"8.2.27","detection":"php -v","commands":["php -v","rpm -qa  | grep -i php"],"evidence":["`+src+`"]}`)); err != nil {
 		t.Fatal(err)
+	}
+	if !slices.Equal(s.Commands(), []string{"php -v", "rpm -qa | grep -i php"}) || !strings.Contains(s.Advisories()[0].line(), "`rpm -qa | grep -i php`") {
+		t.Fatalf("commandes: %v", s.Commands())
+	}
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","detection":"x","commands":["a\nb"]}`)); err == nil {
+		t.Fatal("commande multiligne acceptée")
 	}
 	if len(s.Missing()) != 0 || !s.Advisories()[0].Verified {
 		t.Fatalf("fiche: %+v", s.Advisories())

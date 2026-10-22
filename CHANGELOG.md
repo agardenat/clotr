@@ -4,6 +4,13 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Analyse de lecture seule des commandes au niveau `exec` : une commande, ou un script `sh -c` analysé par un analyseur shell (pipes, `;`, `&&`, `$(…)`, `if`, `for`), faite uniquement de programmes de lecture connus avec des options sans écriture, sans redirection en écriture et sans chemin sensible, s'exécute sans confirmation ; la question n'est posée que pour le reste, avec la raison. Les listes `commands` des templates restent un complément.
+- Mode CVE : `commands` de `cve_advisory`, commandes de détection de la fiche, affichées avec elle et exécutées sans confirmation (réputées fiables).
+
+### Modifié
+- Mode CVE : consigne de passer par une ressource éphémère (pod sur l'image du conteneur) avant de conclure « indéterminé ».
+
 ## [0.31.0] - 2026-10-22
 
 ### Ajouté

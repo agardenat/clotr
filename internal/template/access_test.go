@@ -153,7 +153,15 @@ tool(name = "run", description = "d", schema = {"type": "object"}, fn = run)
 	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["rm","-rf","/"]}`); err == nil || !strings.Contains(err.Error(), "commands.deny") {
 		t.Fatalf("deny: %v", err)
 	}
-	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["id"]}`); err == nil || !strings.Contains(err.Error(), "no terminal") && !strings.Contains(err.Error(), "pas de terminal") {
+	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["sh","-c","rpm -qa | grep -i php"]}`); err != nil {
+		t.Fatalf("lecture seule: %v", err)
+	}
+	in.Trusted = func() []string { return []string{"apachectl  -t -D DUMP_MODULES"} }
+	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["apachectl","-t","-D","DUMP_MODULES"]}`); err != nil {
+		t.Fatalf("commande de confiance: %v", err)
+	}
+	in.Trusted = nil
+	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["touch","/tmp/x"]}`); err == nil || !strings.Contains(err.Error(), "no terminal") && !strings.Contains(err.Error(), "pas de terminal") {
 		t.Fatalf("sans confirmation: %v", err)
 	}
 	var questions []string
@@ -162,19 +170,19 @@ tool(name = "run", description = "d", schema = {"type": "object"}, fn = run)
 		questions = append(questions, q)
 		return answer, nil
 	}
-	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["id"]}`); err == nil {
+	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["touch","/tmp/x"]}`); err == nil {
 		t.Fatal("refus de l'utilisateur ignoré")
 	}
 	answer = access.Always
 	for range 2 {
-		if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["id"]}`); err != nil {
+		if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["touch","/tmp/x"]}`); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if len(questions) != 2 || !strings.Contains(questions[1], "web1") || !strings.Contains(questions[1], "id") {
+	if len(questions) != 2 || !strings.Contains(questions[1], "web1") || !strings.Contains(questions[1], "touch") {
 		t.Fatalf("questions: %q", questions)
 	}
-	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["id","-u"]}`); err != nil || len(questions) != 3 {
+	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["touch","/tmp/y"]}`); err != nil || len(questions) != 3 {
 		t.Fatalf("toujours limité à l'argv exact: %v %d", err, len(questions))
 	}
 	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["sh","-c","id\nreboot"]}`); err == nil {
@@ -184,10 +192,10 @@ tool(name = "run", description = "d", schema = {"type": "object"}, fn = run)
 	for _, a := range audits {
 		decisions = append(decisions, fmt.Sprint(a["decision"]))
 	}
-	if strings.Join(decisions, ",") != "allowed,allowed,denied,refused,refused,always,always,always" {
+	if strings.Join(decisions, ",") != "allowed,allowed,denied,readonly,trusted,refused,refused,always,always,always" {
 		t.Fatalf("audit: %v", decisions)
 	}
-	if n := len(rec.cmds); n != 5 {
+	if n := len(rec.cmds); n != 7 {
 		t.Fatalf("%d commandes exécutées: %q", n, rec.cmds)
 	}
 }
@@ -392,7 +400,7 @@ tool(name = "attach", description = "d", schema = {"type": "object"}, fn = lambd
 	if s.query != "command=php&command=-v&stdout=true" || s.protocol != "v5.channel.example" || !s.closed {
 		t.Fatalf("serveur: %+v", s)
 	}
-	if _, err := tools["i_run"](`{"box":"b1","argv":["sh","-c","id"]}`); err == nil || !strings.Contains(err.Error(), "sh -c id") {
+	if _, err := tools["i_run"](`{"box":"b1","argv":["sh","-c","touch /tmp/x"]}`); err == nil || !strings.Contains(err.Error(), "touch /tmp/x") {
 		t.Fatalf("commande hors liste sans terminal: %v", err)
 	}
 	if _, err := tools["i_attach"](`{}`); err == nil || !strings.Contains(err.Error(), "deny") {
