@@ -92,6 +92,7 @@ type Instance struct {
 
 	Activating func()
 	Confirm    func(ctx context.Context, question string) (access.Answer, error)
+	Trusted    func() []string
 
 	Client      string
 	ClientTerms []string
@@ -852,7 +853,7 @@ func (in *Instance) EnvironmentLines() []string {
 }
 
 const (
-	accessExecHint   = "Niveau d'accès exec : les outils d'exécution de cette instance lancent des commandes sur les hôtes et pods existants ; seulement des commandes sans effet de bord (versions, paquets, état), jamais de modification ; une commande hors de la liste autorisée est soumise à l'utilisateur, qui peut la refuser."
+	accessExecHint   = "Niveau d'accès exec : les outils d'exécution de cette instance lancent des commandes sur les hôtes et pods existants ; seulement des commandes sans effet de bord (versions, paquets, état), jamais de modification. clotr analyse chaque commande (sh -c compris : pipes, ;, &&, $(…) admis) : une commande faite de programmes de lecture connus (ls, cat, grep, find sans -exec/-delete, rpm -q, dpkg -l, dpkg-query, apk info, <programme> -v/--version…) sans redirection en écriture passe sans question ; toute autre (awk, sed, xargs, interpréteur avec code, écriture) est soumise à l'utilisateur, qui peut la refuser."
 	accessGatedHint  = "Instance au niveau d'accès %s : les outils %s dépassent ce niveau ; ils restent utilisables, mais chaque appel est soumis à l'autorisation de l'utilisateur, qui peut refuser. Ne les appeler que si la vérification l'exige vraiment (aucun outil de lecture ne suffit), et en cas de refus, signaler le point comme indéterminé."
 	accessCreateHint = "Niveau d'accès create : les outils de création lancent des ressources éphémères propres à clotr (ex. un pod avec une image donnée), libres d'usage et supprimées automatiquement en fin de run."
 )

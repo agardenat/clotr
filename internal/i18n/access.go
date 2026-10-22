@@ -15,7 +15,7 @@ var accessMsgs = map[string]msg{
 	"access.line":                 {"Access level: %s", "Niveau d'accès : %s"},
 	"access.cleanup_ok":           {"removed %s", "supprimé : %s"},
 	"access.cleanup_failed":       {"NOT removed %s: %v (remove it manually)", "NON supprimé : %s : %v (à supprimer à la main)"},
-	"exec.ask":                    {"\n[clotr] instance %s, %s: run %s ? [y]es / [n]o / [a]lways for this run: ", "\n[clotr] instance %s, %s : exécuter %s ? [o]ui / [n]on / [t]oujours pour ce run : "},
+	"exec.ask":                    {"\n[clotr] instance %s, %s: run %s ? (not recognized as read-only: %v) [y]es / [n]o / [a]lways for this run: ", "\n[clotr] instance %s, %s : exécuter %s ? (non reconnue en lecture seule : %v) [o]ui / [n]on / [t]oujours pour ce run : "},
 	"tpl.exec.denied":             {"command %s refused by commands.deny", "commande %s refusée par commands.deny"},
 	"tpl.exec.no_confirm":         {"command %s is not in commands.allow and cannot be confirmed (no terminal)", "commande %s hors de commands.allow et confirmation impossible (pas de terminal)"},
 	"tpl.exec.unconfirmed":        {"command %s not confirmed: %v", "commande %s non confirmée : %v"},

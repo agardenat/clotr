@@ -209,3 +209,21 @@ func ParseAnswer(s string) Answer {
 	}
 	return No
 }
+
+func normCommand(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func Matches(argv []string, commands []string) bool {
+	line := strings.Join(argv, " ")
+	if script, ok := ShellScript(argv); ok {
+		line = script
+	}
+	line = normCommand(line)
+	for _, c := range commands {
+		if c = normCommand(c); c != "" && (c == line || c == normCommand(Display(argv))) {
+			return true
+		}
+	}
+	return false
+}

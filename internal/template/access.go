@@ -195,6 +195,18 @@ func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []s
 		in.audit("exec_decision", f)
 		return i18n.E("tpl.exec.denied", shown)
 	}
+	if in.Trusted != nil && access.Matches(argv, in.Trusted()) {
+		f["decision"] = "trusted"
+		in.audit("exec_decision", f)
+		return nil
+	}
+	roErr := access.ReadOnly(argv)
+	if roErr == nil {
+		f["decision"] = "readonly"
+		in.audit("exec_decision", f)
+		return nil
+	}
+	f["not_readonly"] = roErr.Error()
 	key := strings.Join(argv, "\x00")
 	in.accessMu.Lock()
 	ok := in.always[key]
@@ -209,7 +221,7 @@ func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []s
 		in.audit("exec_decision", f)
 		return i18n.E("tpl.exec.no_confirm", shown)
 	}
-	ans, err := in.Confirm(ctx, i18n.T("exec.ask", in.Name, where, shown))
+	ans, err := in.Confirm(ctx, i18n.T("exec.ask", in.Name, where, shown, roErr))
 	if err != nil {
 		f["decision"], f["error"] = "refused", err.Error()
 		in.audit("exec_decision", f)
