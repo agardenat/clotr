@@ -73,6 +73,23 @@ type Store struct {
 	findings   []*Finding
 	news       []news
 	seen       map[string]int
+	mark       map[string]int
+}
+
+const (
+	ReminderEvery = 4
+	InboxFormat   = "Transmis par clotr pendant que tu travailles :\n%s\nLes fiches et les statuts signalés par les autres tâches sont établis par elles : ne refais pas ces actifs."
+)
+
+var notCheck = []string{"evidence_", "memory_", "cve_", "mcp_websearch", "web_search"}
+
+func checking(tool string) bool {
+	for _, p := range notCheck {
+		if strings.HasPrefix(tool, p) {
+			return false
+		}
+	}
+	return true
 }
 
 type news struct {
@@ -80,7 +97,7 @@ type news struct {
 }
 
 func New(ids []string, mem *memory.Store, ev *evidence.Store, log *audit.Logger) *Store {
-	return &Store{Events: progress.Nop{}, IDs: ids, mem: mem, ev: ev, audit: log, seen: map[string]int{}}
+	return &Store{Events: progress.Nop{}, IDs: ids, mem: mem, ev: ev, audit: log, seen: map[string]int{}, mark: map[string]int{}}
 }
 
 func (s *Store) Tools() []tools.Tool { return []tools.Tool{advisoryTool{s}, reportTool{s}} }
@@ -139,6 +156,13 @@ func (s *Store) Inbox(reader tools.Caller) string {
 		}
 	}
 	s.seen[reader.Task] = len(s.news)
+	if reader.Task != "t0" {
+		if n := s.ev.TaskCount(reader.Task, checking); n-s.mark[reader.Task] >= ReminderEvery {
+			fmt.Fprintf(&b, "- Rappel : %d sorties d'outils depuis ton dernier %s. Signale maintenant, un appel par actif, chaque actif dont le statut est déjà établi (clean, vulnerable ou unknown avec ce qui manque), avant toute autre vérification ; ne garde rien pour ta conclusion.\n", n-s.mark[reader.Task], ReportTool)
+			s.mark[reader.Task] = n
+			s.audit.Log("cve_reminder", map[string]any{"task": reader.Task, "outputs": n})
+		}
+	}
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
@@ -177,7 +201,7 @@ func (advisoryTool) Description() string {
 }
 
 func (advisoryTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"cve":{"type":"string","description":"identifiant, ex: CVE-2026-12345"},"product":{"type":"string","description":"produit et composant touchés"},"affected":{"type":"string","description":"versions touchées, ex: PHP 8.1 < 8.1.31, 8.2 < 8.2.27"},"fixed":{"type":"string","description":"versions corrigées ou correctif"},"exposure":{"type":"string","description":"conditions d'exposition (module, configuration, accès réseau), si connues"},"detection":{"type":"string","description":"comment vérifier un actif : commande de version, nom de paquet, fichier"},"commands":{"type":"array","items":{"type":"string"},"description":"commandes de détection exactes, une ligne shell chacune, sans effet de bord"},"evidence":{"type":"array","items":{"type":"string"},"description":"preuves des sources, ex: [\"E004\"]"}},"required":["cve","product","affected","fixed","detection"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"cve":{"type":"string","description":"identifiant, ex: CVE-2026-12345"},"product":{"type":"string","description":"produit et composant touchés"},"affected":{"type":"string","description":"versions touchées, ex: PHP 8.1 < 8.1.31, 8.2 < 8.2.27"},"fixed":{"type":"string","description":"versions corrigées ou correctif"},"exposure":{"type":"string","description":"conditions d'exposition (module, configuration, accès réseau), si connues"},"detection":{"type":"string","description":"comment vérifier un actif : commande de version, nom de paquet, fichier"},"commands":{"type":"array","items":{"type":"string"},"description":"commandes de détection exactes, une ligne shell chacune, sans effet de bord"},"evidence":{"type":"array","items":{"type":"string"},"description":"preuves des sources, ex: [\"E004\"]"}},"required":["cve","product","affected","fixed","detection","commands"]}`)
 }
 
 func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
@@ -202,6 +226,9 @@ func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, er
 		if strings.TrimSpace(v) == "" {
 			return "", fmt.Errorf("%s requis", name)
 		}
+	}
+	if len(a.Commands) == 0 {
+		return "", fmt.Errorf("commands requis : les commandes de détection exactes, une ligne shell chacune (ex. « php -v », « rpm -qa | grep -i php »)")
 	}
 	ids, err := t.s.checkEvidence(a.Evidence, false)
 	if err != nil {
@@ -303,6 +330,7 @@ func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 		}
 	}
 	t.s.findings = append(t.s.findings, f)
+	t.s.mark[c.Task] = t.s.ev.TaskCount(c.Task, checking)
 	line := f.line()
 	t.s.news = append(t.s.news, news{c.Task, line})
 	t.s.mu.Unlock()

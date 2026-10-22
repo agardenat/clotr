@@ -896,6 +896,7 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 	if rt.cves != nil {
 		rt.cves.Events = events
 		runner.Inbox = rt.cves.Inbox
+		runner.InboxFormat = cve.InboxFormat
 	}
 	return &orchestrator.Orchestrator{
 		Cfg:         rt.cfg,

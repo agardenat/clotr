@@ -4,6 +4,10 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Modifié
+- Mode CVE : une tâche qui accumule 4 sorties d'outils de vérification sans `cve_report` reçoit un rappel de clotr de signaler aussitôt les actifs établis (audit `cve_reminder`), pour que les statuts s'affichent au fil de l'eau et non à la conclusion.
+- Mode CVE : `commands` est obligatoire dans `cve_advisory` et demandé par la consigne des fiches.
+
 ## [0.32.0] - 2026-10-22
 
 ### Ajouté

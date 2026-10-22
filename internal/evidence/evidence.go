@@ -86,6 +86,21 @@ func (s *Store) Add(task, tool, args, output string, callErr error) string {
 	return id
 }
 
+func (s *Store) TaskCount(task string, count func(tool string) bool) int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, id := range s.order {
+		if it := s.items[id]; it.Task == task && count(it.Tool) {
+			n++
+		}
+	}
+	return n
+}
+
 func (s *Store) Len() int {
 	if s == nil {
 		return 0
