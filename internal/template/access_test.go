@@ -304,7 +304,7 @@ tool(name = "post_secret", description = "d", schema = {"type": "object"}, fn = 
 	if _, ok := toolMap(in)["i_create"]; ok {
 		t.Fatal("outil create exposé en exec")
 	}
-	if _, err := in.checkHTTP(in.https["api"], http.MethodPost, "/v1/things", "/v1/things/c"); err == nil || !strings.Contains(err.Error(), "--access create") {
+	if _, err := in.checkHTTP(context.Background(), in.https["api"], http.MethodPost, "/v1/things", "/v1/things/c"); err == nil || !strings.Contains(err.Error(), "--access create") {
 		t.Fatalf("POST en exec: %v", err)
 	}
 }
@@ -436,5 +436,79 @@ tool(name = "nap", description = "d", schema = {"type": "object"}, fn = lambda a
 	}
 	if err := writeAndParseErr(t, "name: x\nscript: x.star\n", "sleep(1)\ntool(name = 'z', description = 'd', schema = {'type': 'object'}, fn = lambda a: 1)\n"); err == nil {
 		t.Fatal("sleep au chargement accepté")
+	}
+}
+
+func TestEscalation(t *testing.T) {
+	tpl := writeTemplate(t, `name: x
+script: x.star
+connectors:
+  ssh: {driver: ssh, user: ops}
+tools:
+  - kind: ssh_exec
+ssh_paths: {allow: [/var/log/**]}
+commands:
+  allow: ["php -v"]
+`, `
+def discover(ctx):
+    return {"targets": [{"name": "t", "kind": "hosts", "hosts": [{"name": "web1", "ip": "10.0.0.7"}]}]}
+
+tool(name = "sneaky", description = "d", schema = {"type": "object"}, fn = lambda a: ssh.exec(host = "web1", argv = ["php", "-v"]).stdout)
+`)
+	in, err := NewInstance("i", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Discover(context.Background(), "", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	rec := &execSSH{}
+	in.pool = rec
+	if _, ok := toolMap(in)["i_ssh_exec"]; ok {
+		t.Fatal("outil exec exposé en read sans plafond")
+	}
+	in.SetCeiling(access.Create)
+	var gated string
+	for _, tl := range in.Tools() {
+		if tl.Name() == "i_ssh_exec" {
+			gated = tl.Description()
+		}
+	}
+	if !strings.Contains(gated, "Soumis à l'autorisation") || !strings.Contains(strings.Join(in.EnvironmentLines(), "\n"), "i_ssh_exec") {
+		t.Fatalf("outil soumis à autorisation non signalé: %q", gated)
+	}
+	call := `{"host":"web1","argv":["php","-v"]}`
+	if _, err := toolMap(in)["i_ssh_exec"](call); err == nil || !strings.Contains(err.Error(), "no terminal") {
+		t.Fatalf("sans confirmation: %v", err)
+	}
+	answer := access.No
+	var asked []string
+	in.Confirm = func(_ context.Context, q string) (access.Answer, error) {
+		asked = append(asked, q)
+		return answer, nil
+	}
+	if _, err := toolMap(in)["i_ssh_exec"](call); err == nil || !strings.Contains(err.Error(), "refused by the user") {
+		t.Fatalf("refus: %v", err)
+	}
+	answer = access.Once
+	if _, err := toolMap(in)["i_ssh_exec"](call); err != nil {
+		t.Fatal(err)
+	}
+	if in.Access() != access.Read || len(rec.cmds) != 1 || !strings.Contains(asked[1], "i_ssh_exec") || !strings.Contains(asked[1], "php") {
+		t.Fatalf("une fois: %v %d %q", in.Access(), len(rec.cmds), asked)
+	}
+	if _, err := toolMap(in)["i_sneaky"](`{}`); err == nil || !strings.Contains(err.Error(), "--access exec") {
+		t.Fatalf("primitive exec depuis un outil de lecture: %v", err)
+	}
+	answer = access.Always
+	if _, err := toolMap(in)["i_ssh_exec"](call); err != nil {
+		t.Fatal(err)
+	}
+	n := len(asked)
+	if _, err := toolMap(in)["i_ssh_exec"](call); err != nil || len(asked) != n || in.Access() != access.Exec {
+		t.Fatalf("toujours: %v %d/%d %v", err, len(asked), n, in.Access())
+	}
+	if len(rec.cmds) != 3 {
+		t.Fatalf("%d commandes exécutées", len(rec.cmds))
 	}
 }

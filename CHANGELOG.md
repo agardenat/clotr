@@ -4,6 +4,10 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- `run --cve` : vérification de l'exposition à des CVE à partir de leurs identifiants dans la demande. Une tâche `t0` établit d'abord la fiche de chaque CVE (produit, versions touchées et corrigées, détection, sources) avec `cve_advisory`, affichée et transmise à toutes les tâches ; puis chaque actif est signalé avec `cve_report` dès que son statut est établi et affiché aussitôt : ✅ sain, 🚨 vulnérable (en rouge), ❓ indéterminé. Tableau des fiches et statuts en tête du rapport, généré par clotr ; `cve` dans la sortie `--json` ; premier Ctrl-C pour conclure.
+- Mode CVE : les outils au-delà du niveau d'accès d'une instance (jusqu'à `create`) sont proposés et soumis à l'autorisation de l'utilisateur à chaque appel (oui, non, toujours pour ce run), refusés sans terminal ; audit `access_escalation`.
+
 ## [0.30.0] - 2026-10-22
 
 ### Ajouté

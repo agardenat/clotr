@@ -17,6 +17,7 @@ import (
 	"github.com/agardenat/clotr/internal/audit"
 	"github.com/agardenat/clotr/internal/catalog"
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/cve"
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/lead"
@@ -93,6 +94,7 @@ type Orchestrator struct {
 	Language        string
 	OnAnswer        func(text string)
 	Incident        bool
+	CVE             *cve.Store
 	Journal         bool
 	triaged         *Result
 	stopVerify      atomic.Pointer[context.CancelFunc]
@@ -137,14 +139,30 @@ func (o *Orchestrator) ConcludeNow() {
 }
 
 func (o *Orchestrator) triage(ctx context.Context, request string) Result {
+	goal, label, reached := triageGoal, i18n.T("triage"), o.causeEstablished
+	if o.CVE != nil {
+		goal, label, reached = fmt.Sprintf(cveGoal, strings.Join(o.CVE.IDs, ", ")), i18n.T("cve.triage"), o.advisoriesDone
+	}
 	role, err := o.DirectRole("")
 	if err != nil {
-		return Result{TaskID: triageID, Goal: triageGoal, Status: "failed", Error: err.Error()}
+		return Result{TaskID: triageID, Goal: goal, Status: "failed", Error: err.Error()}
 	}
-	t := Task{ID: triageID, Role: role, Goal: triageGoal, Tools: o.Tools.Names()}
-	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: t.ID, Role: t.Role, Goal: i18n.T("triage")}}})
-	o.Audit.Log("triage", map[string]any{"role": role})
-	return o.runTask(ctx, request, t, nil, o.causeEstablished)
+	t := Task{ID: triageID, Role: role, Goal: goal, Tools: o.Tools.Names()}
+	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: t.ID, Role: t.Role, Goal: label}}})
+	o.Audit.Log("triage", map[string]any{"role": role, "cve": o.CVE != nil})
+	return o.runTask(ctx, request, t, nil, reached)
+}
+
+const (
+	cveGoal = "Fiches CVE, avant toute planification : pour chacune des CVE %s, établis depuis des sources vérifiées (avis de l'éditeur, NVD, distribution ; recherche web) le produit et le composant touchés, les versions touchées et corrigées, les conditions d'exposition et le moyen de vérifier un actif (commande de version, paquet, fichier), puis enregistre-la aussitôt avec cve_advisory en citant les preuves des sources. Ne vérifie aucun actif : la vérification des actifs est confiée aux tâches planifiées ensuite. Une CVE introuvable dans les sources s'enregistre quand même, sans preuve (fiche non vérifiée), avec ce que la demande en dit."
+	cveDone = "Toutes les fiches CVE sont enregistrées : l'objectif est atteint. Conclus maintenant, au format demandé, sans appeler d'outil : résumé de chaque fiche avec ses preuves ; indique dans gaps ce qui reste incertain (versions, conditions d'exposition)."
+)
+
+func (o *Orchestrator) advisoriesDone() string {
+	if len(o.CVE.Missing()) == 0 {
+		return cveDone
+	}
+	return ""
 }
 
 func (o *Orchestrator) causeEstablished() string {
@@ -158,7 +176,7 @@ func (o *Orchestrator) causeEstablished() string {
 
 func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error) {
 	var results []Result
-	if o.Incident {
+	if o.Incident || o.CVE != nil {
 		t := o.triage(ctx, request)
 		results = append(results, t)
 		if t.Status == "ok" {
@@ -188,6 +206,11 @@ func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error)
 		return &Report{Plan: plan, Results: results}, ctx.Err()
 	}
 	md, model, err := o.Synthesize(ctx, request, results)
+	if o.CVE != nil && md != "" {
+		if sec := o.CVE.Section(); sec != "" {
+			md = sec + "\n\n---\n\n" + md
+		}
+	}
 	return &Report{Plan: plan, Results: results, Markdown: md, Model: model}, err
 }
 
@@ -414,6 +437,9 @@ func (o *Orchestrator) planInput(request string) string {
 	if o.triaged == nil {
 		return user
 	}
+	if o.CVE != nil {
+		return user + "\n\nFiches CVE établies par la tâche " + triageID + " (déjà exécutée ; fiches transmises à chaque tâche):" + synthInput([]Result{*o.triaged}) + "\nNe replanifie pas les fiches. Planifie la vérification des actifs : une tâche par périmètre (instance, cible, cluster ou contexte, groupe d'hôtes) concerné par la demande, chargée d'inventorier tous ses actifs susceptibles de contenir le composant (workloads et leurs images, conteneurs, hôtes, paquets) et de signaler chacun avec cve_report dès que son statut est établi. L'id " + triageID + " est réservé: ne l'utilise pas."
+	}
 	return user + "\n\nRésultat du tri d'incident (tâche " + triageID + ", déjà exécutée ; son résultat est transmis à chaque tâche, qui n'a pas à relocaliser le composant):" + synthInput([]Result{*o.triaged}) + "\nNe replanifie pas ce que le tri a établi. Si la cause est établie par une preuve, ne planifie que la vérification de cette cause et la recherche du correctif durable; sinon, découpe l'investigation à partir de ce qu'il a trouvé. L'id " + triageID + " est réservé: ne l'utilise pas."
 }
 
@@ -471,7 +497,7 @@ func (o *Orchestrator) Validate(p *Plan) error {
 				}
 			}
 		}
-		extra := append([]string{evidence.ToolName, evidence.SearchName, lead.ToolName, dns.ToolName}, o.WebTools...)
+		extra := append(append([]string{evidence.ToolName, evidence.SearchName, lead.ToolName, dns.ToolName}, cve.ToolNames()...), o.WebTools...)
 		for _, n := range extra {
 			if !slices.Contains(expanded, n) && slices.Contains(o.Tools.Names(), n) {
 				expanded = append(expanded, n)
@@ -736,6 +762,11 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 	for _, e := range o.Memory.All() {
 		if e.Kind == lead.Kind {
 			leads = append(leads, e)
+		}
+	}
+	if o.CVE != nil {
+		if sec := o.CVE.Section(); sec != "" {
+			user += "\n\nFiches et statuts des CVE signalés en cours de run (clotr ajoute lui-même ce tableau en tête du rapport : ne le recopie pas). La conclusion répond pour chaque CVE : actifs vulnérables, actifs indéterminés et ce qui manque pour conclure ; les recommandations donnent la version corrigée à déployer par actif vulnérable :\n" + sec
 		}
 	}
 	if len(leads) > 0 {
@@ -1025,6 +1056,9 @@ func (o *Orchestrator) accessRule() string {
 }
 
 func (o *Orchestrator) incidentRule() string {
+	if o.CVE != nil {
+		return "\nMode CVE (" + strings.Join(o.CVE.IDs, ", ") + ") : les fiches des CVE (versions touchées et corrigées, moyen de détection) te sont transmises ; appuie-toi sur elles. Pour chaque actif de ton périmètre, appelle " + cve.ReportTool + " dès que son statut est établi, sans attendre ta conclusion : vulnerable si une preuve montre une version touchée, clean seulement si une preuve couvre la CVE pour cet actif (composant absent de l'inventaire des paquets ou de l'image, version corrigée), unknown sinon, avec ce qui manque. Un binaire introuvable dans le PATH ne prouve pas l'absence du composant (autre nom, autre chemin, bibliothèque embarquée) : inspecte l'image ou le gestionnaire de paquets si un outil le permet, sinon signale unknown. Les outils marqués « soumis à l'autorisation de l'utilisateur » ne s'appellent que si aucun outil de lecture ne permet de conclure ; un refus se signale en unknown. Les statuts signalés par les autres tâches te sont transmis : ne refais pas leurs actifs."
+	}
 	if !o.Incident || !slices.Contains(o.Tools.Names(), lead.ToolName) {
 		return ""
 	}

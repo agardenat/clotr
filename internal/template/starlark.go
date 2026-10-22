@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -321,7 +322,18 @@ func (in *Instance) checkToolNames() error {
 }
 
 func (in *Instance) ToolNames() []string {
-	return in.toolNames(in.access)
+	return in.toolNames(in.offered())
+}
+
+func (in *Instance) gatedToolNames() []string {
+	var out []string
+	granted := in.toolNames(in.Access())
+	for _, n := range in.ToolNames() {
+		if !slices.Contains(granted, n) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func (in *Instance) allToolNames() []string {

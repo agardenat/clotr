@@ -14,6 +14,7 @@ type Event struct {
 	Kind     string
 	Model    string
 	Detail   string
+	Status   string
 	Step     int
 	Cost     float64
 	Duration time.Duration

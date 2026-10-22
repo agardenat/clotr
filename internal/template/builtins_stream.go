@@ -103,7 +103,7 @@ func (in *Instance) builtinHTTPStream(thread *starlark.Thread, b *starlark.Built
 	if !matchAny(lvl.allow, clean) {
 		return nil, i18n.E("tpl.http.exec_allow", clean, conn)
 	}
-	if !in.access.Allows(access.Exec) {
+	if !in.allowed(threadCtx(thread), access.Exec) {
 		return nil, i18n.E("tpl.access.required", "exec "+clean, access.Exec)
 	}
 	switch {
