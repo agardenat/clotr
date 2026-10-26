@@ -92,6 +92,9 @@ func (in *Instance) builtinHTTPStream(thread *starlark.Thread, b *starlark.Built
 	if !ok {
 		return nil, i18n.E("tpl.http.connector", conn, strings.Join(sortedKeys(in.https), ", "))
 	}
+	if hc.via != nil {
+		return nil, i18n.E("tpl.http.via_stream", conn)
+	}
 	lvl := hc.levels[access.Exec]
 	if lvl == nil {
 		return nil, i18n.E("tpl.http.no_exec", conn)

@@ -196,6 +196,11 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 			in.shell = c.Driver == "shell"
 		}
 	}
+	for _, cn := range sortedKeys(in.https) {
+		if in.https[cn].via != nil && in.sshName == "" {
+			return nil, fmt.Errorf("instance %s: %w", name, i18n.E("tpl.http.via_ssh", cn))
+		}
+	}
 	for i, ts := range t.Tools {
 		on, err := whenTrue(ts.When, params)
 		if err != nil {

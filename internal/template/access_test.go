@@ -19,6 +19,7 @@ import (
 	"go.starlark.net/starlark"
 
 	"github.com/agardenat/clotr/internal/access"
+	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/driver/ssh"
 )
 
@@ -628,5 +629,92 @@ def discover(ctx):
 		if _, err := Parse([]byte("name: x\ntargets: [{name: a, kind: hosts}]\n"+bad+"ssh_paths: {allow: [/etc/**]}\n"), "x.yaml"); err == nil || !strings.Contains(err.Error(), "connectors") {
 			t.Fatalf("%s : %v", bad, err)
 		}
+	}
+	sshTpl := writeTemplate(t, `name: y
+script: x.star
+params:
+  sudo: {type: bool, default: false}
+connectors:
+  ssh: {driver: ssh, user: ops, sudo: "{{.sudo}}"}
+tools:
+  - kind: ssh_read
+ssh_paths:
+  allow: ["`+dir+`/**"]
+`, `
+def discover(ctx):
+    return {"targets": [{"name": "vms", "kind": "hosts", "hosts": [{"name": "vm2", "ip": "10.0.0.2"}]}]}
+`)
+	in2, err := NewInstance("j", sshTpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in2.Close()
+	if err := in2.UseShell(&config.Shell{Command: []string{gw, "%h"}, OpenTimeout: 20}); err != nil {
+		t.Fatal(err)
+	}
+	if err := in2.Discover(context.Background(), "", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	out, err = toolMap(in2)["j_ssh_read"](`{"host":"vm2","path":"` + dir + `/app.conf"}`)
+	if err != nil || !strings.Contains(out, "version=1.2") {
+		t.Fatalf("lecture par shell : %q %v", out, err)
+	}
+	if err := in2.UseShell(&config.Shell{}); err == nil {
+		t.Fatal("command vide acceptée")
+	}
+	if err := in.UseShell(&config.Shell{Command: []string{gw}, Ready: "("}); err == nil {
+		t.Fatal("regexp invalide acceptée")
+	}
+}
+
+func TestHTTPVia(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh requis")
+	}
+	tpl := writeTemplate(t, `name: x
+script: x.star
+connectors:
+  shell: {driver: local}
+  api:
+    driver: http
+    methods: [GET, POST]
+    allow: ["^/v1/"]
+    via:
+      host: node1
+      command: [sh, -c, 'case "$1" in /v1/fail*) echo boom >&2; exit 7;; esac; printf "HTTP/1.1 100 Continue\r\n\r\nHTTP/2 404 \r\nContent-Type: application/json\r\n\r\n{\"path\":\"%s\",\"accept\":\"%s\"}" "$1" "$2"', via, "%u", "%a"]
+ssh_paths: {allow: [/var/log/**]}
+`, `
+def discover(ctx):
+    return {"targets": [{"name": "c", "kind": "cluster"}]}
+
+def get(args):
+    r = catch(http.request, "api", args.get("method", "GET"), args["path"], query = args.get("query"), headers = {"Accept": "application/x;v=1"})
+    if r.error:
+        return "erreur : " + r.error
+    return "%d %s %s" % (r.value.status, r.value.headers.get("content-type"), r.value.body)
+
+tool(name = "get", description = "d", schema = {"type": "object"}, fn = get)
+`)
+	in, err := NewInstance("i", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	if err := in.Discover(context.Background(), "", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	get := toolMap(in)["i_get"]
+	out, err := get(`{"path":"/v1/pods","query":{"limit":"5"}}`)
+	if err != nil || out != `404 application/json {"path":"/v1/pods?limit=5","accept":"application/x;v=1"}` {
+		t.Fatalf("%q %v", out, err)
+	}
+	for args, want := range map[string]string{`{"path":"/v2/x"}`: "/v2/x", `{"path":"/v1/fail"}`: "boom", `{"path":"/v1/x","method":"POST"}`: "GET"} {
+		if out, err := get(args); err != nil || !strings.Contains(out, "erreur") || !strings.Contains(out, want) {
+			t.Fatalf("%s : %q %v", args, out, err)
+		}
+	}
+	bad := writeTemplate(t, "name: y\nscript: x.star\nconnectors:\n  api: {driver: http, via: {host: n, command: [x]}}\n", "def discover(ctx):\n    return {\"targets\": []}\n")
+	if _, err := NewInstance("j", bad, nil); err == nil || !strings.Contains(err.Error(), "via") {
+		t.Fatalf("via sans connecteur ssh : %v", err)
 	}
 }

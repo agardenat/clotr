@@ -147,7 +147,16 @@ type Instance struct {
 	Params   map[string]any `yaml:"params"`
 	SSHPaths PathRules      `yaml:"ssh_paths"`
 	Commands access.Rules   `yaml:"commands"`
+	Shell    *Shell         `yaml:"shell"`
 	Client   string         `yaml:"-"`
+}
+
+type Shell struct {
+	Command     []string `yaml:"command"`
+	Ready       string   `yaml:"ready"`
+	Prompt      string   `yaml:"prompt"`
+	OpenTimeout int      `yaml:"open_timeout"`
+	MaxConns    int      `yaml:"max_conns"`
 }
 
 type PathRules struct {

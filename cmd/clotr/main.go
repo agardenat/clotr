@@ -580,6 +580,9 @@ func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, l
 	if err := in.ExtendCommands(ic.Commands); err != nil {
 		return nil, err
 	}
+	if err := in.UseShell(ic.Shell); err != nil {
+		return nil, err
+	}
 	in.SetAccess(level)
 	if ic.Client != "" {
 		in.Client, in.ClientTerms = ic.Client, append([]string{cl.Name}, cl.Aliases...)
@@ -1114,6 +1117,8 @@ func cmdTemplates(o *options, args []string, w io.Writer) error {
 			} else if err := ti.ExtendPaths(in.SSHPaths); err != nil {
 				state = err.Error()
 			} else if err := ti.ExtendCommands(in.Commands); err != nil {
+				state = err.Error()
+			} else if err := ti.UseShell(in.Shell); err != nil {
 				state = err.Error()
 			}
 		}
