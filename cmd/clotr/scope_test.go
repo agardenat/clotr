@@ -154,6 +154,81 @@ func TestScopeClients(t *testing.T) {
 	}
 }
 
+func TestScopeProjects(t *testing.T) {
+	dir := t.TempDir()
+	tdir := filepath.Join(dir, "templates")
+	for _, d := range []string{"clients", "templates"} {
+		if err := os.Mkdir(filepath.Join(dir, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		"templates/acme.yaml": "name: acme\nkeywords: [widget]\nparams:\n  region: {type: string, default: none}\n  zone: {type: string, default: none}\n  secret: {type: string, default: \"\"}\ntargets:\n  - {kind: k, name: lake}\ntools:\n  - kind: inventory\n",
+		"clients/north.yaml":  "name: north\ncontext: client fictif.\nvars: {cmp: CMP-0000, project: PRJ-OLD}\nparams: {region: eu, zone: z1}\ninstances:\n  - {name: north-shared, template: acme}\nprojects:\n  - name: PRJ-0001\n    aliases: [prod]\n    context: site principal.\n    params: {zone: z2}\n    instances:\n      - {name: north-main, template: acme, params: {secret: \"kv/{{.cmp}}/{{.project}}\"}}\n  - name: PRJ-0002\n    aliases: [pra]\n    vars: {project: PRJ-0002-B, site: s2}\n    params: {zone: z3, region: us}\n    instances:\n      - {name: north-pra, template: acme, params: {secret: \"kv/{{.project}}/{{.site}}\"}}\n",
+		"config.yaml":         "providers:\n  - {name: p, base_url: http://x}\nroles:\n  planner: {tier: deep}\n  collector: {tier: fast, tools: true}\n  synthesizer: {tier: deep}\ntemplates: {dir: " + tdir + "}\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &app{cfg: cfg, registry: tools.NewRegistry(100), audit: audit.Nop()}
+	rt.setupInstances(context.Background(), &options{quiet: true}, toolFilter{}, func(m string) { t.Error(m) })
+	if len(rt.instances) != 3 {
+		t.Fatalf("instances: %d", len(rt.instances))
+	}
+	if p := rt.instances[0].Params(); p["zone"] != "z1" || p["region"] != "eu" {
+		t.Fatalf("instance hors projet: %v", p)
+	}
+	if p := rt.instances[1].Params(); p["zone"] != "z2" || p["region"] != "eu" || p["secret"] != "kv/CMP-0000/PRJ-0001" {
+		t.Fatalf("params du projet: %v", p)
+	}
+	if p := rt.instances[2].Params(); p["zone"] != "z3" || p["region"] != "us" || p["secret"] != "kv/PRJ-0002-B/s2" {
+		t.Fatalf("vars du projet: %v", p)
+	}
+	offered := func(forced []string, text string) string {
+		reg, _ := rt.scope(forced, text)
+		var groups []string
+		for _, in := range rt.instances {
+			if slices.ContainsFunc(reg.Names(), func(n string) bool { return strings.HasPrefix(n, in.ToolPrefix()) }) {
+				groups = append(groups, in.Name)
+			}
+		}
+		return strings.Join(groups, ",")
+	}
+	for _, c := range []struct {
+		forced     []string
+		text, want string
+	}{
+		{nil, "état chez north", "north-shared,north-main,north-pra"},
+		{nil, "le widget du pra est lent", "north-shared,north-pra"},
+		{nil, "PRJ-0001 et PRA", "north-shared,north-main,north-pra"},
+		{nil, "souci sur prj-0001", "north-shared,north-main"},
+		{[]string{"PRJ-0002"}, "question sans rapport", "north-pra"},
+	} {
+		if got := offered(c.forced, c.text); got != c.want {
+			t.Errorf("%v %q: %s, attendu %s", c.forced, c.text, got, c.want)
+		}
+	}
+	_, env := rt.scope(nil, "le widget de prod")
+	for _, want := range []string{
+		"- Client north : client fictif. Références : cmp=CMP-0000, project=PRJ-OLD. Instances de ce client : north-shared, north-main.",
+		"- Projet PRJ-0001 du client north (prod) : site principal. Instances de ce projet : north-main.",
+		"- Instance north-pra (template acme, projet PRJ-0002) : non proposée, la demande cite le projet PRJ-0001 du client north",
+	} {
+		if !strings.Contains(env, want) {
+			t.Fatalf("environnement sans %q:\n%s", want, env)
+		}
+	}
+	if why := rt.instances[2].Mention("bascule du PRA"); why != "projet PRJ-0002" {
+		t.Fatalf("Mention: %q", why)
+	}
+}
+
 func TestApplyVaultEnv(t *testing.T) {
 	t.Setenv("VAULT_ADDR", "")
 	t.Setenv("VAULT_NAMESPACE", "team-env")

@@ -140,6 +140,16 @@ func TestClients(t *testing.T) {
 	if cl, ok := c.Client("acme"); !ok || cl.Params["proxy_url"] != "socks5h://localhost:1080" || cl.Aliases[0] != "acmecorp" || cl.Instances != nil || cl.Vars["project_code"] != "PRJ-0000" {
 		t.Fatalf("client: %+v", cl)
 	}
+	c, err = load(map[string]string{"acme": "name: acme\nprojects:\n  - name: PRJ-0001\n    aliases: [lake]\n    vars: {site: s1}\n    params: {zone: z1}\n    instances:\n      - {name: acme-lake, template: x}\n  - name: PRJ-0002\n    instances:\n      - {name: acme-pra, template: x}\ninstances:\n  - {name: acme-shared, template: x}\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Instances) != 4 || c.Instances[1].Name != "acme-shared" || c.Instances[1].Project != "" || c.Instances[2].Project != "PRJ-0001" || c.Instances[2].Client != "acme" || c.Instances[3].Project != "PRJ-0002" {
+		t.Fatalf("instances des projets: %+v", c.Instances)
+	}
+	if p, ok := c.Clients[0].Project("PRJ-0001"); !ok || p.Instances != nil || p.Vars["site"] != "s1" || p.Params["zone"] != "z1" || p.Aliases[0] != "lake" {
+		t.Fatalf("projet: %+v", p)
+	}
 	if c, err := load(map[string]string{"acme": "name: acme\naccess: exec\ninstances:\n  - {name: acme-lake, template: x}\n"}); err != nil || c.Clients[0].Access != "exec" {
 		t.Fatalf("access: %v", err)
 	}
@@ -147,15 +157,22 @@ func TestClients(t *testing.T) {
 		t.Fatalf("access invalide accepté: %v", err)
 	}
 	for name, bad := range map[string]map[string]string{
-		"nom différent du fichier": {"acme": "name: other\n"},
-		"nom d'instance":           {"solo": "name: solo\n"},
-		"nom réservé":              {"fs": "name: fs\n"},
-		"alias en double":          {"acme": "name: acme\naliases: [shared]\n", "beta": "name: beta\naliases: [Shared]\n"},
-		"alias vide":               {"acme": "name: acme\naliases: [\"\"]\n"},
-		"champ inconnu":            {"acme": "name: acme\nproxy: x\n"},
-		"instance en double":       {"acme": "name: acme\ninstances:\n  - {name: solo, template: x}\n"},
-		"variable invalide":        {"acme": "name: acme\nvars: {Cmp: x}\n"},
-		"variable vide":            {"acme": "name: acme\nvars: {cmp: \" \"}\n"},
+		"nom différent du fichier":     {"acme": "name: other\n"},
+		"nom d'instance":               {"solo": "name: solo\n"},
+		"nom réservé":                  {"fs": "name: fs\n"},
+		"alias en double":              {"acme": "name: acme\naliases: [shared]\n", "beta": "name: beta\naliases: [Shared]\n"},
+		"alias vide":                   {"acme": "name: acme\naliases: [\"\"]\n"},
+		"champ inconnu":                {"acme": "name: acme\nproxy: x\n"},
+		"instance en double":           {"acme": "name: acme\ninstances:\n  - {name: solo, template: x}\n"},
+		"variable invalide":            {"acme": "name: acme\nvars: {Cmp: x}\n"},
+		"variable vide":                {"acme": "name: acme\nvars: {cmp: \" \"}\n"},
+		"projet sans nom":              {"acme": "name: acme\nprojects:\n  - {aliases: [x]}\n"},
+		"projet en double":             {"acme": "name: acme\nprojects:\n  - {name: PRJ-1}\n  - {name: prj-1}\n"},
+		"projet = alias client":        {"acme": "name: acme\naliases: [lake]\nprojects:\n  - {name: PRJ-1, aliases: [Lake]}\n"},
+		"projet d'un autre client":     {"acme": "name: acme\nprojects:\n  - {name: PRJ-1}\n", "beta": "name: beta\nprojects:\n  - {name: PRJ-1}\n"},
+		"variable de projet":           {"acme": "name: acme\nprojects:\n  - {name: PRJ-1, vars: {Site: x}}\n"},
+		"champ de projet inconnu":      {"acme": "name: acme\nprojects:\n  - {name: PRJ-1, hosts: []}\n"},
+		"instance de projet en double": {"acme": "name: acme\nprojects:\n  - name: PRJ-1\n    instances:\n      - {name: solo, template: x}\n"},
 	} {
 		if _, err := load(bad); err == nil {
 			t.Errorf("%s: accepté", name)

@@ -506,7 +506,7 @@ func expandClients(cfg *config.Config, list []string) []string {
 	for _, t := range list {
 		var names []string
 		for _, in := range cfg.Instances {
-			if in.Client != "" && in.Client == toolGroup(t) && in.IsEnabled() {
+			if in.Client != "" && (in.Client == toolGroup(t) || in.Project == toolGroup(t)) && in.IsEnabled() {
 				names = append(names, in.Name)
 			}
 		}
@@ -556,15 +556,24 @@ func renderVars(v any, vars map[string]any) (any, error) {
 
 func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, level access.Level) (*template.Instance, error) {
 	cl, _ := cfg.Client(ic.Client)
+	pr, _ := cl.Project(ic.Project)
 	params := map[string]any{}
-	for k, v := range cl.Params {
-		if _, declared := t.Params[k]; declared {
-			params[k] = v
+	for _, defaults := range []map[string]any{cl.Params, pr.Params} {
+		for k, v := range defaults {
+			if _, declared := t.Params[k]; declared {
+				params[k] = v
+			}
 		}
 	}
 	maps.Copy(params, ic.Params)
 	vars := map[string]any{}
 	for k, v := range cl.Vars {
+		vars[k] = v
+	}
+	if ic.Project != "" {
+		vars["project"] = ic.Project
+	}
+	for k, v := range pr.Vars {
 		vars[k] = v
 	}
 	rendered, err := renderVars(params, vars)
@@ -587,6 +596,9 @@ func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, l
 	in.SetAccess(level)
 	if ic.Client != "" {
 		in.Client, in.ClientTerms = ic.Client, append([]string{cl.Name}, cl.Aliases...)
+	}
+	if ic.Project != "" {
+		in.Project, in.ProjectTerms = ic.Project, append([]string{pr.Name}, pr.Aliases...)
 	}
 	return in, nil
 }
@@ -840,27 +852,42 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 	forced = expandClients(rt.cfg, forced)
 	env := append([]string(nil), rt.baseEnv...)
 	named := map[string]bool{}
+	projects := map[string][]string{}
 	var clients []string
 	for _, cl := range rt.cfg.Clients {
-		if template.MentionTerm(text, append([]string{cl.Name}, cl.Aliases...)) != "" {
+		for _, p := range cl.Projects {
+			if template.MentionTerm(text, append([]string{p.Name}, p.Aliases...)) != "" {
+				projects[cl.Name] = append(projects[cl.Name], p.Name)
+			}
+		}
+		if len(projects[cl.Name]) > 0 || template.MentionTerm(text, append([]string{cl.Name}, cl.Aliases...)) != "" {
 			named[cl.Name] = true
 			clients = append(clients, cl.Name)
 		}
 	}
 	var offered, hidden []string
 	offeredBy := map[string][]string{}
+	offeredIn := map[[2]string][]string{}
 	for _, in := range rt.instances {
 		explicit := slices.ContainsFunc(forced, func(t string) bool {
 			return toolGroup(t) == in.Name
 		})
 		generic := in.MentionGeneric(text) != ""
-		if explicit || in.Activated() || in.MentionOwn(text) != "" || named[in.Client] || generic && len(named) == 0 {
+		cited := named[in.Client] && (len(projects[in.Client]) == 0 || in.Project == "" || slices.Contains(projects[in.Client], in.Project))
+		if explicit || in.Activated() || in.MentionOwn(text) != "" || cited || generic && len(named) == 0 {
 			offered = append(offered, in.Name)
 			offeredBy[in.Client] = append(offeredBy[in.Client], in.Name)
+			if in.Project != "" {
+				offeredIn[[2]string{in.Client, in.Project}] = append(offeredIn[[2]string{in.Client, in.Project}], in.Name)
+			}
 			env = append(env, rt.instanceEnv[in.Name]...)
 			continue
 		}
 		hidden = append(hidden, in.Name)
+		if named[in.Client] {
+			env = append(env, fmt.Sprintf("- Instance %s (template %s, projet %s) : non proposée, la demande cite le projet %s du client %s et pas celui de cette instance (la nommer, ou -t %s, pour l'utiliser).", in.Name, in.T.Name, in.Project, strings.Join(projects[in.Client], ", "), in.Client, in.Name))
+			continue
+		}
 		if generic {
 			env = append(env, fmt.Sprintf("- Instance %s (template %s) : non proposée, la demande cite le client %s et pas cette instance (la nommer, ou -t %s, pour l'utiliser).", in.Name, in.T.Name, strings.Join(clients, ", "), in.Name))
 			continue
@@ -872,29 +899,37 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 		if len(names) == 0 {
 			continue
 		}
-		line := "- Client " + cl.Name
-		if len(cl.Aliases) > 0 {
-			line += " (" + strings.Join(cl.Aliases, ", ") + ")"
-		}
-		if ctx := strings.TrimRight(strings.TrimSpace(cl.Context), "."); ctx != "" {
-			line += " : " + ctx
-		}
-		if len(cl.Vars) > 0 {
-			var refs []string
-			for _, k := range slices.Sorted(maps.Keys(cl.Vars)) {
-				refs = append(refs, k+"="+cl.Vars[k])
+		env = append(env, scopeLine("- Client "+cl.Name, cl.Aliases, cl.Context, cl.Vars)+". Instances de ce client : "+strings.Join(names, ", ")+".")
+		for _, p := range cl.Projects {
+			if names := offeredIn[[2]string{cl.Name, p.Name}]; len(names) > 0 {
+				env = append(env, scopeLine("- Projet "+p.Name+" du client "+cl.Name, p.Aliases, p.Context, p.Vars)+". Instances de ce projet : "+strings.Join(names, ", ")+".")
 			}
-			line += ". Références : " + strings.Join(refs, ", ")
 		}
-		env = append(env, line+". Instances de ce client : "+strings.Join(names, ", ")+".")
 	}
 	if len(rt.instances) > 0 {
-		rt.audit.Log("instances_scope", map[string]any{"offered": offered, "hidden": hidden, "clients": clients})
+		rt.audit.Log("instances_scope", map[string]any{"offered": offered, "hidden": hidden, "clients": clients, "projects": projects})
 	}
 	if len(hidden) == 0 {
 		return rt.registry, strings.Join(env, "\n")
 	}
 	return rt.registry.Without(hidden...), strings.Join(env, "\n")
+}
+
+func scopeLine(line string, aliases []string, context string, vars map[string]string) string {
+	if len(aliases) > 0 {
+		line += " (" + strings.Join(aliases, ", ") + ")"
+	}
+	if ctx := strings.TrimRight(strings.TrimSpace(context), "."); ctx != "" {
+		line += " : " + ctx
+	}
+	if len(vars) > 0 {
+		var refs []string
+		for _, k := range slices.Sorted(maps.Keys(vars)) {
+			refs = append(refs, k+"="+vars[k])
+		}
+		line += ". Références : " + strings.Join(refs, ", ")
+	}
+	return line
 }
 
 func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env string) *orchestrator.Orchestrator {

@@ -485,27 +485,40 @@ Les instances d'un même client se déclarent dans `clients/<client>.yaml`, à c
 
 ```yaml
 name: acme
-aliases: [acmecorp, lakehouse]
-context: "Acme, projet Lakehouse : plateforme de données et VM d'administration derrière le bastion du client"
+aliases: [acmecorp]
+context: "Acme : plateforme de données et VM d'administration derrière le bastion du client"
 vars:
   cmp: CMP-0000
-  project: PRJ-0000
 params:
   proxy_url: socks5h://localhost:1080
   ssh_user: admin
   ssh_key_path: ~/.ssh/acme_ed25519
-instances:
-  - name: k8s-acme
-    template: k8s
+projects:
+  - name: PRJ-0000
+    aliases: [lakehouse]
+    context: "projet Lakehouse, site principal"
+    instances:
+      - name: k8s-acme
+        template: k8s
+        params:
+          contexts: [{name: acme-prod}]
+      - name: vm-acme
+        template: ssh-hosts
+        params:
+          networks: [{cidr: 10.20.0.0/24}]
+          sudo: true
+          ssh_user: ""
+          password_vault: "kv/{{.cmp}}/{{.project}}/adm-acme"
+  - name: PRJ-0001
+    aliases: [pra]
+    context: "PRA du projet Lakehouse"
     params:
-      contexts: [{name: acme-prod}]
-  - name: vm-acme
-    template: ssh-hosts
-    params:
-      networks: [{cidr: 10.20.0.0/24}]
-      sudo: true
-      ssh_user: ""
-      password_vault: "kv/{{.cmp}}/{{.project}}/adm-acme"
+      proxy_url: socks5h://localhost:1081
+    instances:
+      - name: vm-acme-pra
+        template: ssh-hosts
+        params:
+          networks: [{cidr: 10.30.0.0/24}]
 ```
 
 | Clé | Rôle |
@@ -513,12 +526,24 @@ instances:
 | `name` | nom du client (`[a-z][a-z0-9-]*`), distinct des noms d'instances et des préfixes réservés |
 | `aliases` | autres termes qui désignent le client dans une demande ; un alias n'appartient qu'à un client |
 | `context` | description transmise aux agents avec les instances du client |
-| `vars` | références du client (codes client, projet…), clés `[a-z][a-z0-9_]*` : `{{.<clé>}}` est remplacé dans les valeurs des `params` du client et de ses instances (une clé inconnue désactive l'instance, avec un avertissement), et les références sont transmises aux agents avec le `context`, pour les outils qui les attendent (serveurs MCP de tickets ou d'inventaire) |
+| `vars` | références du client (codes client…), clés `[a-z][a-z0-9_]*` : `{{.<clé>}}` est remplacé dans les valeurs des `params` du client, de ses projets et de ses instances (une clé inconnue désactive l'instance, avec un avertissement), et les références sont transmises aux agents avec le `context`, pour les outils qui les attendent (serveurs MCP de tickets ou d'inventaire) |
 | `access` | niveau d'accès de ses instances quand `--access` n'est pas donné : `read` (défaut), `exec` ou `create`, voir Niveaux d'accès |
 | `params` | valeurs par défaut des paramètres de ses instances (proxy, compte et clé SSH…) : appliquées seulement aux paramètres que le template de l'instance déclare, la valeur de l'instance l'emporte |
-| `instances` | même format que `instances` du fichier principal ; les noms restent uniques sur toute la configuration |
+| `projects` | projets du client, chacun avec ses instances (hôtes, clusters, dépôts…), voir ci-dessous |
+| `instances` | instances du client hors projet, même format que `instances` du fichier principal ; les noms restent uniques sur toute la configuration |
 
-Nommer le client ou l'un de ses alias dans une demande propose toutes ses instances (voir Activation d'une instance). `-t <client>` et `-x <client>` valent pour toutes ses instances activées ; une instance `enabled: false` d'un client ne se force que par son nom. Les instances du fichier principal n'ont pas de client et se comportent comme avant.
+Un projet regroupe les instances d'un même périmètre du client :
+
+| Clé | Rôle |
+|---|---|
+| `name` | code du projet, tel que l'utilisent les outils du client (inventaire, tickets) ; unique sur toute la configuration, sans tenir compte de la casse, et distinct des noms et alias des clients |
+| `aliases` | autres termes qui désignent le projet dans une demande |
+| `context` | description du projet, transmise aux agents avec ses instances |
+| `vars` | références du projet, mêmes règles que celles du client ; dans un projet, `{{.project}}` vaut le nom du projet, sauf si ses `vars` le redéfinissent, et les `vars` du projet l'emportent sur celles du client |
+| `params` | valeurs par défaut des paramètres des instances du projet, mêmes règles que celles du client, qu'elles remplacent ; la valeur de l'instance l'emporte |
+| `instances` | instances du projet, même format que `instances` du fichier principal |
+
+Nommer le client ou l'un de ses alias dans une demande propose toutes ses instances (voir Activation d'une instance). Nommer un projet ou l'un de ses alias propose les instances de ce projet et celles du client hors projet, pas celles de ses autres projets. `-t <client>` et `-x <client>` valent pour toutes ses instances activées, `-t <projet>` et `-x <projet>` pour celles du projet ; une instance `enabled: false` ne se force que par son nom. Les instances du fichier principal n'ont pas de client et se comportent comme avant.
 
 ## Usage
 
