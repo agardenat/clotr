@@ -167,7 +167,8 @@ type shellSession struct {
 func (s *Shell) start(ctx context.Context, host string) (*shellSession, error) {
 	argv := make([]string, len(s.opts.Command))
 	for i, a := range s.opts.Command {
-		argv[i] = strings.ReplaceAll(a, "%h", host)
+		short, _, _ := strings.Cut(host, ".")
+		argv[i] = strings.NewReplacer("%h", host, "%s", short).Replace(a)
 	}
 	c := exec.Command(argv[0], argv[1:]...)
 	f, err := pty.StartWithSize(c, &pty.Winsize{Rows: 50, Cols: 250})

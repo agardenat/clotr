@@ -4,6 +4,10 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Option `headers: stdin` de `via` (connecteur `http`) : les en-têtes de la requête, authentification comprise, passent par l'entrée standard de la commande (`curl -H @-`), pas par sa ligne de commande, invisible dans la liste des processus de l'hôte.
+- Driver `shell` et clé `shell` d'une instance : `%s` dans `command`, nom court de l'hôte (avant le premier point), pour un outil d'accès qui attend le nom court quand l'inventaire donne le nom complet.
+
 ## [0.39.0] - 2026-10-26
 
 ### Ajouté

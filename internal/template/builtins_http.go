@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -85,7 +86,7 @@ func checkHTTPOptions(o options) error {
 		return err
 	}
 	for k := range o.sub("via") {
-		if k != "host" && k != "command" {
+		if k != "host" && k != "command" && k != "headers" {
 			return i18n.E("tpl.http.via_key", k)
 		}
 	}
@@ -152,6 +153,13 @@ func newHTTPConn(name string, o options) (*httpConn, error) {
 	}
 	if v := o.sub("via"); v.str("host") != "" {
 		hc.via = &httpVia{host: v.str("host"), command: v.list("command")}
+		switch v.str("headers") {
+		case "":
+		case "stdin":
+			hc.via.stdinHeaders = true
+		default:
+			return nil, i18n.E("tpl.http.via_headers", v.str("headers"))
+		}
 		if len(hc.via.command) == 0 {
 			return nil, i18n.E("tpl.http.via_command")
 		}
@@ -525,32 +533,42 @@ func (in *Instance) newRequest(ctx context.Context, c *httpCall) (*http.Request,
 	if err != nil {
 		return nil, nil, err
 	}
-	req.Header.Set("User-Agent", httpx.UserAgent)
-	req.Header.Set("Accept", "application/json")
+	h, err := in.requestHeaders(c)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header = h
+	return req, &u, nil
+}
+
+func (in *Instance) requestHeaders(c *httpCall) (http.Header, error) {
+	h := http.Header{}
+	h.Set("User-Agent", httpx.UserAgent)
+	h.Set("Accept", "application/json")
 	if c.contentType != "" {
-		req.Header.Set("Content-Type", c.contentType)
+		h.Set("Content-Type", c.contentType)
 	}
 	for k, v := range c.hc.headers {
-		req.Header.Set(k, v)
+		h.Set(k, v)
 	}
 	for k, v := range c.headers {
-		req.Header.Set(k, v)
+		h.Set(k, v)
 	}
 	if c.hc.auth != nil {
 		cr, ok := in.creds[c.hc.name]
 		if !ok {
-			return nil, nil, i18n.E("tpl.http.creds", c.hc.name)
+			return nil, i18n.E("tpl.http.creds", c.hc.name)
 		}
 		switch {
 		case c.hc.auth.header == "":
-			req.SetBasicAuth(cr.User, cr.Pass)
+			h.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(cr.User+":"+cr.Pass)))
 		case c.hc.auth.scheme != "":
-			req.Header.Set(c.hc.auth.header, c.hc.auth.scheme+" "+cr.Pass)
+			h.Set(c.hc.auth.header, c.hc.auth.scheme+" "+cr.Pass)
 		default:
-			req.Header.Set(c.hc.auth.header, cr.Pass)
+			h.Set(c.hc.auth.header, cr.Pass)
 		}
 	}
-	return req, &u, nil
+	return h, nil
 }
 
 func (in *Instance) send(ctx context.Context, c *httpCall) (*httpReply, error) {

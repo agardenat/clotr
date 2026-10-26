@@ -3,8 +3,10 @@ package template
 import (
 	"bytes"
 	"context"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,8 +16,9 @@ import (
 )
 
 type httpVia struct {
-	host    string
-	command []string
+	host         string
+	command      []string
+	stdinHeaders bool
 }
 
 func (in *Instance) sendVia(ctx context.Context, c *httpCall) (*httpReply, error) {
@@ -27,13 +30,20 @@ func (in *Instance) sendVia(ctx context.Context, c *httpCall) (*httpReply, error
 	if len(c.query) > 0 {
 		target += "?" + c.query.Encode()
 	}
-	accept := "application/json"
-	for _, h := range []map[string]string{c.hc.headers, c.headers} {
-		for k, val := range h {
-			if strings.EqualFold(k, "Accept") {
-				accept = val
+	hdr, err := in.requestHeaders(c)
+	if err != nil {
+		return nil, err
+	}
+	accept := hdr.Get("Accept")
+	stdin := ""
+	if v.stdinHeaders {
+		var b strings.Builder
+		for _, k := range slices.Sorted(maps.Keys(hdr)) {
+			for _, val := range hdr[k] {
+				b.WriteString(k + ": " + val + "\n")
 			}
 		}
+		stdin = b.String()
 	}
 	argv := make([]string, len(v.command))
 	for i, a := range v.command {
@@ -48,7 +58,11 @@ func (in *Instance) sendVia(ctx context.Context, c *httpCall) (*httpReply, error
 		return nil, err
 	}
 	start := time.Now()
-	res, err := pool.ExecInput(ctx, ep, ssh.Exec(argv), "", c.limit+64<<10)
+	cmd := ssh.Exec(argv)
+	if stdin != "" {
+		cmd = strings.TrimSuffix(cmd, " </dev/null")
+	}
+	res, err := pool.ExecInput(ctx, ep, cmd, stdin, c.limit+64<<10)
 	audit := map[string]any{"tool": c.tool, "connector": c.hc.name, "method": c.method, "url": c.clean, "via": v.host}
 	if err != nil {
 		audit["error"] = err.Error()

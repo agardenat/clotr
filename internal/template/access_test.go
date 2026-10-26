@@ -20,6 +20,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/driver/ssh"
 )
 
@@ -760,5 +761,46 @@ tool(name = "run", description = "d", schema = {"type": "object"}, fn = run, acc
 	}
 	if len(rec.cmds) != 1 {
 		t.Fatalf("commande refusée exécutée : %q", rec.cmds)
+	}
+}
+
+func TestHTTPViaHeadersOnStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh requis")
+	}
+	tpl := writeTemplate(t, `name: x
+script: x.star
+connectors:
+  shell: {driver: local}
+  api:
+    driver: http
+    auth: {user_env: API_USER, password_env: API_PASS}
+    via:
+      host: node1
+      headers: stdin
+      command: [sh, -c, 'case "$*" in *Basic*) echo "argv contient le secret" >&2; exit 9;; esac; h=$(cat); printf "HTTP/1.1 200 OK\r\n\r\n%s" "$h"', via, "%u"]
+ssh_paths: {allow: [/var/log/**]}
+`, `
+def discover(ctx):
+    return {"targets": [{"name": "c", "kind": "cluster"}]}
+
+tool(name = "get", description = "d", schema = {"type": "object"}, fn = lambda a: http.request("api", "GET", "/v1/x").body)
+`)
+	in, err := NewInstance("i", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	in.creds["api"] = creds.Pair{User: "u", Pass: "p"}
+	if err := in.Discover(context.Background(), "", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	out, err := toolMap(in)["i_get"](`{}`)
+	if err != nil || !strings.Contains(out, "Authorization: Basic dTpw") || !strings.Contains(out, "Accept: application/json") {
+		t.Fatalf("%q %v", out, err)
+	}
+	bad := writeTemplate(t, "name: y\nscript: x.star\nconnectors:\n  shell: {driver: local}\n  api: {driver: http, via: {host: n, command: [x], headers: argv}}\nssh_paths: {allow: [/var/log/**]}\n", "def discover(ctx):\n    return {\"targets\": []}\n")
+	if _, err := NewInstance("j", bad, nil); err == nil || !strings.Contains(err.Error(), "headers") {
+		t.Fatalf("headers invalide : %v", err)
 	}
 }
