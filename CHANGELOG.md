@@ -4,6 +4,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Projets d'un client : `projects` dans `clients/<client>.yaml`, chacun avec son code (`name`), ses `aliases`, son `context`, ses `vars` et `params` (qui complètent et remplacent ceux du client) et ses `instances`. Dans un projet, `{{.project}}` vaut le code du projet. Nommer un projet dans une demande propose ses instances et celles du client hors projet, pas celles des autres projets ; `-t`/`-x` acceptent le code d'un projet. L'environnement transmis aux agents donne le projet de chaque instance proposée, avec son contexte et ses références.
+
 ## [0.40.0] - 2026-10-26
 
 ### Ajouté

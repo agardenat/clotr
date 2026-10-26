@@ -149,6 +149,7 @@ type Instance struct {
 	Commands access.Rules   `yaml:"commands"`
 	Shell    *Shell         `yaml:"shell"`
 	Client   string         `yaml:"-"`
+	Project  string         `yaml:"-"`
 }
 
 type Shell struct {
@@ -172,6 +173,16 @@ type Client struct {
 	Access    string            `yaml:"access"`
 	Params    map[string]any    `yaml:"params"`
 	Instances []Instance        `yaml:"instances"`
+	Projects  []Project         `yaml:"projects"`
+}
+
+type Project struct {
+	Name      string            `yaml:"name"`
+	Aliases   []string          `yaml:"aliases"`
+	Context   string            `yaml:"context"`
+	Vars      map[string]string `yaml:"vars"`
+	Params    map[string]any    `yaml:"params"`
+	Instances []Instance        `yaml:"instances"`
 }
 
 func (c *Config) Client(name string) (Client, bool) {
@@ -181,6 +192,15 @@ func (c *Config) Client(name string) (Client, bool) {
 		}
 	}
 	return Client{}, false
+}
+
+func (cl Client) Project(name string) (Project, bool) {
+	for _, p := range cl.Projects {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return Project{}, false
 }
 
 func (i Instance) IsEnabled() bool {
@@ -421,6 +441,13 @@ func (c *Config) loadClients(dir string) error {
 			c.Instances = append(c.Instances, in)
 		}
 		cl.Instances = nil
+		for i, p := range cl.Projects {
+			for _, in := range p.Instances {
+				in.Client, in.Project = cl.Name, p.Name
+				c.Instances = append(c.Instances, in)
+			}
+			cl.Projects[i].Instances = nil
+		}
 		c.Clients = append(c.Clients, cl)
 	}
 	return nil
@@ -709,6 +736,31 @@ func (c *Config) validate() error {
 			}
 			if strings.TrimSpace(v) == "" {
 				fail(i18n.T("config.client_var_empty", cl.Name, k))
+			}
+		}
+		for _, p := range cl.Projects {
+			if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.Name) != p.Name {
+				fail(i18n.T("config.project_name", cl.Name, p.Name))
+				continue
+			}
+			for _, t := range append([]string{p.Name}, p.Aliases...) {
+				key := strings.ToLower(strings.TrimSpace(t))
+				if key == "" {
+					fail(i18n.T("config.project_alias", cl.Name, p.Name))
+					continue
+				}
+				if other, dup := terms[key]; dup {
+					fail(i18n.T("config.project_alias_dup", cl.Name, p.Name, t, other))
+				}
+				terms[key] = cl.Name + "/" + p.Name
+			}
+			for k, v := range p.Vars {
+				if !varName.MatchString(k) {
+					fail(i18n.T("config.project_var", cl.Name, p.Name, k))
+				}
+				if strings.TrimSpace(v) == "" {
+					fail(i18n.T("config.project_var_empty", cl.Name, p.Name, k))
+				}
 			}
 		}
 	}

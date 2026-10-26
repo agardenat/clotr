@@ -94,8 +94,10 @@ type Instance struct {
 	Confirm    func(ctx context.Context, question string) (access.Answer, error)
 	Trusted    func() []string
 
-	Client      string
-	ClientTerms []string
+	Client       string
+	ClientTerms  []string
+	Project      string
+	ProjectTerms []string
 
 	vaultUsers sync.Map
 
@@ -479,6 +481,9 @@ func (in *Instance) MentionOwn(text string) string {
 }
 
 func (in *Instance) MentionClient(text string) string {
+	if MentionTerm(text, in.ProjectTerms) != "" {
+		return "projet " + in.Project
+	}
 	if MentionTerm(text, in.ClientTerms) == "" {
 		return ""
 	}
