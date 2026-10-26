@@ -194,9 +194,12 @@ func (c *chat) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return c, nil
 	case eventMsg:
 		if e := c.last(); e != nil {
-			if m.Task == "budget" {
+			switch {
+			case m.Task == "budget":
 				e.logs = append(e.logs, i18n.T("budget.prefix", m.Model, m.Detail))
-			} else {
+			case m.Kind == "activation":
+				e.logs = append(e.logs, m.Detail)
+			default:
 				e.board.apply(Event(m))
 			}
 			c.dirty = true

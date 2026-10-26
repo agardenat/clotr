@@ -180,6 +180,7 @@ var kinds = map[string]msg{
 	"kind.finding":      {"finding", "constat"},
 	"kind.gap":          {"not covered", "non couvert"},
 	"kind.interrupted":  {"interrupted", "interrompu"},
+	"kind.activation":   {"activation", "activation"},
 	"kind.lead":         {"lead", "cause"},
 	"kind.limit":        {"limit", "limite"},
 	"kind.note":         {"note", "note"},

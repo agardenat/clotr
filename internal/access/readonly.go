@@ -20,11 +20,15 @@ func ShellScript(argv []string) (string, bool) {
 }
 
 func ReadOnly(argv []string) error {
+	return ReadOnlyTrusting(argv, nil)
+}
+
+func ReadOnlyTrusting(argv []string, trusted []string) error {
 	if err := CheckArgv(argv); err != nil {
 		return err
 	}
 	if script, ok := ShellScript(argv); ok {
-		return readOnlyScript(script)
+		return readOnlyScript(script, trusted)
 	}
 	args := make([]arg, len(argv))
 	for i, a := range argv {
@@ -45,7 +49,7 @@ func sensitive(text string) error {
 	return nil
 }
 
-func readOnlyScript(script string) error {
+func readOnlyScript(script string, trusted []string) error {
 	if err := sensitive(script); err != nil {
 		return err
 	}
@@ -98,7 +102,7 @@ func readOnlyScript(script string) error {
 			for i, w := range x.Args {
 				args[i] = wordArg(w)
 			}
-			if err := readOnlyCall(args); err != nil {
+			if err := readOnlyCall(args); err != nil && !trustedCall(args, trusted) {
 				return fail("%v", err)
 			}
 			return true
@@ -163,18 +167,20 @@ var (
 		"getconf", "lsb_release", "sha1sum", "sha256sum", "sha512sum", "md5sum", "strings", "od", "tac", "nl", "comm",
 		"diff", "cmp", "getent", "locale", "lscpu", "column", "expr", "seq", "dpkg-query", "ldconfig", "netstat",
 		"lsof", "last", "lastlog", "who", "w", "getfacl", "lsattr", "pgrep", "ldd")
-	versionArgs   = []string{"-v", "-V", "--version", "-version", "version", "-m", "-i", "-M", "-l"}
-	versioned     = regexp.MustCompile(`^(php[0-9.]*|php-fpm[0-9.]*|php-cgi[0-9.]*|java|python[0-9.]*|node|nodejs|nginx|httpd|apache2|apachectl|apache2ctl|perl|ruby|go|mysql|mysqld|mariadb|postgres|psql|redis-server|curl|wget|git|openssl|dotnet|tomcat[0-9.]*|catalina\.sh|lighttpd|caddy|frankenphp|litespeed|lsphp[0-9.]*)$`)
-	dupTarget     = regexp.MustCompile(`^(\d+|-)$`)
-	sortOutput    = regexp.MustCompile(`^-[a-zA-Z]*o`)
-	pipName       = regexp.MustCompile(`^pip[0-9.]*$`)
-	findActions   = set("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls")
-	rpmWrite      = set("-i", "-U", "-F", "-e", "--install", "--upgrade", "--freshen", "--erase", "--import", "--rebuilddb", "--initdb", "--setperms", "--setugids", "--restore", "--delsign", "--addsign", "--reinstall")
-	ssWrite       = set("-K", "--kill")
-	journalWrite  = set("--rotate", "--flush", "--relinquish-var", "--smart-relinquish-var", "--sync", "--setup-keys", "--update-catalog")
-	ipWrite       = set("add", "del", "delete", "change", "replace", "set", "flush", "append", "save", "restore", "exec", "up", "down", "attach", "detach")
-	systemctlRead = set("list-units", "list-unit-files", "list-timers", "list-sockets", "list-dependencies", "list-jobs", "status", "show", "cat", "is-active", "is-enabled", "is-failed", "is-system-running", "get-default")
-	dpkgRead      = set("-l", "-L", "-s", "-S", "-p", "--list", "--listfiles", "--status", "--search", "--print-avail", "--print-architecture", "--version")
+	nodeEval        = set("-p", "--print", "-e", "--eval")
+	nodeVersionExpr = regexp.MustCompile(`^\s*(console\.log\(\s*)?process\.(version|versions(\.[A-Za-z0-9_]+|\[\s*["'][A-Za-z0-9_]+["']\s*\])?)(\s*\))?\s*;?\s*$`)
+	versionArgs     = []string{"-v", "-V", "--version", "-version", "version", "-m", "-i", "-M", "-l"}
+	versioned       = regexp.MustCompile(`^(php[0-9.]*|php-fpm[0-9.]*|php-cgi[0-9.]*|java|python[0-9.]*|node|nodejs|nginx|httpd|apache2|apachectl|apache2ctl|perl|ruby|go|mysql|mysqld|mariadb|postgres|psql|redis-server|curl|wget|git|openssl|dotnet|tomcat[0-9.]*|catalina\.sh|lighttpd|caddy|frankenphp|litespeed|lsphp[0-9.]*)$`)
+	dupTarget       = regexp.MustCompile(`^(\d+|-)$`)
+	sortOutput      = regexp.MustCompile(`^-[a-zA-Z]*o`)
+	pipName         = regexp.MustCompile(`^pip[0-9.]*$`)
+	findActions     = set("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls")
+	rpmWrite        = set("-i", "-U", "-F", "-e", "--install", "--upgrade", "--freshen", "--erase", "--import", "--rebuilddb", "--initdb", "--setperms", "--setugids", "--restore", "--delsign", "--addsign", "--reinstall")
+	ssWrite         = set("-K", "--kill")
+	journalWrite    = set("--rotate", "--flush", "--relinquish-var", "--smart-relinquish-var", "--sync", "--setup-keys", "--update-catalog")
+	ipWrite         = set("add", "del", "delete", "change", "replace", "set", "flush", "append", "save", "restore", "exec", "up", "down", "attach", "detach")
+	systemctlRead   = set("list-units", "list-unit-files", "list-timers", "list-sockets", "list-dependencies", "list-jobs", "status", "show", "cat", "is-active", "is-enabled", "is-failed", "is-system-running", "get-default")
+	dpkgRead        = set("-l", "-L", "-s", "-S", "-p", "--list", "--listfiles", "--status", "--search", "--print-avail", "--print-architecture", "--version")
 )
 
 func set(items ...string) map[string]bool {
@@ -370,6 +376,14 @@ func readOnlyCall(args []arg) error {
 			return literal()
 		}
 		return fmt.Errorf("gem %s n'est pas une interrogation", first)
+	case (prog == "node" || prog == "nodejs") && len(rest) == 2 && nodeEval[first]:
+		if err := literal(); err != nil {
+			return err
+		}
+		if !nodeVersionExpr.MatchString(rest[1].s) || first != "-p" && first != "--print" && !strings.HasPrefix(strings.TrimSpace(rest[1].s), "console.log(") {
+			return fmt.Errorf("%s %s : seule la lecture de process.version ou process.versions est admise", prog, first)
+		}
+		return nil
 	case versioned.MatchString(prog):
 		if err := literal(); err != nil {
 			return err
@@ -387,6 +401,22 @@ func readOnlyCall(args []arg) error {
 		return nil
 	}
 	return fmt.Errorf("programme %s non reconnu en lecture seule", prog)
+}
+
+func trustedCall(args []arg, trusted []string) bool {
+	words := make([]string, len(args))
+	for i, a := range args {
+		if !a.lit {
+			return false
+		}
+		words[i] = a.s
+	}
+	for _, c := range trusted {
+		if w, ok := literalWords(c); ok && slices.Equal(w, words) {
+			return true
+		}
+	}
+	return false
 }
 
 func literalWords(line string) ([]string, bool) {

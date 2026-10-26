@@ -195,12 +195,16 @@ func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []s
 		in.audit("exec_decision", f)
 		return i18n.E("tpl.exec.denied", shown)
 	}
-	if in.Trusted != nil && access.Matches(argv, in.Trusted()) {
+	var trusted []string
+	if in.Trusted != nil {
+		trusted = in.Trusted()
+	}
+	if access.Matches(argv, trusted) {
 		f["decision"] = "trusted"
 		in.audit("exec_decision", f)
 		return nil
 	}
-	roErr := access.ReadOnly(argv)
+	roErr := access.ReadOnlyTrusting(argv, trusted)
 	if roErr == nil {
 		f["decision"] = "readonly"
 		in.audit("exec_decision", f)
