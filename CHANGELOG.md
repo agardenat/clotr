@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-10-26
+
 ### Ajouté
 - Analyse de lecture seule : `node -p` et `node -e` limités à la lecture de `process.version` ou `process.versions` ; en mode CVE, une commande de la fiche placée dans un `sh -c` (`node --version; node -p 'process.versions.brotli'`) compte comme fiable, commande par commande, sans élargir le reste du script.
 
