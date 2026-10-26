@@ -709,6 +709,9 @@ tool(name = "get", description = "d", schema = {"type": "object"}, fn = get)
 	if err != nil || out != `404 application/json {"path":"/v1/pods?limit=5","accept":"application/x;v=1"}` {
 		t.Fatalf("%q %v", out, err)
 	}
+	if out, err := get(`{"path":"/v1/clusters/Prod A - 1/services"}`); err != nil || !strings.Contains(out, `"path":"/v1/clusters/Prod%20A%20-%201/services"`) {
+		t.Fatalf("chemin avec espaces : %q %v", out, err)
+	}
 	for args, want := range map[string]string{`{"path":"/v2/x"}`: "/v2/x", `{"path":"/v1/fail"}`: "boom", `{"path":"/v1/x","method":"POST"}`: "GET"} {
 		if out, err := get(args); err != nil || !strings.Contains(out, "erreur") || !strings.Contains(out, want) {
 			t.Fatalf("%s : %q %v", args, out, err)

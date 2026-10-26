@@ -26,7 +26,7 @@ func (in *Instance) sendVia(ctx context.Context, c *httpCall) (*httpReply, error
 	if c.method != http.MethodGet && c.method != http.MethodHead {
 		return nil, i18n.E("tpl.http.via_method", c.method, c.clean)
 	}
-	target := c.clean
+	target := (&url.URL{Path: c.clean}).EscapedPath()
 	if len(c.query) > 0 {
 		target += "?" + c.query.Encode()
 	}
