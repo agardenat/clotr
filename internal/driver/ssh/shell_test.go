@@ -73,6 +73,18 @@ func TestShellExec(t *testing.T) {
 	}
 }
 
+func TestShellShortHost(t *testing.T) {
+	s, err := NewShell(ShellOptions{Command: []string{"sh", "-c", "echo 'cible %s sur %h'; exit 2"}, OpenTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_, err = s.ExecInput(context.Background(), Endpoint{Host: "vm9.example.test"}, "true", "", 1024)
+	if err == nil || !strings.Contains(err.Error(), "cible vm9 sur vm9.example.test") {
+		t.Fatalf("%v", err)
+	}
+}
+
 func TestShellOpenFailure(t *testing.T) {
 	s, err := NewShell(ShellOptions{Command: []string{"sh", "-c", "echo 'cible %h inconnue'; exit 2"}, OpenTimeout: 5 * time.Second})
 	if err != nil {
