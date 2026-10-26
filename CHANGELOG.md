@@ -4,6 +4,11 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.41.2] - 2026-10-26
+
+### Corrigé
+- Chemin des requêtes du connecteur `http`, en accès direct comme par `via` : les séquences `%XX` déjà présentes (nom encodé par le template avec `url.path_escape`) sont gardées et seuls les autres caractères sont encodés ; la 0.41.1 réencodait `%20` en `%2520` par `via`, et l'accès direct le faisait déjà, ce qui rendait introuvable un nom contenant un espace (HTTP 500 de Cloudera Manager, découverte en échec).
+
 ## [0.41.1] - 2026-10-26
 
 ### Corrigé

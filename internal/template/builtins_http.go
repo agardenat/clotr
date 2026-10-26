@@ -309,6 +309,30 @@ func matchAny(res []*regexp.Regexp, s string) bool {
 	return false
 }
 
+func escapeRequestPath(p string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(p); i++ {
+		ch := p[i]
+		switch {
+		case ch == '%' && i+2 < len(p) && isHex(p[i+1]) && isHex(p[i+2]):
+			b.WriteString(p[i : i+3])
+			i += 2
+		case 'a' <= ch && ch <= 'z', 'A' <= ch && ch <= 'Z', '0' <= ch && ch <= '9', strings.IndexByte("-._~!$&'()*+,;=:@/", ch) >= 0:
+			b.WriteByte(ch)
+		default:
+			b.WriteByte('%')
+			b.WriteByte(hex[ch>>4])
+			b.WriteByte(hex[ch&15])
+		}
+	}
+	return b.String()
+}
+
+func isHex(c byte) bool {
+	return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
+}
+
 func cleanRequestPath(hc *httpConn, p string) (string, error) {
 	if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "?#") {
 		return "", i18n.E("tpl.http.path_form", p)
@@ -517,8 +541,10 @@ func (in *Instance) newRequest(ctx context.Context, c *httpCall) (*http.Request,
 		return nil, nil, i18n.E("tpl.http.base_url", c.base)
 	}
 	u := *bu
-	u.Path = strings.TrimRight(bu.Path, "/") + c.clean
-	u.RawPath = ""
+	esc := escapeRequestPath(c.clean)
+	dec, _ := url.PathUnescape(esc)
+	u.Path = strings.TrimRight(bu.Path, "/") + dec
+	u.RawPath = strings.TrimRight(bu.EscapedPath(), "/") + esc
 	if len(c.query) > 0 {
 		u.RawQuery = c.query.Encode()
 	}

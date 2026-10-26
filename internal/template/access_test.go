@@ -709,8 +709,10 @@ tool(name = "get", description = "d", schema = {"type": "object"}, fn = get)
 	if err != nil || out != `404 application/json {"path":"/v1/pods?limit=5","accept":"application/x;v=1"}` {
 		t.Fatalf("%q %v", out, err)
 	}
-	if out, err := get(`{"path":"/v1/clusters/Prod A - 1/services"}`); err != nil || !strings.Contains(out, `"path":"/v1/clusters/Prod%20A%20-%201/services"`) {
-		t.Fatalf("chemin avec espaces : %q %v", out, err)
+	for _, p := range []string{"/v1/clusters/Prod A - 1/services", "/v1/clusters/Prod%20A%20-%201/services"} {
+		if out, err := get(`{"path":"` + p + `"}`); err != nil || !strings.Contains(out, `"path":"/v1/clusters/Prod%20A%20-%201/services"`) {
+			t.Fatalf("chemin %s : %q %v", p, out, err)
+		}
 	}
 	for args, want := range map[string]string{`{"path":"/v2/x"}`: "/v2/x", `{"path":"/v1/fail"}`: "boom", `{"path":"/v1/x","method":"POST"}`: "GET"} {
 		if out, err := get(args); err != nil || !strings.Contains(out, "erreur") || !strings.Contains(out, want) {
@@ -805,5 +807,52 @@ tool(name = "get", description = "d", schema = {"type": "object"}, fn = lambda a
 	bad := writeTemplate(t, "name: y\nscript: x.star\nconnectors:\n  shell: {driver: local}\n  api: {driver: http, via: {host: n, command: [x], headers: argv}}\nssh_paths: {allow: [/var/log/**]}\n", "def discover(ctx):\n    return {\"targets\": []}\n")
 	if _, err := NewInstance("j", bad, nil); err == nil || !strings.Contains(err.Error(), "headers") {
 		t.Fatalf("headers invalide : %v", err)
+	}
+}
+
+func TestEscapeRequestPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/clusters/Prod A - 1/services":       "/clusters/Prod%20A%20-%201/services",
+		"/clusters/Prod%20A%20-%201/services": "/clusters/Prod%20A%20-%201/services",
+		"/a/50%/b%2Fc":                        "/a/50%25/b%2Fc",
+		"/a/é:b@c":                            "/a/%C3%A9:b@c",
+	} {
+		if got := escapeRequestPath(in); got != want {
+			t.Errorf("%q : %q, attendu %q", in, got, want)
+		}
+	}
+}
+
+func TestHTTPPathEncoding(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.EscapedPath())
+		w.Write([]byte("{}"))
+	}))
+	defer srv.Close()
+	tpl := writeTemplate(t, `name: x
+script: x.star
+params:
+  url: {type: url, required: true}
+connectors:
+  api: {driver: http, base_url: "{{.url}}/my base"}
+tools:
+  - kind: inventory
+`, `
+def discover(ctx):
+    http.request("api", "GET", "/clusters/" + url.path_escape("Prod A") + "/services")
+    http.request("api", "GET", "/clusters/Prod A/services")
+    return {"targets": [{"name": "c", "kind": "cluster"}]}
+`)
+	in, err := NewInstance("i", tpl, map[string]any{"url": srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	if err := in.Discover(context.Background(), "", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, " ") != "/my%20base/clusters/Prod%20A/services /my%20base/clusters/Prod%20A/services" {
+		t.Fatalf("chemins reçus : %q", got)
 	}
 }
