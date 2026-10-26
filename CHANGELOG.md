@@ -4,6 +4,10 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Clé `shell` d'une instance : remplace le connecteur `ssh` du template par un connecteur `shell` (`command`, `%h` = hôte, `ready`, `prompt`, `open_timeout`, `max_conns`), `sudo` du template conservé. Les hôtes d'un template prévu pour SSH se joignent alors par une passerelle d'accès, sans modifier le template.
+- Option `via` du connecteur `http` (`host`, `command`) : les requêtes `GET` et `HEAD` passent par une commande lancée sur un hôte à travers le connecteur `ssh`, `local` ou `shell` du template (`%u` = chemin et requête, `%a` = en-tête `Accept`), qui écrit une réponse HTTP complète comme `curl -i`. `allow`, `deny` et `max_bytes` s'appliquent ; `http.stream` et les autres méthodes sont refusés. Pour une API joignable seulement depuis un hôte.
+
 ## [0.36.0] - 2026-10-26
 
 ### Ajouté

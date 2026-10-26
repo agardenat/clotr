@@ -52,9 +52,10 @@ type httpConn struct {
 	opts     options
 	client   *http.Client
 	levels   map[access.Level]*connLevel
+	via      *httpVia
 }
 
-var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "deny", "proxy", "proxy_port", "verify_tls", "ca_file", "levels"}
+var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "deny", "proxy", "proxy_port", "verify_tls", "ca_file", "levels", "via"}
 
 func checkHTTPOptions(o options) error {
 	for k := range o {
@@ -82,6 +83,11 @@ func checkHTTPOptions(o options) error {
 	}
 	if err := checkLevelOptions(o); err != nil {
 		return err
+	}
+	for k := range o.sub("via") {
+		if k != "host" && k != "command" {
+			return i18n.E("tpl.http.via_key", k)
+		}
 	}
 	a := o.sub("auth")
 	for k := range a {
@@ -143,6 +149,12 @@ func newHTTPConn(name string, o options) (*httpConn, error) {
 	}
 	if hc.levels, err = newConnLevels(o); err != nil {
 		return nil, err
+	}
+	if v := o.sub("via"); v.str("host") != "" {
+		hc.via = &httpVia{host: v.str("host"), command: v.list("command")}
+		if len(hc.via.command) == 0 {
+			return nil, i18n.E("tpl.http.via_command")
+		}
 	}
 	return hc, nil
 }
@@ -542,6 +554,9 @@ func (in *Instance) newRequest(ctx context.Context, c *httpCall) (*http.Request,
 }
 
 func (in *Instance) send(ctx context.Context, c *httpCall) (*httpReply, error) {
+	if c.hc.via != nil {
+		return in.sendVia(ctx, c)
+	}
 	req, u, err := in.newRequest(ctx, c)
 	if err != nil {
 		return nil, err

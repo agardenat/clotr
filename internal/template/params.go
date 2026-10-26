@@ -200,6 +200,47 @@ func renderPaths(r ssh.PathRules, data map[string]any) (ssh.PathRules, error) {
 	return ssh.PathRules{Allow: allow, Deny: deny}, nil
 }
 
+func (in *Instance) UseShell(s *config.Shell) error {
+	if s == nil {
+		return nil
+	}
+	if in.sshName == "" || in.local {
+		return i18n.E("tpl.instance_shell_ssh", in.Name)
+	}
+	if len(s.Command) == 0 || strings.TrimSpace(s.Command[0]) == "" {
+		return i18n.E("tpl.instance_shell_command", in.Name)
+	}
+	old := in.conns[in.sshName]
+	cmd := make([]any, len(s.Command))
+	for i, a := range s.Command {
+		cmd[i] = a
+	}
+	o := options{"command": cmd, "sudo": old["sudo"], "max_conns": old["max_conns"], "open_timeout": old["open_timeout"], "ready": old["ready"], "prompt": old["prompt"]}
+	for k, v := range map[string]string{"ready": s.Ready, "prompt": s.Prompt} {
+		if v != "" {
+			if _, err := regexp.Compile(v); err != nil {
+				return fmt.Errorf("instance %s: shell: %w", in.Name, i18n.E("tpl.option.regexp", k, err))
+			}
+			o[k] = v
+		}
+	}
+	if s.OpenTimeout > 0 {
+		o["open_timeout"] = s.OpenTimeout
+	}
+	if s.MaxConns > 0 {
+		o["max_conns"] = s.MaxConns
+	}
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if in.pool != nil {
+		in.pool.Close()
+		in.pool = nil
+	}
+	in.conns[in.sshName] = o
+	in.shell = true
+	return nil
+}
+
 func (in *Instance) ExtendPaths(extra config.PathRules) error {
 	if len(extra.Allow) == 0 && len(extra.Deny) == 0 {
 		return nil
