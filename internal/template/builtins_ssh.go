@@ -50,11 +50,18 @@ func (in *Instance) remote(ctx context.Context, tool string, t *Target, h *Host,
 	return res, err
 }
 
-func (in *Instance) remoteExec(ctx context.Context, tool string, t *Target, h *Host, argv []string, maxBytes int) (ssh.Result, error) {
+func (in *Instance) remoteExec(ctx context.Context, tool string, t *Target, h *Host, argv []string, maxBytes int, prefix ...string) (ssh.Result, error) {
 	if !in.allowed(ctx, access.Exec) {
 		return ssh.Result{}, i18n.E("tpl.access.required", "ssh exec", access.Exec)
 	}
-	if err := in.authorizeCommand(ctx, h.Name, argv); err != nil {
+	where := h.Name
+	if len(prefix) > 0 {
+		if err := access.CheckArgv(prefix); err != nil {
+			return ssh.Result{}, err
+		}
+		where += " : " + access.Display(prefix)
+	}
+	if err := in.authorizeCommand(ctx, where, argv); err != nil {
 		return ssh.Result{}, err
 	}
 	pool, err := in.sshPool()
@@ -65,7 +72,7 @@ func (in *Instance) remoteExec(ctx context.Context, tool string, t *Target, h *H
 	if err != nil {
 		return ssh.Result{}, err
 	}
-	return in.exec(ctx, pool, tool, t, ep, login, ssh.Exec(argv), "", maxBytes)
+	return in.exec(ctx, pool, tool, t, ep, login, ssh.Exec(append(slices.Clone(prefix), argv...)), "", maxBytes)
 }
 
 func (in *Instance) exec(ctx context.Context, pool sshExecutor, tool string, t *Target, ep ssh.Endpoint, login *sshLogin, cmd, stdin string, maxBytes int) (ssh.Result, error) {
@@ -361,25 +368,40 @@ func (in *Instance) sshAllowed(_ *starlark.Thread, b *starlark.Builtin, args sta
 
 func (in *Instance) sshExec(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var host, target string
-	var argvL *starlark.List
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "host", &host, "argv", &argvL, "target?", &target); err != nil {
+	var argvL, prefixL *starlark.List
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "host", &host, "argv", &argvL, "target?", &target, "prefix?", &prefixL); err != nil {
 		return nil, err
 	}
-	var argv []string
-	for i := 0; i < argvL.Len(); i++ {
-		s, ok := starlark.AsString(argvL.Index(i))
-		if !ok {
-			return nil, i18n.E("tpl.arg.text", "argv", argvL.Index(i).Type())
-		}
-		argv = append(argv, s)
+	argv, err := stringList("argv", argvL)
+	if err != nil {
+		return nil, err
+	}
+	prefix, err := stringList("prefix", prefixL)
+	if err != nil {
+		return nil, err
 	}
 	t, h, err := in.sshPrepare(thread, target, host)
 	if err != nil {
 		return nil, err
 	}
-	res, err := in.remoteExec(threadCtx(thread), threadTool(thread), t, h, argv, maxRead)
+	res, err := in.remoteExec(threadCtx(thread), threadTool(thread), t, h, argv, maxRead, prefix...)
 	if err != nil {
 		return nil, err
 	}
 	return resultValue(res, h.Name)
+}
+
+func stringList(name string, l *starlark.List) ([]string, error) {
+	if l == nil {
+		return nil, nil
+	}
+	out := make([]string, 0, l.Len())
+	for i := 0; i < l.Len(); i++ {
+		s, ok := starlark.AsString(l.Index(i))
+		if !ok {
+			return nil, i18n.E("tpl.arg.text", name, l.Index(i).Type())
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }

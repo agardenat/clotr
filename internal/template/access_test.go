@@ -718,3 +718,47 @@ tool(name = "get", description = "d", schema = {"type": "object"}, fn = get)
 		t.Fatalf("via sans connecteur ssh : %v", err)
 	}
 }
+
+func TestSSHExecPrefix(t *testing.T) {
+	tpl := writeTemplate(t, `name: x
+script: x.star
+connectors:
+  ssh: {driver: ssh, user: ops}
+ssh_paths: {allow: [/var/log/**]}
+`, `
+def discover(ctx):
+    return {"targets": [{"name": "t", "kind": "hosts", "hosts": [{"name": "node1"}]}]}
+
+def run(a):
+    return ssh.exec(host = "node1", argv = a["argv"], prefix = ["sudo", "-n", "kubectl", "exec", "-n", "app", "web-1", "--"]).stdout
+
+tool(name = "run", description = "d", schema = {"type": "object"}, fn = run, access = "exec")
+`)
+	in, err := NewInstance("i", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Discover(context.Background(), "", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	rec := &execSSH{}
+	in.pool = rec
+	in.SetAccess(access.Exec)
+	if _, err := toolMap(in)["i_run"](`{"argv":["node","--version"]}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.cmds[0]; got != "exec 'sudo' '-n' 'kubectl' 'exec' '-n' 'app' 'web-1' '--' 'node' '--version' </dev/null" {
+		t.Fatalf("commande : %q", got)
+	}
+	var questions []string
+	in.Confirm = func(_ context.Context, q string) (access.Answer, error) {
+		questions = append(questions, q)
+		return access.No, nil
+	}
+	if _, err := toolMap(in)["i_run"](`{"argv":["touch","/tmp/x"]}`); err == nil || len(questions) != 1 || !strings.Contains(questions[0], "kubectl exec -n app web-1 --") || !strings.Contains(questions[0], "touch /tmp/x") {
+		t.Fatalf("%v %q", err, questions)
+	}
+	if len(rec.cmds) != 1 {
+		t.Fatalf("commande refusée exécutée : %q", rec.cmds)
+	}
+}

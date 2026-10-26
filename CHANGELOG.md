@@ -4,6 +4,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Primitive `ssh.exec(prefix=[…])` : enveloppe fixe choisie par le template (ex. `kubectl exec … --`), placée devant la commande ; l'analyse de lecture seule, les listes `commands` et la confirmation portent sur la seule commande, l'enveloppe est montrée dans la question.
+
 ## [0.37.0] - 2026-10-26
 
 ### Ajouté
