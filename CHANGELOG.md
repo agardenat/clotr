@@ -4,6 +4,14 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+### Ajouté
+- Driver de connecteur `local` : un template peut cibler le poste qui exécute clotr. Les outils `ssh_*` et les primitives `ssh.*` y passent par `sh -c`, avec l'utilisateur et l'environnement de clotr, sous les mêmes contrôles qu'en SSH (`ssh_paths`, `commands`, niveaux d'accès, mode CVE) ; option `max_conns` seulement, un seul connecteur `ssh` ou `local` par template. Une commande annulée est arrêtée avec ses processus enfants.
+- Driver de connecteur `shell` : les outils `ssh_*` passent par un programme local qui ouvre un shell interactif sur l'hôte (`command`, `%h` = hôte) et gère lui-même l'authentification. Une question posée avant l'invite (`prompt`, mot de passe par défaut) est relayée sur le terminal de clotr ; les commandes s'exécutent ensuite sans terminal, stdout, stderr et code retour séparés. Sessions réutilisées, `max_conns` sessions au plus, `open_timeout`, `sudo -n`. Linux et macOS.
+- Analyse de lecture seule : `snap` et `flatpak` en interrogation (`list`, `info`…), `ldd`.
+
+### Corrigé
+- Mode CVE : une commande de détection de la fiche lancée en argv sans les guillemets de la fiche (`node -p process.versions.brotli` pour `node -p "process.versions.brotli"`) n'était pas reconnue comme fiable et demandait une confirmation.
+
 ## [0.35.0] - 2026-10-22
 
 ### Ajouté

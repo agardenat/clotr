@@ -104,6 +104,8 @@ type Instance struct {
 	invValue  starlark.Value
 	https     map[string]*httpConn
 	sshName   string
+	local     bool
+	shell     bool
 	pool      sshExecutor
 	rules     *ssh.Rules
 	sudo      bool
@@ -188,8 +190,10 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 				return nil, fmt.Errorf("instance %s: connectors.%s: %w", name, cn, err)
 			}
 			in.https[cn] = hc
-		case "ssh":
+		case "ssh", "local", "shell":
 			in.sshName = cn
+			in.local = c.Driver == "local"
+			in.shell = c.Driver == "shell"
 		}
 	}
 	for i, ts := range t.Tools {
@@ -601,6 +605,22 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 		return nil, i18n.E("tpl.ssh.no_connector", in.T.Name)
 	}
 	o := in.conns[in.sshName]
+	if in.local {
+		maxConns, err := o.int("max_conns", 4)
+		if err != nil {
+			return nil, err
+		}
+		in.pool = ssh.NewLocal(maxConns)
+		return in.pool, nil
+	}
+	if in.shell {
+		p, err := newShellPool(o)
+		if err != nil {
+			return nil, err
+		}
+		in.pool = p
+		return p, nil
+	}
 	port, err := o.int("proxy_port", 0)
 	if err != nil {
 		return nil, err
@@ -625,6 +645,26 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 	return p, nil
 }
 
+func newShellPool(o options) (*ssh.Shell, error) {
+	maxConns, err := o.int("max_conns", 4)
+	if err != nil {
+		return nil, err
+	}
+	timeout, err := o.int("open_timeout", 120)
+	if err != nil {
+		return nil, err
+	}
+	so := ssh.ShellOptions{Command: o.list("command"), MaxConns: maxConns, OpenTimeout: time.Duration(timeout) * time.Second, Ask: creds.AskSecret}
+	for k, re := range map[string]**regexp.Regexp{"ready": &so.Ready, "prompt": &so.Prompt} {
+		if v := o.str(k); v != "" {
+			if *re, err = regexp.Compile(v); err != nil {
+				return nil, i18n.E("tpl.option.regexp", k, err)
+			}
+		}
+	}
+	return ssh.NewShell(so)
+}
+
 type sshLogin struct {
 	in        *Instance
 	label     string
@@ -646,6 +686,12 @@ func (l *sshLogin) forget() {
 }
 
 func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.Endpoint, *sshLogin, error) {
+	if in.local {
+		return ssh.Endpoint{Host: "localhost"}, nil, nil
+	}
+	if in.shell {
+		return ssh.Endpoint{Host: defaultStr(h.Name, h.IP)}, nil, nil
+	}
 	o := in.conns[in.sshName]
 	pick := func(attr, opt string) string {
 		if v := t.Attrs[attr]; v != "" {

@@ -80,3 +80,25 @@ func TestArgv(t *testing.T) {
 		t.Fatal(Exec.String())
 	}
 }
+
+func TestMatchesTrusted(t *testing.T) {
+	trusted := []string{`node -p "process.versions.brotli"`, `ldd "$(command -v node)" | grep -i brotli`}
+	for _, argv := range [][]string{
+		{"node", "-p", "process.versions.brotli"},
+		{"sh", "-c", `node -p "process.versions.brotli"`},
+		{"sh", "-c", `ldd "$(command -v node)" | grep -i brotli`},
+	} {
+		if !Matches(argv, trusted) {
+			t.Errorf("%q non reconnue", argv)
+		}
+	}
+	for _, argv := range [][]string{
+		{"node", "-p", "process.versions"},
+		{"node", "-p", "process.versions.brotli", "x"},
+		{"ldd", "$(command -v node)"},
+	} {
+		if Matches(argv, trusted) {
+			t.Errorf("%q reconnue à tort", argv)
+		}
+	}
+}

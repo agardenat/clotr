@@ -80,10 +80,10 @@ func TestValidation(t *testing.T) {
 		base + "script: bad.star\n":                                                           "bad.star",
 		base + "script: undef.star\n":                                                         "unknown_builtin",
 		base + "env: [\"A-B\"]\n":                                                             "env[0]",
-		base + "tools: [{kind: ssh_list}]\n":                                                  "requires an ssh driver connector",
+		base + "tools: [{kind: ssh_list}]\n":                                                  "requires an ssh, local or shell driver connector",
 		base + "tools: [{kind: nope}]\n":                                                      "unknown",
 		"name: x\n":                                                                           "targets or script",
-		base + "connectors: {a: {driver: ssh}, b: {driver: ssh}}\nssh_paths: {allow: [/x]}\n": "a single ssh connector",
+		base + "connectors: {a: {driver: ssh}, b: {driver: ssh}}\nssh_paths: {allow: [/x]}\n": "a single ssh, local or shell connector",
 	}
 	for y, want := range cases {
 		if _, err := Parse([]byte(y), filepath.Join(dir, "x.yaml")); err == nil || !strings.Contains(err.Error(), want) {

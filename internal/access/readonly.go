@@ -162,7 +162,7 @@ var (
 		"ps", "df", "du", "free", "uptime", "echo", "printf", "true", "false", "test", "[", "pwd", "nproc", "arch",
 		"getconf", "lsb_release", "sha1sum", "sha256sum", "sha512sum", "md5sum", "strings", "od", "tac", "nl", "comm",
 		"diff", "cmp", "getent", "locale", "lscpu", "column", "expr", "seq", "dpkg-query", "ldconfig", "netstat",
-		"lsof", "last", "lastlog", "who", "w", "getfacl", "lsattr", "pgrep")
+		"lsof", "last", "lastlog", "who", "w", "getfacl", "lsattr", "pgrep", "ldd")
 	versionArgs   = []string{"-v", "-V", "--version", "-version", "version", "-m", "-i", "-M", "-l"}
 	versioned     = regexp.MustCompile(`^(php[0-9.]*|php-fpm[0-9.]*|php-cgi[0-9.]*|java|python[0-9.]*|node|nodejs|nginx|httpd|apache2|apachectl|apache2ctl|perl|ruby|go|mysql|mysqld|mariadb|postgres|psql|redis-server|curl|wget|git|openssl|dotnet|tomcat[0-9.]*|catalina\.sh|lighttpd|caddy|frankenphp|litespeed|lsphp[0-9.]*)$`)
 	dupTarget     = regexp.MustCompile(`^(\d+|-)$`)
@@ -345,6 +345,16 @@ func readOnlyCall(args []arg) error {
 			return literal()
 		}
 		return fmt.Errorf("apk : seules les interrogations sont admises")
+	case prog == "snap":
+		if ops := operands(); len(ops) > 0 && set("list", "info", "version", "connections", "services", "known")[ops[0]] || first == "--version" {
+			return literal()
+		}
+		return fmt.Errorf("snap : seules les interrogations sont admises")
+	case prog == "flatpak":
+		if ops := operands(); len(ops) > 0 && set("list", "info", "ps")[ops[0]] || first == "--version" {
+			return literal()
+		}
+		return fmt.Errorf("flatpak : seules les interrogations sont admises")
 	case pipName.MatchString(prog):
 		if set("list", "show", "freeze", "--version", "-V")[first] {
 			return literal()
@@ -377,4 +387,25 @@ func readOnlyCall(args []arg) error {
 		return nil
 	}
 	return fmt.Errorf("programme %s non reconnu en lecture seule", prog)
+}
+
+func literalWords(line string) ([]string, bool) {
+	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(line), "")
+	if err != nil || len(f.Stmts) != 1 {
+		return nil, false
+	}
+	st := f.Stmts[0]
+	call, ok := st.Cmd.(*syntax.CallExpr)
+	if !ok || len(st.Redirs) > 0 || len(call.Assigns) > 0 || st.Negated || st.Background {
+		return nil, false
+	}
+	out := make([]string, len(call.Args))
+	for i, w := range call.Args {
+		a := wordArg(w)
+		if !a.lit {
+			return nil, false
+		}
+		out[i] = a.s
+	}
+	return out, true
 }
