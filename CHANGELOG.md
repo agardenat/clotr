@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.41.1] - 2026-10-26
+
 ### Corrigé
 - Option `via` du connecteur `http` : le chemin de la requête est encodé dans `%u` (`%20` pour un espace), comme en accès direct ; un chemin contenant un espace, tel qu'un nom de cluster, partait brut dans la commande et le serveur répondait HTTP 400.
 - Aide de `-t` : un projet vaut pour toutes ses instances.
