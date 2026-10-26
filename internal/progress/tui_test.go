@@ -139,3 +139,16 @@ func TestBoardPrintsJournalLines(t *testing.T) {
 		t.Fatal("ligne de journal comptée comme appel d'outil")
 	}
 }
+
+func TestBoardHighlightsAdvisoryAndActivation(t *testing.T) {
+	b := newBoard(10)
+	b.Update(tickMsg(time.Now()))
+	for _, e := range []Event{{Task: "t0", Kind: "cve", Status: "advisory", Detail: "fiche CVE-1"}, {Task: "vm1", Kind: "activation", Detail: "instance vm1 : activation"}} {
+		if _, cmd := b.Update(eventMsg(e)); cmd == nil {
+			t.Fatalf("%s : ligne non imprimée", e.Kind)
+		}
+	}
+	if _, ok := b.idx["vm1"]; ok {
+		t.Fatal("activation comptée comme tâche")
+	}
+}

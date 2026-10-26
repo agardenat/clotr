@@ -94,6 +94,7 @@ type options struct {
 }
 
 type app struct {
+	events      atomic.Pointer[progress.Sink]
 	cfg         *config.Config
 	cat         *catalog.Catalog
 	router      *router.Router
@@ -802,7 +803,14 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 			}
 			if !o.quiet {
 				name, tname := ic.Name, t.Name
-				in.Activating = func() { fmt.Fprintln(os.Stderr, i18n.T("instance.discovering", name, tname)) }
+				in.Activating = func() {
+					msg := i18n.T("instance.discovering", name, tname)
+					if ev := rt.events.Load(); ev != nil {
+						(*ev).Emit(progress.Event{Task: name, Kind: "activation", Detail: msg})
+						return
+					}
+					fmt.Fprintln(os.Stderr, msg)
+				}
 			}
 			err = in.Defer(ctx, cfg.Templates.CacheDir, cfg.Templates.CacheTTL.Duration, o.refresh)
 		}
@@ -890,6 +898,7 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 }
 
 func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env string) *orchestrator.Orchestrator {
+	rt.events.Store(&events)
 	runner := rt.newRunner(events, reg)
 	runner.Evidence = rt.evidence
 	runner.Journal = rt.journal

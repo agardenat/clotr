@@ -9,6 +9,11 @@ func sh(s string) []string { return []string{"sh", "-c", s} }
 
 func TestReadOnlyAccepted(t *testing.T) {
 	ok := [][]string{
+		{"node", "-p", "process.versions.brotli"},
+		{"node", "-p", "process.version"},
+		{"nodejs", "--print", "process.versions['openssl']"},
+		{"node", "-e", "console.log(process.versions.brotli)"},
+		sh("node --version; node -p 'process.versions.brotli'"),
 		{"php", "-v"},
 		{"/usr/local/bin/php-fpm8.2", "-v"},
 		{"php", "-m"},
@@ -56,6 +61,9 @@ func TestReadOnlyAccepted(t *testing.T) {
 
 func TestReadOnlyRefused(t *testing.T) {
 	refused := map[string][]string{
+		"node -p code":       {"node", "-p", "require('fs').writeFileSync('/tmp/x','')"},
+		"node -e sans print": {"node", "-e", "process.versions.brotli"},
+		"node -p double":     {"node", "-p", "process.version", "x"},
 		"awk":                sh("dpkg -l | awk '{print $2}'"),
 		"redirection":        sh("php -v > /tmp/out"),
 		"append":             sh("echo x >> /etc/hosts"),
@@ -113,5 +121,21 @@ func TestReadOnlyRefused(t *testing.T) {
 	}
 	if err := ReadOnly(sh("sed -n 1p /etc/php.ini")); err == nil || !strings.Contains(err.Error(), "sed") {
 		t.Fatalf("raison: %v", err)
+	}
+}
+
+func TestReadOnlyTrustingScript(t *testing.T) {
+	script := sh("node --version; brotli --dump-version | head -1")
+	if ReadOnly(script) == nil {
+		t.Fatal("brotli --dump-version accepté sans fiche")
+	}
+	if err := ReadOnlyTrusting(script, []string{"brotli --dump-version"}); err != nil {
+		t.Fatal(err)
+	}
+	if ReadOnlyTrusting(sh("brotli --dump-version > /tmp/x"), []string{"brotli --dump-version"}) == nil {
+		t.Fatal("redirection acceptée")
+	}
+	if ReadOnlyTrusting(sh("brotli --dump-version -o /tmp/x"), []string{"brotli --dump-version"}) == nil {
+		t.Fatal("arguments ajoutés acceptés")
 	}
 }

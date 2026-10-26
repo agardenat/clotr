@@ -291,7 +291,7 @@ func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, er
 		return "", err
 	}
 	t.s.audit.Log("cve_advisory", map[string]any{"task": c.Task, "model": c.Model, "advisory": adv})
-	t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "cve", Model: c.Model, Detail: i18n.T("cve.advisory", line)})
+	t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "cve", Status: "advisory", Model: c.Model, Detail: i18n.T("cve.advisory", line)})
 	return "fiche enregistrée : affichée à l'utilisateur et transmise aux autres tâches", nil
 }
 
