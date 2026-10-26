@@ -247,6 +247,32 @@ func Ask(ctx context.Context, question string) (string, error) {
 	})
 }
 
+func AskSecret(ctx context.Context, question string) (string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	tty, err := OpenTTY()
+	if err != nil {
+		return "", i18n.E("creds.notty")
+	}
+	defer tty.Close()
+	if !term.IsTerminal(tty.In.Fd()) {
+		return "", i18n.E("creds.notty")
+	}
+	if Suspend != nil {
+		defer Suspend()()
+	}
+	fmt.Fprint(tty.Out, question)
+	s, err := readInterruptible(ctx, tty, func() (string, error) {
+		b, err := term.ReadPassword(tty.In.Fd())
+		return string(b), err
+	})
+	fmt.Fprintln(tty.Out)
+	return s, err
+}
+
 func orNone(s string) string {
 	if s == "" {
 		return "-"

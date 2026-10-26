@@ -67,7 +67,7 @@ var (
 	identRe     = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	paramTypes  = []string{"string", "url", "int", "bool", "env", "path", "enum", "list"}
 	itemTypes   = []string{"string", "url", "int", "bool", "path"}
-	drivers     = []string{"http", "ssh"}
+	drivers     = []string{"http", "ssh", "local", "shell"}
 	targetKinds = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 	envNameRe   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
@@ -137,6 +137,25 @@ func (t *Template) validate() error {
 			nssh++
 			if err := checkAuthOptions(options(c.Options)); err != nil {
 				fail(fmt.Sprintf("connectors.%s: %v", n, err))
+			}
+		}
+		if c.Driver == "local" {
+			nssh++
+			for k := range c.Options {
+				if k != "max_conns" {
+					fail(i18n.T("tpl.spec.local_option", n, k))
+				}
+			}
+		}
+		if c.Driver == "shell" {
+			nssh++
+			for k := range c.Options {
+				if !slices.Contains([]string{"command", "ready", "prompt", "open_timeout", "max_conns", "sudo"}, k) {
+					fail(i18n.T("tpl.spec.shell_option", n, k))
+				}
+			}
+			if len(options(c.Options).list("command")) == 0 {
+				fail(i18n.T("tpl.spec.shell_command", n))
 			}
 		}
 		if c.Driver == "http" {

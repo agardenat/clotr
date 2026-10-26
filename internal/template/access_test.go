@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -518,5 +521,112 @@ tool(name = "sneaky", description = "d", schema = {"type": "object"}, fn = lambd
 	}
 	if len(rec.cmds) != 3 {
 		t.Fatalf("%d commandes exécutées", len(rec.cmds))
+	}
+}
+
+func TestLocalDriver(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh requis")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "app.conf"), []byte("version=1.2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "app.key"), []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tpl := writeTemplate(t, `name: x
+script: x.star
+connectors:
+  shell: {driver: local, max_conns: 2}
+tools:
+  - kind: ssh_read
+  - kind: ssh_exec
+ssh_paths:
+  allow: ["`+dir+`/**"]
+  deny: ["**/*.key"]
+`, `
+def discover(ctx):
+    return {"targets": [{"name": "poste", "kind": "hosts", "hosts": [{"name": "localhost"}]}]}
+`)
+	in, err := NewInstance("i", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Discover(context.Background(), "", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	var execs []map[string]any
+	in.Audit = func(kind string, f map[string]any) {
+		if kind == "remote_exec" {
+			execs = append(execs, f)
+		}
+	}
+	tools := toolMap(in)
+	if _, ok := tools["i_ssh_exec"]; ok {
+		t.Fatal("ssh_exec proposé en read")
+	}
+	out, err := tools["i_ssh_read"](`{"host":"localhost","path":"` + dir + `/app.conf"}`)
+	if err != nil || !strings.Contains(out, "version=1.2") {
+		t.Fatalf("lecture locale: %q %v", out, err)
+	}
+	if _, err := tools["i_ssh_read"](`{"host":"localhost","path":"` + dir + `/app.key"}`); err == nil {
+		t.Fatal("deny ignoré")
+	}
+	in.SetAccess(access.Exec)
+	out, err = toolMap(in)["i_ssh_exec"](`{"host":"localhost","argv":["cat","` + dir + `/app.conf"]}`)
+	if err != nil || !strings.Contains(out, "version=1.2") || !strings.Contains(out, "[exit 0]") {
+		t.Fatalf("exec local: %q %v", out, err)
+	}
+	if len(execs) != 2 || execs[1]["host"] != "localhost" {
+		t.Fatalf("audit: %v", execs)
+	}
+	for _, bad := range []string{"connectors:\n  shell: {driver: local, sudo: true}\n", "connectors:\n  shell: {driver: local}\n  ssh: {driver: ssh}\n"} {
+		if _, err := Parse([]byte("name: x\ntargets: [{name: a, kind: hosts}]\n"+bad+"ssh_paths: {allow: [/etc/**]}\n"), "x.yaml"); err == nil || !strings.Contains(err.Error(), "local") {
+			t.Fatalf("%s : %v", bad, err)
+		}
+	}
+}
+
+func TestShellDriver(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty requis")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "app.conf"), []byte("version=1.2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gw := filepath.Join(dir, "gw.sh")
+	if err := os.WriteFile(gw, []byte("#!/bin/sh\necho \"Connexion à $1\"\nPS1='$ ' exec sh -i\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tpl := writeTemplate(t, `name: x
+script: x.star
+connectors:
+  shell: {driver: shell, command: ["`+gw+`", "%h"], max_conns: 2, open_timeout: 20}
+tools:
+  - kind: ssh_read
+ssh_paths:
+  allow: ["`+dir+`/**"]
+`, `
+def discover(ctx):
+    return {"targets": [{"name": "vms", "kind": "hosts", "hosts": [{"name": "vm1"}]}]}
+`)
+	in, err := NewInstance("i", tpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	if err := in.Discover(context.Background(), "", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	out, err := toolMap(in)["i_ssh_read"](`{"host":"vm1","path":"` + dir + `/app.conf"}`)
+	if err != nil || !strings.Contains(out, "version=1.2") {
+		t.Fatalf("lecture : %q %v", out, err)
+	}
+	for _, bad := range []string{"connectors:\n  s: {driver: shell}\n", "connectors:\n  s: {driver: shell, command: [x], user: u}\n", "connectors:\n  s: {driver: shell, command: [x]}\n  ssh: {driver: ssh}\n"} {
+		if _, err := Parse([]byte("name: x\ntargets: [{name: a, kind: hosts}]\n"+bad+"ssh_paths: {allow: [/etc/**]}\n"), "x.yaml"); err == nil || !strings.Contains(err.Error(), "connectors") {
+			t.Fatalf("%s : %v", bad, err)
+		}
 	}
 }

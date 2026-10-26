@@ -224,6 +224,9 @@ func Matches(argv []string, commands []string) bool {
 		if c = normCommand(c); c != "" && (c == line || c == normCommand(Display(argv))) {
 			return true
 		}
+		if w, ok := literalWords(c); ok && slices.Equal(w, argv) {
+			return true
+		}
 	}
 	return false
 }
