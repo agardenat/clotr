@@ -4,6 +4,11 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-27
+
+### Modifié
+- Nom de session surligné (gras, vidéo inverse) dans l'entête du tableau de progression et du mode conversation, ainsi que dans les lignes `session : …` et `affiner : clotr run -s …` ; sans mise en forme si stderr n'est pas un terminal ou avec `--plain`.
+
 ## [0.41.2] - 2026-10-26
 
 ### Corrigé
