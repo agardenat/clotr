@@ -93,6 +93,7 @@ type Instance struct {
 	Activating func()
 	Confirm    func(ctx context.Context, question string) (access.Answer, error)
 	Trusted    func() []string
+	Highlight  func(string) string
 
 	Client       string
 	ClientTerms  []string

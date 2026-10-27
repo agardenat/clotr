@@ -187,9 +187,14 @@ tool(name = "run", description = "d", schema = {"type": "object"}, fn = run)
 	if len(questions) != 2 || !strings.Contains(questions[1], "web1") || !strings.Contains(questions[1], "touch") {
 		t.Fatalf("questions: %q", questions)
 	}
+	in.Highlight = func(s string) string { return "«" + s + "»" }
 	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["touch","/tmp/y"]}`); err != nil || len(questions) != 3 {
 		t.Fatalf("toujours limité à l'argv exact: %v %d", err, len(questions))
 	}
+	if want := "«" + access.Display([]string{"touch", "/tmp/y"}) + "»"; !strings.Contains(questions[2], want) {
+		t.Fatalf("commande non mise en évidence : %q", questions[2])
+	}
+	in.Highlight = nil
 	if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["sh","-c","id\nreboot"]}`); err == nil {
 		t.Fatal("caractère de contrôle accepté")
 	}

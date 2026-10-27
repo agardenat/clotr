@@ -132,7 +132,7 @@ func (in *Instance) escalate(ctx context.Context, tool string, required access.L
 		in.audit("access_escalation", f)
 		return ctx, i18n.E("tpl.escalate.no_confirm", tool, required, in.Name, granted)
 	}
-	ans, err := in.Confirm(ctx, i18n.T("escalate.ask", in.Name, granted, defaultStr(c.Task, "?"), tool, oneLine(string(raw), 300), required))
+	ans, err := in.Confirm(ctx, i18n.T("escalate.ask", in.Name, granted, defaultStr(c.Task, "?"), in.highlight(tool), in.highlight(oneLine(string(raw), 300)), required))
 	switch {
 	case err != nil:
 		f["decision"], f["error"] = "refused", err.Error()
@@ -152,6 +152,13 @@ func (in *Instance) escalate(ctx context.Context, tool string, required access.L
 	}
 	in.audit("access_escalation", f)
 	return withGrant(ctx, required), nil
+}
+
+func (in *Instance) highlight(s string) string {
+	if in.Highlight == nil {
+		return s
+	}
+	return in.Highlight(s)
 }
 
 func (in *Instance) ExtendCommands(extra access.Rules) error {
@@ -225,7 +232,7 @@ func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []s
 		in.audit("exec_decision", f)
 		return i18n.E("tpl.exec.no_confirm", shown)
 	}
-	ans, err := in.Confirm(ctx, i18n.T("exec.ask", in.Name, where, shown, roErr))
+	ans, err := in.Confirm(ctx, i18n.T("exec.ask", in.Name, where, in.highlight(shown), roErr))
 	if err != nil {
 		f["decision"], f["error"] = "refused", err.Error()
 		in.audit("exec_decision", f)

@@ -804,6 +804,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 			in.Audit = rt.audit.Log
 			in.Warn = warn
 			in.Confirm = confirmCommand
+			in.Highlight = progress.Command
 			if len(o.cveIDs) > 0 {
 				in.SetCeiling(access.Create)
 				in.Trusted = func() []string {
