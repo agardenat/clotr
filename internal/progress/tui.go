@@ -30,9 +30,12 @@ var (
 	stAdvice  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	stActive  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
 	stSession = lipgloss.NewStyle().Bold(true).Reverse(true)
+	stCommand = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 )
 
 func Session(name string) string { return stSession.Render(name) }
+
+func Command(s string) string { return stCommand.Render(s) }
 
 const (
 	statusPending = "pending"
