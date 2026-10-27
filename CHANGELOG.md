@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-27
+
 ### Ajouté
 - Types de plateforme : section `compliance` de la configuration (`<type>: {confidential: true}`) et clé `compliance` d'un client. Un run qui cite un client d'un type confidentiel (client, alias, projet, instance, `-t`, tours précédents) devient confidentiel avant le premier appel de modèle ; hors run confidentiel, les instances de ce client ne sont pas proposées.
 
