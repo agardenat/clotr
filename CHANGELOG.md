@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-27
+
 ### Ajouté
 - Clé `shell` d'une instance : `auth` (identifiants du rebond, comme l'option `auth` du driver `shell`), pour joindre par rebond les hôtes d'un template prévu pour SSH.
 
