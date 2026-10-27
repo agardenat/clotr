@@ -8,7 +8,20 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
+	"golang.org/x/sys/windows"
 )
+
+func promptMode(f *os.File) (restore func(), err error) {
+	h := windows.Handle(f.Fd())
+	var mode uint32
+	if err := windows.GetConsoleMode(h, &mode); err != nil {
+		return nil, err
+	}
+	if err := windows.SetConsoleMode(h, mode&^(windows.ENABLE_ECHO_INPUT|windows.ENABLE_LINE_INPUT)); err != nil {
+		return nil, err
+	}
+	return func() { _ = windows.SetConsoleMode(h, mode) }, nil
+}
 
 func watchResize(p *tea.Program, stop <-chan struct{}, out *os.File) {
 	w0, h0, _ := term.GetSize(out.Fd())
