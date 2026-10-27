@@ -52,24 +52,29 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 }
 
 type Config struct {
-	Providers []Provider      `yaml:"providers"`
-	Profiles  []Profile       `yaml:"profiles"`
-	Roles     map[string]Role `yaml:"roles"`
-	Limits    Limits          `yaml:"limits"`
-	Catalog   CatalogConf     `yaml:"catalog"`
-	Audit     AuditConf       `yaml:"audit"`
-	Files     *Files          `yaml:"files"`
-	MCP       []MCPServer     `yaml:"mcp"`
-	Templates TemplatesConf   `yaml:"templates"`
-	Instances []Instance      `yaml:"instances"`
-	Clients   []Client        `yaml:"-"`
-	Routing   Routing         `yaml:"routing"`
-	Sessions  SessionsConf    `yaml:"sessions"`
-	Language  string          `yaml:"language"`
-	UILang    string          `yaml:"ui_language"`
-	WebSearch WebSearch       `yaml:"web_search"`
-	Export    ReportExport    `yaml:"report_export"`
-	Vault     VaultConf       `yaml:"vault"`
+	Providers  []Provider            `yaml:"providers"`
+	Profiles   []Profile             `yaml:"profiles"`
+	Roles      map[string]Role       `yaml:"roles"`
+	Limits     Limits                `yaml:"limits"`
+	Catalog    CatalogConf           `yaml:"catalog"`
+	Audit      AuditConf             `yaml:"audit"`
+	Files      *Files                `yaml:"files"`
+	MCP        []MCPServer           `yaml:"mcp"`
+	Templates  TemplatesConf         `yaml:"templates"`
+	Instances  []Instance            `yaml:"instances"`
+	Clients    []Client              `yaml:"-"`
+	Routing    Routing               `yaml:"routing"`
+	Sessions   SessionsConf          `yaml:"sessions"`
+	Language   string                `yaml:"language"`
+	UILang     string                `yaml:"ui_language"`
+	WebSearch  WebSearch             `yaml:"web_search"`
+	Export     ReportExport          `yaml:"report_export"`
+	Vault      VaultConf             `yaml:"vault"`
+	Compliance map[string]Compliance `yaml:"compliance"`
+}
+
+type Compliance struct {
+	Confidential bool `yaml:"confidential"`
 }
 
 type ReportExport struct {
@@ -167,14 +172,15 @@ type PathRules struct {
 }
 
 type Client struct {
-	Name      string            `yaml:"name"`
-	Aliases   []string          `yaml:"aliases"`
-	Context   string            `yaml:"context"`
-	Vars      map[string]string `yaml:"vars"`
-	Access    string            `yaml:"access"`
-	Params    map[string]any    `yaml:"params"`
-	Instances []Instance        `yaml:"instances"`
-	Projects  []Project         `yaml:"projects"`
+	Name       string            `yaml:"name"`
+	Aliases    []string          `yaml:"aliases"`
+	Context    string            `yaml:"context"`
+	Vars       map[string]string `yaml:"vars"`
+	Access     string            `yaml:"access"`
+	Compliance string            `yaml:"compliance"`
+	Params     map[string]any    `yaml:"params"`
+	Instances  []Instance        `yaml:"instances"`
+	Projects   []Project         `yaml:"projects"`
 }
 
 type Project struct {
@@ -193,6 +199,11 @@ func (c *Config) Client(name string) (Client, bool) {
 		}
 	}
 	return Client{}, false
+}
+
+func (c *Config) Confidential(client string) bool {
+	cl, ok := c.Client(client)
+	return ok && c.Compliance[cl.Compliance].Confidential
 }
 
 func (cl Client) Project(name string) (Project, bool) {
@@ -730,6 +741,9 @@ func (c *Config) validate() error {
 		}
 		if _, err := access.Parse(cl.Access); err != nil {
 			fail(i18n.T("config.client_access", cl.Name, err))
+		}
+		if _, ok := c.Compliance[cl.Compliance]; cl.Compliance != "" && !ok {
+			fail(i18n.T("config.client_compliance", cl.Name, cl.Compliance))
 		}
 		for k, v := range cl.Vars {
 			if !varName.MatchString(k) {

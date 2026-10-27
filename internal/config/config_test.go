@@ -109,6 +109,34 @@ func TestInstances(t *testing.T) {
 	}
 }
 
+func TestClientCompliance(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "clients"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "clients", "acme.yaml"), []byte("name: acme\ncompliance: regulated\ninstances:\n  - {name: acme-lake, template: x}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	base := "providers:\n  - name: a\n    base_url: http://x/v1\n"
+	if err := os.WriteFile(path, []byte(base), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "regulated") {
+		t.Fatalf("compliance inconnue acceptée : %v", err)
+	}
+	if err := os.WriteFile(path, []byte(base+"compliance:\n  regulated: {confidential: true}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Confidential("acme") || c.Confidential("other") {
+		t.Fatal("Confidential")
+	}
+}
+
 func TestClients(t *testing.T) {
 	base := "providers:\n  - name: a\n    base_url: http://x/v1\ninstances:\n  - {name: solo, template: x}\n"
 	load := func(clients map[string]string) (*Config, error) {

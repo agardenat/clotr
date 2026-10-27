@@ -58,6 +58,8 @@ Le planner ne planifie que ce qui manque. Le synthesizer répond à la nouvelle 
 
 Une session ouverte avec `--confidential` (ou `--sovereign require`) reste confidentielle pour tous ses tours. Un `--sovereign any` ou `prefer` y est refusé.
 
+Un client dont le type de plateforme (`compliance`) est confidentiel rend le run confidentiel dès que la demande, un tour précédent de la session ou `-t` le cite (nom ou alias du client, d'un de ses projets, nom d'une de ses instances) : la bascule est faite avant le premier appel de modèle et affichée (`run confidentiel : client …`), et un `--sovereign any` ou `prefer` est alors refusé. Hors run confidentiel, ses instances ne sont jamais proposées, même pour une demande générique.
+
 ```sh
 clotr run "état du cluster prod"
 ```
@@ -468,6 +470,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `sessions` | `dir` (défaut `~/.local/state/clotr/sessions`) |
 | `language` | `auto` (défaut), `fr` ou `en` : langue des réponses et rapports, voir Langues |
 | `ui_language` | `en` (défaut) ou `fr` : langue de l'interface, voir Langues |
+| `compliance` | types de plateforme, par nom (ex. `regulated: {confidential: true}`, `audited: {}`) : `confidential` rend confidentiel tout run qui cite un client de ce type (voir Sessions) |
 | `files` | `roots`, `max_file_bytes` |
 | `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true ; false : activée seulement par `-t <instance>`) |
@@ -528,6 +531,7 @@ projects:
 | `context` | description transmise aux agents avec les instances du client |
 | `vars` | références du client (codes client…), clés `[a-z][a-z0-9_]*` : `{{.<clé>}}` est remplacé dans les valeurs des `params` du client, de ses projets et de ses instances (une clé inconnue désactive l'instance, avec un avertissement), et les références sont transmises aux agents avec le `context`, pour les outils qui les attendent (serveurs MCP de tickets ou d'inventaire) |
 | `access` | niveau d'accès de ses instances quand `--access` n'est pas donné : `read` (défaut), `exec` ou `create`, voir Niveaux d'accès |
+| `compliance` | type de plateforme du client, défini dans la section `compliance` de la configuration ; absent : aucun |
 | `params` | valeurs par défaut des paramètres de ses instances (proxy, compte et clé SSH…) : appliquées seulement aux paramètres que le template de l'instance déclare, la valeur de l'instance l'emporte |
 | `projects` | projets du client, chacun avec ses instances (hôtes, clusters, dépôts…), voir ci-dessous |
 | `instances` | instances du client hors projet, même format que `instances` du fichier principal ; les noms restent uniques sur toute la configuration |

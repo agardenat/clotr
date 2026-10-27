@@ -94,28 +94,29 @@ type options struct {
 }
 
 type app struct {
-	events      atomic.Pointer[progress.Sink]
-	cfg         *config.Config
-	cat         *catalog.Catalog
-	router      *router.Router
-	registry    *tools.Registry
-	pool        *llm.Pool
-	audit       *audit.Logger
-	budget      *budget.Tracker
-	mcpServers  []*mcp.Server
-	instances   []*template.Instance
-	memory      *memory.Store
-	lang        string
-	environment string
-	baseEnv     []string
-	instanceEnv map[string][]string
-	webTools    []string
-	evidence    *evidence.Store
-	leads       *lead.Store
-	cves        *cve.Store
-	journal     bool
-	filtered    []*template.Instance
-	closers     []func()
+	events       atomic.Pointer[progress.Sink]
+	cfg          *config.Config
+	cat          *catalog.Catalog
+	router       *router.Router
+	confidential bool
+	registry     *tools.Registry
+	pool         *llm.Pool
+	audit        *audit.Logger
+	budget       *budget.Tracker
+	mcpServers   []*mcp.Server
+	instances    []*template.Instance
+	memory       *memory.Store
+	lang         string
+	environment  string
+	baseEnv      []string
+	instanceEnv  map[string][]string
+	webTools     []string
+	evidence     *evidence.Store
+	leads        *lead.Store
+	cves         *cve.Store
+	journal      bool
+	filtered     []*template.Instance
+	closers      []func()
 }
 
 func (r *app) close() {
@@ -390,7 +391,7 @@ func loadBase(ctx context.Context, o *options) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &app{cfg: cfg, cat: cat, router: rt, audit: audit.Nop()}, nil
+	return &app{cfg: cfg, cat: cat, router: rt, confidential: o.sovereign == "require", audit: audit.Nop()}, nil
 }
 
 func webTarget(cfg *config.Config, exclude []string) (kind, name string) {
@@ -870,6 +871,11 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 	offeredBy := map[string][]string{}
 	offeredIn := map[[2]string][]string{}
 	for _, in := range rt.instances {
+		if !rt.confidential && rt.cfg.Confidential(in.Client) {
+			hidden = append(hidden, in.Name)
+			env = append(env, fmt.Sprintf("- Instance %s (template %s) : non proposée, le client %s impose un run confidentiel (le nommer, -t %s ou --confidential, pour l'utiliser).", in.Name, in.T.Name, in.Client, in.Client))
+			continue
+		}
 		explicit := slices.ContainsFunc(forced, func(t string) bool {
 			return toolGroup(t) == in.Name
 		})
@@ -1181,6 +1187,9 @@ func cmdPlan(ctx context.Context, o *options, args []string, w io.Writer) error 
 	if err != nil {
 		return err
 	}
+	if err := o.applyCompliance(cfg, o.tools, request, false); err != nil {
+		return err
+	}
 	if err := o.decideWeb(cfg, o.confidential || o.sovereign == "require"); err != nil {
 		return err
 	}
@@ -1231,12 +1240,12 @@ func (o *options) directRole() string {
 	return o.direct
 }
 
-func openRun(ctx context.Context, o *options) (*session.Session, *app, error) {
+func openRun(ctx context.Context, o *options, request string) (*session.Session, *app, error) {
 	cfg, err := loadConfig(o)
 	if err != nil {
 		return nil, nil, err
 	}
-	sess, err := openSession(cfg, o)
+	sess, err := openSession(cfg, o, request)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1449,7 +1458,7 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 			return i18n.E("cve.no_id")
 		}
 	}
-	sess, rt, err := openRun(ctx, o)
+	sess, rt, err := openRun(ctx, o, request)
 	if err != nil {
 		return err
 	}
@@ -1558,7 +1567,7 @@ func cmdChat(ctx context.Context, o *options, args []string) error {
 		return i18n.E("cli.err.chat_tty")
 	}
 	initial := strings.TrimSpace(strings.Join(args, " "))
-	sess, rt, err := openRun(ctx, o)
+	sess, rt, err := openRun(ctx, o, initial)
 	if err != nil {
 		return err
 	}
@@ -1603,10 +1612,12 @@ func (rt *app) budgetRefresher(events progress.Sink) func(context.Context) {
 	}
 }
 
-func openSession(cfg *config.Config, o *options) (*session.Session, error) {
-	confidential := o.confidential || o.sovereign == "require"
+func openSession(cfg *config.Config, o *options, request string) (*session.Session, error) {
 	if o.session == "" {
-		s, err := session.Create(cfg.Sessions.Dir, confidential, o.sovereign)
+		if err := o.applyCompliance(cfg, o.tools, request, false); err != nil {
+			return nil, err
+		}
+		s, err := session.Create(cfg.Sessions.Dir, o.confidential || o.sovereign == "require", o.sovereign)
 		if err == nil {
 			s.Language = o.lang
 		}
@@ -1616,6 +1627,15 @@ func openSession(cfg *config.Config, o *options) (*session.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	forced := slices.Clone(o.tools)
+	for _, t := range sess.Turns {
+		request += "\n" + t.Request
+		forced = append(forced, t.Tools...)
+	}
+	if err := o.applyCompliance(cfg, forced, request, sess.Confidential); err != nil {
+		return nil, err
+	}
+	confidential := o.confidential || o.sovereign == "require"
 	if o.langFlag == "" && sess.Language != "" {
 		o.lang = sess.Language
 		i18n.SetReport(o.lang)
@@ -1633,6 +1653,40 @@ func openSession(cfg *config.Config, o *options) (*session.Session, error) {
 		o.sovereign = sess.Sovereign
 	}
 	return sess, nil
+}
+
+func (o *options) applyCompliance(cfg *config.Config, forced []string, text string, confidential bool) error {
+	if confidential || o.confidential || o.sovereign == "require" {
+		return nil
+	}
+	for _, cl := range cfg.Clients {
+		if !cfg.Confidential(cl.Name) || !compliantCited(cfg, cl, forced, text) {
+			continue
+		}
+		if o.sovereign != "" {
+			return i18n.E("cli.err.compliance_sovereign", cl.Name, cl.Compliance, o.sovereign)
+		}
+		o.confidential, o.sovereign = true, "require"
+		fmt.Fprintln(os.Stderr, i18n.T("compliance.confidential", cl.Name, cl.Compliance))
+		return nil
+	}
+	return nil
+}
+
+func compliantCited(cfg *config.Config, cl config.Client, forced []string, text string) bool {
+	terms := append([]string{cl.Name}, cl.Aliases...)
+	groups := []string{cl.Name}
+	for _, p := range cl.Projects {
+		terms = append(append(terms, p.Name), p.Aliases...)
+		groups = append(groups, p.Name)
+	}
+	for _, in := range cfg.Instances {
+		if in.Client == cl.Name {
+			terms = append(terms, in.Name)
+			groups = append(groups, in.Name)
+		}
+	}
+	return template.MentionTerm(text, terms) != "" || slices.ContainsFunc(forced, func(t string) bool { return slices.Contains(groups, toolGroup(t)) })
 }
 
 func (rt *app) saveTurn(sess *session.Session, n int, dir string, report *orchestrator.Report, runErr error, used []usedModel, costs []budget.Line) {

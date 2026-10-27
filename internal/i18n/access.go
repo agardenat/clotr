@@ -42,6 +42,7 @@ var accessMsgs = map[string]msg{
 	"tpl.http.track_under":        {"track %q must be under the POST path %s", "track %q doit être sous le chemin du POST %s"},
 	"tpl.star.sleep":              {"sleep: number of seconds >= 0 expected, got %s", "sleep : nombre de secondes >= 0 attendu, %s reçu"},
 	"tpl.star.sleep_load":         {"sleep: not allowed while loading the script", "sleep : interdit au chargement du script"},
+	"config.client_compliance":    {"client %s: compliance %q is not defined in compliance", "client %s : compliance %q absente de compliance"},
 	"config.client_access":        {"client %s: access: %v", "client %s : access : %v"},
 	"access.instances":            {"%s (%s)", "%s (%s)"},
 	"escalate.ask":                {"\n[clotr] instance %s is at access level %s: task %s calls %s %s, which requires %[6]s. Allow? [y]es / [n]o / [a]lways (%[6]s for %[1]s, this run): ", "\n[clotr] instance %s au niveau d'accès %s : la tâche %s appelle %s %s, qui exige %[6]s. Autoriser ? [o]ui / [n]on / [t]oujours (%[6]s pour %[1]s, ce run) : "},
