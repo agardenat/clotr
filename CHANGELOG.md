@@ -4,6 +4,11 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-27
+
+### Modifié
+- Questions d'autorisation (commande hors liste, outil au-delà du niveau d'accès) : la commande ou l'outil demandé et ses arguments sont affichés en jaune gras.
+
 ## [0.42.0] - 2026-10-27
 
 ### Modifié
