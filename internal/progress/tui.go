@@ -29,7 +29,10 @@ var (
 	stAlert   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
 	stAdvice  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	stActive  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
+	stSession = lipgloss.NewStyle().Bold(true).Reverse(true)
 )
+
+func Session(name string) string { return stSession.Render(name) }
 
 const (
 	statusPending = "pending"
@@ -368,16 +371,16 @@ func (b *board) header() string {
 	if b.finished {
 		state = i18n.T("state.done")
 	}
-	head := "clotr · "
+	head := stHeader.Render("clotr · ")
 	if b.title != "" {
-		head += b.title + " · "
+		head += stSession.Render(b.title) + stHeader.Render(" · ")
 	}
-	head += fmt.Sprintf("%s · %s · ", state, b.now().Sub(b.start).Truncate(time.Second)) + i18n.T("header.tasks", done, total)
+	rest := fmt.Sprintf("%s · %s · ", state, b.now().Sub(b.start).Truncate(time.Second)) + i18n.T("header.tasks", done, total)
 	if failed > 0 {
-		head += i18n.T("header.failed", failed)
+		rest += i18n.T("header.failed", failed)
 	}
-	head += " · " + i18n.N(b.toolCalls, "tool call")
-	return stHeader.Render(ansi.Truncate(head, max(b.width-1, 20), "…"))
+	rest += " · " + i18n.N(b.toolCalls, "tool call")
+	return ansi.Truncate(head+stHeader.Render(rest), max(b.width-1, 20), "…")
 }
 
 func (b *board) View() tea.View {
