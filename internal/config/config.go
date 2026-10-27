@@ -158,12 +158,21 @@ type Instance struct {
 }
 
 type Shell struct {
-	Command     []string `yaml:"command"`
-	Then        []string `yaml:"then"`
-	Ready       string   `yaml:"ready"`
-	Prompt      string   `yaml:"prompt"`
-	OpenTimeout int      `yaml:"open_timeout"`
-	MaxConns    int      `yaml:"max_conns"`
+	Command     []string   `yaml:"command"`
+	Then        []string   `yaml:"then"`
+	Auth        *ShellAuth `yaml:"auth"`
+	Ready       string     `yaml:"ready"`
+	Prompt      string     `yaml:"prompt"`
+	OpenTimeout int        `yaml:"open_timeout"`
+	MaxConns    int        `yaml:"max_conns"`
+}
+
+type ShellAuth struct {
+	User          string `yaml:"user"`
+	UserEnv       string `yaml:"user_env"`
+	PasswordEnv   string `yaml:"password_env"`
+	PasswordVault string `yaml:"password_vault"`
+	Label         string `yaml:"label"`
 }
 
 type PathRules struct {

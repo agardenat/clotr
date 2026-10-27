@@ -650,12 +650,13 @@ ssh_paths:
 def discover(ctx):
     return {"targets": [{"name": "vms", "kind": "hosts", "hosts": [{"name": "vm2", "ip": "10.0.0.2"}]}]}
 `)
+	t.Setenv("CLOTR_TEST_HOP_PASS", "s3")
 	in2, err := NewInstance("j", sshTpl, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer in2.Close()
-	if err := in2.UseShell(&config.Shell{Command: []string{gw, "%h"}, Then: []string{"exec sh -i"}, OpenTimeout: 20}); err != nil {
+	if err := in2.UseShell(&config.Shell{Command: []string{gw, "%h"}, Then: []string{"exec sh -c 'printf \"%u password: \"; read p; [ \"$p\" = s3 ] && exec sh -i'"}, Auth: &config.ShellAuth{User: "ops", PasswordEnv: "CLOTR_TEST_HOP_PASS"}, OpenTimeout: 20}); err != nil {
 		t.Fatal(err)
 	}
 	if err := in2.Discover(context.Background(), "", 0, true); err != nil {
