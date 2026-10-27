@@ -674,7 +674,10 @@ func newShellPool(name string, o options) (*ssh.Shell, error) {
 		}
 	}
 	if a := o.sub("auth"); len(a) > 0 {
-		label := name + " (" + defaultStr(a.str("label"), "SSH") + ")"
+		label := a.str("label")
+		if label == "" {
+			label = name + " (SSH)"
+		}
 		so.User = a.str("user")
 		so.Login = func(ctx context.Context) (string, string, error) {
 			var p creds.Pair
