@@ -152,3 +152,15 @@ func TestBoardHighlightsAdvisoryAndActivation(t *testing.T) {
 		t.Fatal("activation comptée comme tâche")
 	}
 }
+
+func TestBoardHighlightsSessionName(t *testing.T) {
+	b := newBoard(10)
+	b.title = "brave-otter"
+	head := b.header()
+	if Session("brave-otter") == "brave-otter" || !strings.Contains(head, Session("brave-otter")) {
+		t.Fatalf("nom de session non surligné : %q", head)
+	}
+	if got := ansi.Strip(head); !strings.HasPrefix(got, "clotr · brave-otter · ") {
+		t.Fatalf("entête : %q", got)
+	}
+}

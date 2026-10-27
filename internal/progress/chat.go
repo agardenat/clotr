@@ -432,11 +432,11 @@ func (c *chat) header() string {
 	if e := c.last(); e != nil {
 		return e.board.header()
 	}
-	head := "clotr"
+	head := stHeader.Render("clotr")
 	if c.opts.Title != "" {
-		head += " · " + c.opts.Title
+		head += stHeader.Render(" · ") + stSession.Render(c.opts.Title)
 	}
-	return stHeader.Render(ansi.Truncate(head, max(c.width-1, 20), "…"))
+	return ansi.Truncate(head, max(c.width-1, 20), "…")
 }
 
 func (c *chat) footer() string {

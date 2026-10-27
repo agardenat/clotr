@@ -1283,7 +1283,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.audit"), err)
 	}
 	rt.budget.NewRun()
-	fmt.Fprintln(os.Stderr, i18n.T("session.start", sess.Name, n, filepath.Join(turnDir, "audit.jsonl")))
+	fmt.Fprintln(os.Stderr, i18n.T("session.start", o.sessName(sess.Name), n, filepath.Join(turnDir, "audit.jsonl")))
 	if rt.journal {
 		fmt.Fprintln(os.Stderr, i18n.T("journal.dir", filepath.Join(turnDir, "evidence")))
 	}
@@ -1355,7 +1355,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	if k := rt.evidence.Len(); k > 0 {
 		res.info = append(res.info, i18n.T("evidence.line", k, filepath.Join(turnDir, "evidence"), sess.Name))
 	}
-	res.info = append(res.info, i18n.T("session.line", sess.Name, n, sess.Dir()))
+	res.info = append(res.info, i18n.T("session.line", o.sessName(sess.Name), n, sess.Dir()))
 	return res
 }
 
@@ -1469,7 +1469,7 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	for _, l := range res.info {
 		fmt.Fprintln(os.Stderr, l)
 	}
-	fmt.Fprintln(os.Stderr, i18n.T("session.refine", sess.Name))
+	fmt.Fprintln(os.Stderr, i18n.T("session.refine", o.sessName(sess.Name)))
 	report, runErr := res.report, res.err
 	if report == nil {
 		return runErr
@@ -1580,8 +1580,8 @@ func cmdChat(ctx context.Context, o *options, args []string) error {
 	})
 	creds.Suspend = nil
 	if len(sess.Turns) > 0 {
-		fmt.Fprintln(os.Stderr, i18n.T("session.line", sess.Name, len(sess.Turns), sess.Dir()))
-		fmt.Fprintln(os.Stderr, i18n.T("session.refine", sess.Name))
+		fmt.Fprintln(os.Stderr, i18n.T("session.line", o.sessName(sess.Name), len(sess.Turns), sess.Dir()))
+		fmt.Fprintln(os.Stderr, i18n.T("session.refine", o.sessName(sess.Name)))
 	}
 	return err
 }
@@ -1748,7 +1748,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	if len(o.exclude) > 0 {
 		connectors += " -x " + strings.Join(o.exclude, ",")
 	}
-	fmt.Fprintln(os.Stderr, i18n.T("session.resynth", sess.Name, n, connectors))
+	fmt.Fprintln(os.Stderr, i18n.T("session.resynth", o.sessName(sess.Name), n, connectors))
 	rt, err := setup(ctx, o, true)
 	if err != nil {
 		return err
@@ -1981,6 +1981,13 @@ func newProgress(o *options, maxSteps int, title string) progress.Closer {
 		return t
 	}
 	return progress.NewPrinter(os.Stderr)
+}
+
+func (o *options) sessName(name string) string {
+	if o.plain || !term.IsTerminal(os.Stderr.Fd()) {
+		return name
+	}
+	return progress.Session(name)
 }
 
 func errString(err error) string {
