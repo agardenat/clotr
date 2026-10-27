@@ -4,6 +4,11 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-10-27
+
+### Corrigé
+- Tableau de progression : une saisie (identifiants, mot de passe, autorisation d'une commande) ne suspend plus le tableau ; la question s'affiche dans un cadre sous le tableau, la saisie d'un secret n'est pas affichée, et les lignes émises pendant la saisie (activation d'instance, journal) continuent de s'imprimer au-dessus. Une suspension simultanée à l'impression d'une ligne laissait une copie figée du tableau à l'écran. Le mode `--chat` et `--plain` ne changent pas.
+
 ## [0.43.0] - 2026-10-27
 
 ### Modifié
