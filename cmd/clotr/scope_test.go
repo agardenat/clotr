@@ -237,3 +237,70 @@ func TestApplyVaultEnv(t *testing.T) {
 		t.Fatalf("VAULT_ADDR=%q VAULT_NAMESPACE=%q", os.Getenv("VAULT_ADDR"), os.Getenv("VAULT_NAMESPACE"))
 	}
 }
+
+func TestComplianceConfidential(t *testing.T) {
+	dir := t.TempDir()
+	tdir := filepath.Join(dir, "templates")
+	for _, d := range []string{"clients", "templates"} {
+		if err := os.Mkdir(filepath.Join(dir, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		"templates/acme.yaml": "name: acme\nkeywords: [widget]\ntargets:\n  - {kind: k, name: lake}\ntools:\n  - kind: inventory\n",
+		"clients/north.yaml":  "name: north\naliases: [northcorp]\ncompliance: regulated\nprojects:\n  - {name: PRJ-0001, instances: [{name: north-widget, template: acme}]}\n",
+		"clients/south.yaml":  "name: south\ncompliance: audited\ninstances:\n  - {name: south-widget, template: acme}\n",
+		"config.yaml":         "providers:\n  - {name: p, base_url: http://x}\nroles:\n  planner: {tier: deep}\n  collector: {tier: fast, tools: true}\n  synthesizer: {tier: deep}\ntemplates: {dir: " + tdir + "}\ncompliance:\n  regulated: {confidential: true}\n  audited: {}\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		forced    []string
+		text      string
+		sovereign string
+		want      bool
+	}{
+		{nil, "le widget de northcorp", "", true},
+		{nil, "projet PRJ-0001", "", true},
+		{nil, "état de north-widget", "", true},
+		{[]string{"north"}, "question", "", true},
+		{[]string{"north-widget"}, "question", "", true},
+		{nil, "le widget de south", "", false},
+		{nil, "le widget est lent", "", false},
+		{nil, "northern lights", "", false},
+	} {
+		o := &options{sovereign: c.sovereign}
+		if err := o.applyCompliance(cfg, c.forced, c.text, false); err != nil || o.confidential != c.want || (o.sovereign == "require") != c.want {
+			t.Errorf("%v %q: confidential=%v sovereign=%q %v", c.forced, c.text, o.confidential, o.sovereign, err)
+		}
+	}
+	if err := (&options{sovereign: "any"}).applyCompliance(cfg, nil, "north", false); err == nil || !strings.Contains(err.Error(), "north") {
+		t.Fatalf("--sovereign any accepté : %v", err)
+	}
+	rt := &app{cfg: cfg, registry: tools.NewRegistry(100), audit: audit.Nop()}
+	rt.setupInstances(context.Background(), &options{quiet: true}, toolFilter{}, func(string) {})
+	offered := func(text string) string {
+		reg, env := rt.scope(nil, text)
+		var groups []string
+		for _, in := range rt.instances {
+			if slices.ContainsFunc(reg.Names(), func(n string) bool { return strings.HasPrefix(n, in.ToolPrefix()) }) {
+				groups = append(groups, in.Name)
+			}
+		}
+		return strings.Join(groups, ",") + "|" + env
+	}
+	if got := offered("le widget est lent"); !strings.HasPrefix(got, "south-widget|") || !strings.Contains(got, "le client north impose un run confidentiel") {
+		t.Fatalf("hors run confidentiel : %s", got)
+	}
+	rt.confidential = true
+	if got := offered("le widget est lent"); !strings.HasPrefix(got, "north-widget,south-widget|") {
+		t.Fatalf("run confidentiel : %s", got)
+	}
+}

@@ -61,6 +61,8 @@ var cliMsgs = map[string]msg{
 	"cli.err.positive":               {"%s %d is invalid (positive integer expected)", "%s %d invalide (entier positif)"},
 	"cli.err.lang":                   {"--lang %q is invalid (auto|fr|en)", "--lang %q invalide (auto|fr|en)"},
 	"cli.warning":                    {"warning:", "avertissement :"},
+	"cli.err.compliance_sovereign":   {"client %s (%s) requires a confidential run: --sovereign %s refused", "le client %s (%s) impose un run confidentiel : --sovereign %s refusé"},
+	"compliance.confidential":        {"confidential run: client %s (%s)", "run confidentiel : client %s (%s)"},
 	"cli.err.confidential_sovereign": {"--confidential is incompatible with --sovereign %s", "--confidential incompatible avec --sovereign %s"},
 	"cli.err.web":                    {"--web: %q is invalid (yes|no)", "--web : %q invalide (yes|no)"},
 	"cli.err.web_confidential":       {"--web yes refused: confidential session", "--web yes refusé : session confidentielle"},
