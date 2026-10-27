@@ -45,6 +45,10 @@ var OpenTTY = openConsole
 
 var Suspend func() (resume func())
 
+var ErrNoPrompter = errors.New("creds: prompter unavailable")
+
+var Prompter func(ctx context.Context, in *os.File, question string, secret bool) (string, error)
+
 func Resolve(ctx context.Context, userEnv, passEnv, passVault, label string) (Pair, error) {
 	return resolve(ctx, "", userEnv, passEnv, passVault, label, false)
 }
@@ -131,33 +135,24 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 	if !term.IsTerminal(tty.In.Fd()) {
 		return Pair{}, errors.New(missing)
 	}
-	if Suspend != nil {
-		defer Suspend()()
-	}
+	defer suspend()()
+	var notice string
 	if vaultErr != nil {
-		fmt.Fprint(tty.Out, i18n.T("prompt.vault_failed", label, passVault, vaultErr))
+		notice = i18n.T("prompt.vault_failed", label, passVault, vaultErr)
 	}
 	if p.User == "" && !secretOnly {
-		fmt.Fprint(tty.Out, i18n.T("prompt.user", label))
-		line, err := readInterruptible(ctx, tty, func() (string, error) {
-			return bufio.NewReader(tty.In).ReadString('\n')
-		})
+		line, err := prompt(ctx, tty, notice+i18n.T("prompt.user", label), false)
 		if err != nil {
 			return Pair{}, err
 		}
-		p.User = strings.TrimSpace(line)
+		p.User, notice = strings.TrimSpace(line), ""
 	}
 	if p.Pass == "" {
+		question := i18n.T("prompt.password", label, p.User)
 		if secretOnly {
-			fmt.Fprint(tty.Out, i18n.T("prompt.secret", label))
-		} else {
-			fmt.Fprint(tty.Out, i18n.T("prompt.password", label, p.User))
+			question = i18n.T("prompt.secret", label)
 		}
-		pass, err := readInterruptible(ctx, tty, func() (string, error) {
-			b, err := term.ReadPassword(tty.In.Fd())
-			return string(b), err
-		})
-		fmt.Fprintln(tty.Out)
+		pass, err := prompt(ctx, tty, notice+question, true)
 		if err != nil {
 			return Pair{}, err
 		}
@@ -171,6 +166,34 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		cache[userKey(label, p.User)] = p
 	}
 	return p, nil
+}
+
+func suspend() (resume func()) {
+	if Prompter != nil || Suspend == nil {
+		return func() {}
+	}
+	return Suspend()
+}
+
+func prompt(ctx context.Context, tty *Console, question string, secret bool) (string, error) {
+	if Prompter != nil {
+		s, err := Prompter(ctx, tty.In, question, secret)
+		if !errors.Is(err, ErrNoPrompter) {
+			return s, err
+		}
+	}
+	fmt.Fprint(tty.Out, question)
+	if !secret {
+		return readInterruptible(ctx, tty, func() (string, error) {
+			return bufio.NewReader(tty.In).ReadString('\n')
+		})
+	}
+	s, err := readInterruptible(ctx, tty, func() (string, error) {
+		b, err := term.ReadPassword(tty.In.Fd())
+		return string(b), err
+	})
+	fmt.Fprintln(tty.Out)
+	return s, err
 }
 
 func readInterruptible(ctx context.Context, tty *Console, read func() (string, error)) (string, error) {
@@ -238,13 +261,8 @@ func Ask(ctx context.Context, question string) (string, error) {
 	if !term.IsTerminal(tty.In.Fd()) {
 		return "", i18n.E("creds.notty")
 	}
-	if Suspend != nil {
-		defer Suspend()()
-	}
-	fmt.Fprint(tty.Out, question)
-	return readInterruptible(ctx, tty, func() (string, error) {
-		return bufio.NewReader(tty.In).ReadString('\n')
-	})
+	defer suspend()()
+	return prompt(ctx, tty, question, false)
 }
 
 func AskSecret(ctx context.Context, question string) (string, error) {
@@ -261,16 +279,8 @@ func AskSecret(ctx context.Context, question string) (string, error) {
 	if !term.IsTerminal(tty.In.Fd()) {
 		return "", i18n.E("creds.notty")
 	}
-	if Suspend != nil {
-		defer Suspend()()
-	}
-	fmt.Fprint(tty.Out, question)
-	s, err := readInterruptible(ctx, tty, func() (string, error) {
-		b, err := term.ReadPassword(tty.In.Fd())
-		return string(b), err
-	})
-	fmt.Fprintln(tty.Out)
-	return s, err
+	defer suspend()()
+	return prompt(ctx, tty, question, true)
 }
 
 func orNone(s string) string {

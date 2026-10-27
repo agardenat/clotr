@@ -1979,6 +1979,7 @@ func newProgress(o *options, maxSteps int, title string) progress.Closer {
 	if !o.plain && term.IsTerminal(os.Stderr.Fd()) {
 		t := progress.NewTUI(os.Stderr, maxSteps, title)
 		creds.Suspend = t.Suspend
+		creds.Prompter = t.Prompt
 		return t
 	}
 	return progress.NewPrinter(os.Stderr)

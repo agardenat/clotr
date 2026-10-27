@@ -12,6 +12,21 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func promptMode(f *os.File) (restore func(), err error) {
+	fd := int(f.Fd())
+	t, err := unix.IoctlGetTermios(fd, ioctlGetTermios)
+	if err != nil {
+		return nil, err
+	}
+	saved := *t
+	t.Lflag &^= unix.ECHO | unix.ICANON
+	t.Cc[unix.VMIN], t.Cc[unix.VTIME] = 1, 0
+	if err := unix.IoctlSetTermios(fd, ioctlSetTermios, t); err != nil {
+		return nil, err
+	}
+	return func() { _ = unix.IoctlSetTermios(fd, ioctlSetTermios, &saved) }, nil
+}
+
 func watchResize(p *tea.Program, stop <-chan struct{}, out *os.File) {
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)

@@ -2,6 +2,7 @@ package progress
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,9 +12,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	"github.com/muesli/cancelreader"
 )
 
 var spinner = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -31,6 +34,7 @@ var (
 	stActive  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
 	stSession = lipgloss.NewStyle().Bold(true).Reverse(true)
 	stCommand = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+	stPrompt  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("3")).Padding(0, 1)
 )
 
 func Session(name string) string { return stSession.Render(name) }
@@ -58,6 +62,10 @@ type row struct {
 
 type eventMsg Event
 type finishMsg struct{}
+type promptMsg struct {
+	question, input string
+	secret, active  bool
+}
 type tickMsg time.Time
 type logMsg string
 
@@ -73,6 +81,7 @@ type board struct {
 	finished  bool
 	ready     bool
 	pending   []string
+	ask       promptMsg
 	now       func() time.Time
 }
 
@@ -130,6 +139,8 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		b.apply(Event(m))
 	case logMsg:
 		return b, b.println(ansi.Truncate(string(m), max(b.width-1, 20), "…"))
+	case promptMsg:
+		b.ask = m
 	case finishMsg:
 		b.finished = true
 		if p := b.flushPending(); p != nil {
@@ -361,6 +372,9 @@ func (b *board) render() string {
 	for _, r := range b.rows {
 		lines = append(lines, b.line(r))
 	}
+	if b.ask.active {
+		lines = append(lines, b.promptBox())
+	}
 	out := strings.Join(lines, "\n")
 	if b.finished {
 		out += "\n"
@@ -384,6 +398,18 @@ func (b *board) header() string {
 	}
 	rest += " · " + i18n.N(b.toolCalls, "tool call")
 	return ansi.Truncate(head+stHeader.Render(rest), max(b.width-1, 20), "…")
+}
+
+func (b *board) promptBox() string {
+	w := max(b.width-5, 20)
+	input := []rune(b.ask.input)
+	if b.ask.secret {
+		input = nil
+	}
+	if len(input) > w-3 {
+		input = append([]rune("…"), input[len(input)-(w-4):]...)
+	}
+	return stPrompt.Render(ansi.Wrap(strings.TrimSpace(b.ask.question), w, "") + "\n" + stCommand.Render("›") + " " + string(input) + "█")
 }
 
 func (b *board) View() tea.View {
@@ -449,6 +475,79 @@ func (t *TUI) Suspend() (resume func()) {
 	return func() {
 		_, _ = io.WriteString(t.out, ansi.ResetModeAltScreenSaveCursor)
 		_ = t.p.RestoreTerminal()
+	}
+}
+
+func (t *TUI) Prompt(ctx context.Context, in *os.File, question string, secret bool) (string, error) {
+	select {
+	case <-t.stop:
+		return "", creds.ErrNoPrompter
+	default:
+	}
+	restore, err := promptMode(in)
+	if err != nil {
+		return "", creds.ErrNoPrompter
+	}
+	defer restore()
+	r, err := cancelreader.NewReader(in)
+	if err != nil {
+		return "", creds.ErrNoPrompter
+	}
+	keys, errc, done, exited := make(chan string), make(chan error, 1), make(chan struct{}), make(chan struct{})
+	defer func() {
+		close(done)
+		r.Cancel()
+		<-exited
+		_ = r.Close()
+	}()
+	go func() {
+		defer close(exited)
+		buf := make([]byte, 256)
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				select {
+				case keys <- string(buf[:n]):
+				case <-done:
+					return
+				}
+			}
+			if err != nil {
+				errc <- err
+				return
+			}
+		}
+	}()
+	ask := promptMsg{question: question, secret: secret, active: true}
+	t.p.Send(ask)
+	defer t.p.Send(promptMsg{})
+	var input []rune
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case err := <-errc:
+			return "", err
+		case s := <-keys:
+			for _, c := range ansi.Strip(s) {
+				switch c {
+				case '\r', '\n', 0x04:
+					return string(input), nil
+				case 0x7f, 0x08:
+					if len(input) > 0 {
+						input = input[:len(input)-1]
+					}
+				case 0x15:
+					input = input[:0]
+				default:
+					if c >= 0x20 {
+						input = append(input, c)
+					}
+				}
+			}
+			ask.input = string(input)
+			t.p.Send(ask)
+		}
 	}
 }
 

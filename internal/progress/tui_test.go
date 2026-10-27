@@ -164,3 +164,20 @@ func TestBoardHighlightsSessionName(t *testing.T) {
 		t.Fatalf("entête : %q", got)
 	}
 }
+
+func TestBoardPromptBox(t *testing.T) {
+	b := newBoard(10)
+	b.Update(promptMsg{question: "\n[clotr] cm — mot de passe de bob : ", input: "hunter2", secret: true, active: true})
+	out := ansi.Strip(b.render())
+	if !strings.Contains(out, "╭") || !strings.Contains(out, "[clotr] cm — mot de passe de bob :") || strings.Contains(out, "hunter2") {
+		t.Fatalf("cadre de saisie : %s", out)
+	}
+	b.Update(promptMsg{question: "user", input: "bob", active: true})
+	if out := ansi.Strip(b.render()); !strings.Contains(out, "› bob") {
+		t.Fatalf("saisie non affichée : %s", out)
+	}
+	b.Update(promptMsg{})
+	if out := ansi.Strip(b.render()); strings.Contains(out, "╭") {
+		t.Fatalf("cadre resté après la saisie : %s", out)
+	}
+}
