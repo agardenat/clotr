@@ -150,7 +150,7 @@ func (t *Template) validate() error {
 		if c.Driver == "shell" {
 			nssh++
 			for k := range c.Options {
-				if !slices.Contains([]string{"command", "ready", "prompt", "open_timeout", "max_conns", "sudo"}, k) {
+				if !slices.Contains([]string{"command", "then", "auth", "ready", "prompt", "open_timeout", "max_conns", "sudo"}, k) {
 					fail(i18n.T("tpl.spec.shell_option", n, k))
 				}
 			}

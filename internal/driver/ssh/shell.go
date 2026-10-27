@@ -165,10 +165,23 @@ type shellSession struct {
 }
 
 func (s *Shell) start(ctx context.Context, host string) (*shellSession, error) {
+	short, _, _ := strings.Cut(host, ".")
+	user := s.opts.User
+	if user == "" && s.opts.Login != nil && strings.Contains(strings.Join(s.opts.Then, "\n"), "%u") {
+		u, _, err := s.opts.Login(ctx)
+		if err != nil {
+			return nil, err
+		}
+		user = u
+	}
+	sub := strings.NewReplacer("%h", host, "%s", short, "%u", user)
 	argv := make([]string, len(s.opts.Command))
 	for i, a := range s.opts.Command {
-		short, _, _ := strings.Cut(host, ".")
-		argv[i] = strings.NewReplacer("%h", host, "%s", short).Replace(a)
+		argv[i] = sub.Replace(a)
+	}
+	then := make([]string, len(s.opts.Then))
+	for i, a := range s.opts.Then {
+		then[i] = sub.Replace(a)
 	}
 	c := exec.Command(argv[0], argv[1:]...)
 	f, err := pty.StartWithSize(c, &pty.Winsize{Rows: 50, Cols: 250})
@@ -180,7 +193,7 @@ func (s *Shell) start(ctx context.Context, host string) (*shellSession, error) {
 	ss := &shellSession{host: host, cmd: c, f: f, chunks: make(chan []byte, 256), wq: make(chan []byte, 64), done: make(chan struct{}), nonce: hex.EncodeToString(n)}
 	go ss.read()
 	go ss.writer()
-	if err := ss.handshake(ctx, s.opts, strings.Join(argv, " ")); err != nil {
+	if err := ss.handshake(ctx, s.opts, strings.Join(argv, " "), then); err != nil {
 		ss.close()
 		return nil, err
 	}
@@ -259,50 +272,17 @@ func (ss *shellSession) next() string {
 	return ss.nonce + "-" + strconv.Itoa(ss.seq)
 }
 
-func (ss *shellSession) handshake(ctx context.Context, o ShellOptions, label string) error {
+func (ss *shellSession) handshake(ctx context.Context, o ShellOptions, label string, then []string) error {
 	deadline := time.Now().Add(o.OpenTimeout)
-	var seen []byte
-	var quiet <-chan time.Time
-	total, asked := 0, -1
-	for {
-		wait := time.Until(deadline)
-		if wait <= 0 {
-			return i18n.E("ssh.shell_open", ss.host, o.OpenTimeout, label, lastLines(seen))
+	for i := 0; ; i++ {
+		if err := ss.waitReady(ctx, o, label, &deadline, i > 0); err != nil {
+			return err
 		}
-		select {
-		case b, ok := <-ss.chunks:
-			if !ok {
-				ss.markDead()
-				return i18n.E("ssh.shell_exited", ss.host, lastLines(seen))
-			}
-			seen = append(seen, b...)
-			if len(seen) > shellSeen {
-				seen = seen[len(seen)-shellSeen:]
-			}
-			total += len(b)
-			quiet = time.After(shellQuiet)
-			continue
-		case <-quiet:
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(wait):
-			continue
-		}
-		quiet = nil
-		line := lastLine(seen)
-		if o.Ready.MatchString(line) {
+		if i == len(then) {
 			break
 		}
-		if o.Ask != nil && o.Prompt.MatchString(line) && total != asked {
-			asked = total
-			t0 := time.Now()
-			answer, err := o.Ask(ctx, i18n.T("ssh.shell_prompt", ss.host, strings.TrimSpace(line)))
-			if err != nil {
-				return err
-			}
-			deadline = deadline.Add(time.Since(t0))
-			ss.write(answer + "\r")
-		}
+		label += " ; " + then[i]
+		ss.write(then[i] + "\r")
 	}
 	ss.write(" stty raw -echo; exec sh -c 'cat | sh'\r")
 	for {
@@ -338,6 +318,72 @@ func (ss *shellSession) handshake(ctx context.Context, o ShellOptions, label str
 			}
 			break
 		}
+	}
+}
+
+func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label string, deadline *time.Time, hop bool) error {
+	var seen []byte
+	var quiet <-chan time.Time
+	total, asked := 0, -1
+	login := hop && o.Login != nil
+	user, sent := "", false
+	forget := func() {
+		if sent && o.Forget != nil {
+			o.Forget(user)
+		}
+	}
+	for {
+		wait := time.Until(*deadline)
+		if wait <= 0 {
+			return i18n.E("ssh.shell_open", ss.host, o.OpenTimeout, label, lastLines(seen))
+		}
+		select {
+		case b, ok := <-ss.chunks:
+			if !ok {
+				ss.markDead()
+				forget()
+				return i18n.E("ssh.shell_exited", ss.host, lastLines(seen))
+			}
+			seen = append(seen, b...)
+			if len(seen) > shellSeen {
+				seen = seen[len(seen)-shellSeen:]
+			}
+			total += len(b)
+			quiet = time.After(shellQuiet)
+			continue
+		case <-quiet:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+			continue
+		}
+		quiet = nil
+		line := lastLine(seen)
+		if o.Ready.MatchString(line) {
+			return nil
+		}
+		if !o.Prompt.MatchString(line) || total == asked || !login && o.Ask == nil {
+			continue
+		}
+		if sent {
+			forget()
+			return i18n.E("ssh.shell_auth", ss.host, label, lastLines(seen))
+		}
+		asked = total
+		t0 := time.Now()
+		var answer string
+		var err error
+		if login {
+			user, answer, err = o.Login(ctx)
+			sent = err == nil
+		} else {
+			answer, err = o.Ask(ctx, i18n.T("ssh.shell_prompt", ss.host, strings.TrimSpace(line)))
+		}
+		if err != nil {
+			return err
+		}
+		*deadline = deadline.Add(time.Since(t0))
+		ss.write(answer + "\r")
 	}
 }
 

@@ -108,6 +108,7 @@ var runtimeMsgs = map[string]msg{
 	"ssh.shell_start":       {"shell driver: %s: %w", "driver shell : %s : %w"},
 	"ssh.shell_open":        {"shell driver: %s: no shell prompt after %s (run %q by hand once to check); last output:\n%s", "driver shell : %s : pas d'invite de shell après %s (lancer %q à la main une fois pour vérifier) ; dernière sortie :\n%s"},
 	"ssh.shell_exited":      {"shell driver: %s: session ended before the shell prompt; last output:\n%s", "driver shell : %s : session terminée avant l'invite de shell ; dernière sortie :\n%s"},
+	"ssh.shell_auth":        {"shell driver: %s: password refused (%s); last output:\n%s", "driver shell : %s : mot de passe refusé (%s) ; dernière sortie :\n%s"},
 	"ssh.shell_closed":      {"shell driver: %s: session ended during the command", "driver shell : %s : session terminée pendant la commande"},
 	"ssh.shell_prompt":      {"%s — %s ", "%s — %s "},
 	"creds.empty":           {"%s: empty credentials", "%s : identifiants vides"},
