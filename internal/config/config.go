@@ -154,6 +154,7 @@ type Instance struct {
 
 type Shell struct {
 	Command     []string `yaml:"command"`
+	Then        []string `yaml:"then"`
 	Ready       string   `yaml:"ready"`
 	Prompt      string   `yaml:"prompt"`
 	OpenTimeout int      `yaml:"open_timeout"`

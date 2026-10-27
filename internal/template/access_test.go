@@ -610,7 +610,7 @@ func TestShellDriver(t *testing.T) {
 	tpl := writeTemplate(t, `name: x
 script: x.star
 connectors:
-  shell: {driver: shell, command: ["`+gw+`", "%h"], max_conns: 2, open_timeout: 20}
+  shell: {driver: shell, command: ["`+gw+`", "%h"], then: ["exec sh -i"], max_conns: 2, open_timeout: 20}
 tools:
   - kind: ssh_read
 ssh_paths:
@@ -655,7 +655,7 @@ def discover(ctx):
 		t.Fatal(err)
 	}
 	defer in2.Close()
-	if err := in2.UseShell(&config.Shell{Command: []string{gw, "%h"}, OpenTimeout: 20}); err != nil {
+	if err := in2.UseShell(&config.Shell{Command: []string{gw, "%h"}, Then: []string{"exec sh -i"}, OpenTimeout: 20}); err != nil {
 		t.Fatal(err)
 	}
 	if err := in2.Discover(context.Background(), "", 0, true); err != nil {

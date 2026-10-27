@@ -625,7 +625,7 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 		return in.pool, nil
 	}
 	if in.shell {
-		p, err := newShellPool(o)
+		p, err := newShellPool(in.Name, o)
 		if err != nil {
 			return nil, err
 		}
@@ -656,7 +656,7 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 	return p, nil
 }
 
-func newShellPool(o options) (*ssh.Shell, error) {
+func newShellPool(name string, o options) (*ssh.Shell, error) {
 	maxConns, err := o.int("max_conns", 4)
 	if err != nil {
 		return nil, err
@@ -665,13 +665,28 @@ func newShellPool(o options) (*ssh.Shell, error) {
 	if err != nil {
 		return nil, err
 	}
-	so := ssh.ShellOptions{Command: o.list("command"), MaxConns: maxConns, OpenTimeout: time.Duration(timeout) * time.Second, Ask: creds.AskSecret}
+	so := ssh.ShellOptions{Command: o.list("command"), Then: o.list("then"), MaxConns: maxConns, OpenTimeout: time.Duration(timeout) * time.Second, Ask: creds.AskSecret}
 	for k, re := range map[string]**regexp.Regexp{"ready": &so.Ready, "prompt": &so.Prompt} {
 		if v := o.str(k); v != "" {
 			if *re, err = regexp.Compile(v); err != nil {
 				return nil, i18n.E("tpl.option.regexp", k, err)
 			}
 		}
+	}
+	if a := o.sub("auth"); len(a) > 0 {
+		label := name + " (" + defaultStr(a.str("label"), "SSH") + ")"
+		so.User = a.str("user")
+		so.Login = func(ctx context.Context) (string, string, error) {
+			var p creds.Pair
+			var err error
+			if so.User != "" {
+				p, err = creds.ResolveUser(ctx, so.User, a.str("password_env"), a.str("password_vault"), label)
+			} else {
+				p, err = creds.Resolve(ctx, a.str("user_env"), a.str("password_env"), a.str("password_vault"), label)
+			}
+			return p.User, p.Pass, err
+		}
+		so.Forget = func(user string) { creds.Forget(label, user) }
 	}
 	return ssh.NewShell(so)
 }
