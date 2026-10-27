@@ -4,6 +4,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-27
+
 ### Ajouté
 - Driver `shell` et clé `shell` d'une instance : option `then`, lignes tapées dans la session après l'invite, chacune attendue à l'invite suivante, pour rebondir par un hôte intermédiaire (ex. `exec ssh %h`) ; les questions de mot de passe du rebond sont relayées comme celles de la commande.
 - Driver `shell` : option `auth` (`user`, `user_env`, `password_env`, `password_vault`, `label`) pour les identifiants du rebond : `%u` dans `then` est remplacé par le compte, et la demande de mot de passe pendant un rebond reçoit le mot de passe (variable, Vault ou saisie une fois par run) ; un mot de passe refusé est oublié et la session échoue avec la sortie du rebond.
