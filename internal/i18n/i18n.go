@@ -56,6 +56,7 @@ var msgs = map[string]msg{
 	"thinking":             {"thinking…", "réflexion…"},
 	"tool":                 {"tool %s", "outil %s"},
 	"waiting":              {"waiting for %s", "attend %s"},
+	"rows.hidden":          {"… not shown (screen height): %s", "… non affichées (hauteur de l'écran) : %s"},
 	"fallback":             {"fallback to %s (%s)", "bascule vers %s (%s)"},
 	"fallback.after":       {"after error on %s: %s", "après erreur sur %s : %s"},
 	"fallback.exhausted":   {"%s used its whole output limit without answering", "%s a épuisé sa limite de sortie sans répondre"},

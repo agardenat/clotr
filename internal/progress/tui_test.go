@@ -127,6 +127,37 @@ func TestBoardTrailingLineOnlyWhenFinished(t *testing.T) {
 	}
 }
 
+func TestBoardFitsScreenHeight(t *testing.T) {
+	b := newBoard(10)
+	b.width, b.height = 120, 13
+	for i := 1; i <= 20; i++ {
+		id := "t" + string(rune('a'+i))
+		b.apply(Event{Task: id, Kind: "start", Model: "m"})
+		if i <= 15 {
+			b.apply(Event{Task: id, Kind: "done", Detail: "x"})
+		}
+	}
+	b.ask = promptMsg{question: "question\nsur deux lignes", active: true}
+	out := ansi.Strip(b.render())
+	lines := strings.Split(out, "\n")
+	if len(lines) > b.height-1 {
+		t.Fatalf("%d lignes pour un écran de %d :\n%s", len(lines), b.height, out)
+	}
+	for _, id := range []string{"tq", "tr", "ts", "tt", "tu"} {
+		if !strings.Contains(out, " "+id+" ") {
+			t.Errorf("tâche en cours %s masquée :\n%s", id, out)
+		}
+	}
+	if !strings.Contains(out, "not shown (screen height): ") || !strings.Contains(out, "question") {
+		t.Errorf("résumé ou question absents :\n%s", out)
+	}
+	b.ask = promptMsg{}
+	b.finished = true
+	if got := strings.Count(ansi.Strip(b.render()), "\n"); got != 21 {
+		t.Errorf("tableau final tronqué : %d lignes", got)
+	}
+}
+
 func TestBoardPrintsJournalLines(t *testing.T) {
 	b := newBoard(10)
 	b.Update(tickMsg(time.Now()))
