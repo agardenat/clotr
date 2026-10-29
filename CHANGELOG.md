@@ -2,6 +2,11 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.47.2] - 2026-10-29
+
+### Corrigé
+- Tableau de progression : certains terminaux affichaient un cadenas en bas du tableau pendant tout le run. Depuis la 0.47.0, l'écho était coupé mais le terminal restait en mode ligne, combinaison que ces terminaux prennent pour une saisie de mot de passe. Le mode ligne est maintenant coupé lui aussi pendant le tableau, comme pendant les questions, puis rétabli à la fermeture.
+
 ## [0.47.1] - 2026-10-29
 
 ### Corrigé
