@@ -56,12 +56,22 @@ func TestQuietInput(t *testing.T) {
 		}
 		return tio.Lflag&unix.ECHO != 0
 	}
+	canonical := func() bool {
+		tio, err := unix.IoctlGetTermios(int(tty.Fd()), ioctlGetTermios)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tio.Lflag&unix.ICANON != 0
+	}
 	if !echo() {
 		t.Fatal("écho désactivé au départ")
 	}
 	restore := quietInput(tty)
 	if echo() {
 		t.Fatal("écho actif pendant le tableau : une frappe décale le rendu")
+	}
+	if canonical() {
+		t.Fatal("mode ligne sans écho pendant le tableau : le terminal le prend pour une saisie de mot de passe")
 	}
 	if _, err := ptm.Write([]byte("\r\r")); err != nil {
 		t.Fatal(err)
@@ -79,5 +89,8 @@ func TestQuietInput(t *testing.T) {
 	restore()
 	if !echo() {
 		t.Fatal("écho non rétabli à la fermeture")
+	}
+	if !canonical() {
+		t.Fatal("mode ligne non rétabli à la fermeture")
 	}
 }
