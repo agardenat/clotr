@@ -23,6 +23,25 @@ func promptMode(f *os.File) (restore func(), err error) {
 	return func() { _ = windows.SetConsoleMode(h, mode) }, nil
 }
 
+func quietInput(f *os.File) (restore func()) {
+	h := windows.Handle(f.Fd())
+	var mode uint32
+	if err := windows.GetConsoleMode(h, &mode); err != nil {
+		return func() {}
+	}
+	if err := windows.SetConsoleMode(h, mode&^windows.ENABLE_ECHO_INPUT); err != nil {
+		return func() {}
+	}
+	return func() {
+		_ = windows.FlushConsoleInputBuffer(h)
+		_ = windows.SetConsoleMode(h, mode)
+	}
+}
+
+func discardInput(f *os.File) {
+	_ = windows.FlushConsoleInputBuffer(windows.Handle(f.Fd()))
+}
+
 func watchResize(p *tea.Program, stop <-chan struct{}, out *os.File) {
 	w0, h0, _ := term.GetSize(out.Fd())
 	tick := time.NewTicker(500 * time.Millisecond)
