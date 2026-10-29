@@ -34,7 +34,8 @@ func quietInput(f *os.File) (restore func()) {
 		return func() {}
 	}
 	saved := *t
-	t.Lflag &^= unix.ECHO
+	t.Lflag &^= unix.ECHO | unix.ICANON
+	t.Cc[unix.VMIN], t.Cc[unix.VTIME] = 1, 0
 	if err := unix.IoctlSetTermios(fd, ioctlSetTermios, t); err != nil {
 		return func() {}
 	}
