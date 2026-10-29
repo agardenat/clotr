@@ -1799,6 +1799,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	if len(o.tools) == 0 {
 		o.tools = toolFilterFromAudit(filepath.Join(dir, "audit.jsonl"))
 	}
+	o.cveIDs = sess.Turns[n-1].CVE
 	connectors := strings.Join(o.tools, ",")
 	if len(o.exclude) > 0 {
 		connectors += " -x " + strings.Join(o.exclude, ",")
@@ -1814,6 +1815,9 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.memory"), err)
 	}
 	rt.memory.Load(prior)
+	if rt.cves != nil {
+		rt.cves.Restore(cveFromAudit(filepath.Join(dir, "audit.jsonl")))
+	}
 	events := newProgress(o, rt.cfg.Limits.MaxSteps, sess.Name)
 	defer events.Close()
 	orch := rt.orchestrator(events, rt.registry, rt.environment)
@@ -1832,6 +1836,11 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	events.Close()
 	if err != nil {
 		return err
+	}
+	if rt.cves != nil {
+		if sec := rt.cves.Section(); sec != "" {
+			md = sec + "\n\n---\n\n" + md
+		}
 	}
 	if err := sess.WriteReport(dir, md); err != nil {
 		return err
@@ -1896,13 +1905,42 @@ func toolFilterFromAudit(path string) []string {
 			if prefix == "mcp" && len(parts) > 1 {
 				prefix += "_" + parts[1]
 			}
-			if prefix != "memory" && !slices.Contains(out, prefix) {
+			if prefix != "memory" && prefix != "cve" && !slices.Contains(out, prefix) {
 				out = append(out, prefix)
 			}
 		}
 		return out
 	}
 	return nil
+}
+
+func cveFromAudit(path string) ([]cve.Advisory, []cve.Finding) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil
+	}
+	defer f.Close()
+	var advisories []cve.Advisory
+	var findings []cve.Finding
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	for sc.Scan() {
+		var ev struct {
+			Kind     string        `json:"kind"`
+			Advisory *cve.Advisory `json:"advisory"`
+			Finding  *cve.Finding  `json:"finding"`
+		}
+		if json.Unmarshal(sc.Bytes(), &ev) != nil {
+			continue
+		}
+		switch {
+		case ev.Kind == "cve_advisory" && ev.Advisory != nil:
+			advisories = append(advisories, *ev.Advisory)
+		case ev.Kind == "cve_report" && ev.Finding != nil:
+			findings = append(findings, *ev.Finding)
+		}
+	}
+	return advisories, findings
 }
 
 func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error {
