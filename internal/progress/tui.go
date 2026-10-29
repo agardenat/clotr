@@ -76,6 +76,7 @@ type board struct {
 	title     string
 	start     time.Time
 	width     int
+	height    int
 	frame     int
 	toolCalls int
 	finished  bool
@@ -110,6 +111,9 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		if m.Width > 0 {
 			b.width = m.Width
+		}
+		if m.Height > 0 {
+			b.height = m.Height
 		}
 	case eventMsg:
 		if m.Task == "budget" {
@@ -368,18 +372,52 @@ func fmtDur(d time.Duration) string {
 }
 
 func (b *board) render() string {
+	var box string
+	extra := 0
+	if b.ask.active {
+		box = b.promptBox()
+		extra = strings.Count(box, "\n") + 1
+	}
 	lines := []string{b.header()}
-	for _, r := range b.rows {
-		lines = append(lines, b.line(r))
+	if room := b.height - 2 - extra; !b.finished && b.height > 0 && len(b.rows) > room {
+		lines = append(lines, b.fit(room)...)
+	} else {
+		for _, r := range b.rows {
+			lines = append(lines, b.line(r))
+		}
 	}
 	if b.ask.active {
-		lines = append(lines, b.promptBox())
+		lines = append(lines, box)
 	}
 	out := strings.Join(lines, "\n")
 	if b.finished {
 		out += "\n"
 	}
 	return out
+}
+
+func (b *board) fit(room int) []string {
+	if room < 1 {
+		return nil
+	}
+	shown := map[*row]bool{}
+	for _, active := range []bool{true, false} {
+		for _, r := range b.rows {
+			if len(shown) == room-1 {
+				break
+			}
+			if (r.status == statusRunning || r.status == statusFailed) == active {
+				shown[r] = true
+			}
+		}
+	}
+	var lines []string
+	for _, r := range b.rows {
+		if shown[r] {
+			lines = append(lines, b.line(r))
+		}
+	}
+	return append(lines, stFaint.Render(ansi.Truncate(i18n.T("rows.hidden", i18n.N(len(b.rows)-len(shown), "task")), max(b.width-1, 20), "…")))
 }
 
 func (b *board) header() string {
@@ -435,7 +473,7 @@ func NewTUI(stderr *os.File, maxSteps int, title string) *TUI {
 		width, height = 120, 40
 	}
 	b := newBoard(maxSteps)
-	b.width, b.title = width, title
+	b.width, b.height, b.title = width, height, title
 	t.p = tea.NewProgram(b, tea.WithOutput(out), tea.WithInput(nil), tea.WithoutSignalHandler(), tea.WithWindowSize(width, height))
 	if pipe != nil {
 		go func() {
