@@ -2,6 +2,12 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.48.0] - 2026-10-29
+
+### Ajouté
+- Option de connecteur `exec_sudo` (drivers `ssh` et `shell`, conservée par `shell` sur une instance) : `ssh_exec` lance ses commandes en `sudo -n`, ce que sa description annonce aux agents. Sans elle, `ssh_exec` reste sans sudo et bute sur les répertoires réservés à root. Le contrôle des commandes ne change pas (motifs `commands`, analyse de lecture seule, confirmation).
+- Analyse de lecture seule : `findmnt` et `lsblk` reconnus comme programmes de lecture.
+
 ## [0.47.2] - 2026-10-29
 
 ### Corrigé
