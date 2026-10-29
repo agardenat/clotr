@@ -2,6 +2,14 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.47.0] - 2026-10-29
+
+### Modifié
+- `-t` : les instances que la demande cite mais que `-t` écarte font l'objet d'un seul avertissement au démarrage, avec leur nombre, au lieu d'une ligne par instance qui noyait le début du run quand la demande cite un client ou un mot courant. Le détail reste dans l'audit (`instance_filtered`).
+
+### Corrigé
+- Tableau de progression : une touche tapée hors d'une question (Entrée par exemple) n'est plus renvoyée en écho par le terminal. Cet écho décalait le curseur et laissait des copies partielles du tableau au-dessus de lui. Les frappes faites avant l'ouverture d'une question sont écartées et ne peuvent plus y répondre à la place de l'utilisateur.
+
 ## [0.46.1] - 2026-10-29
 
 ### Corrigé
