@@ -2,6 +2,11 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.47.1] - 2026-10-29
+
+### Corrigé
+- Tableau de progression : en répondant à une question, la lettre tapée puis Entrée pouvaient laisser au-dessus du tableau une copie de ses premières lignes. Le cadre se refermait juste après l'affichage de la lettre, et le moteur de rendu remontait trop peu pour redessiner le tableau, devenu plus court. La bibliothèque de rendu `github.com/charmbracelet/ultraviolet` passe au commit `a45b7c86333f`, qui corrige ce calcul (dépendances entraînées : `x/ansi` v0.11.9, `go-runewidth` v0.0.30, `xo/terminfo` v1.0.0).
+
 ## [0.47.0] - 2026-10-29
 
 ### Modifié
