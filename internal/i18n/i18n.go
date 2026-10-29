@@ -80,7 +80,6 @@ var msgs = map[string]msg{
 	"journal.finding":      {"finding: %s", "constat : %s"},
 	"journal.gap":          {"not covered: %s", "non couvert : %s"},
 	"lead.replaces":        {" (replaces #%d, withdrawn)", " (corrige #%d, retirée)"},
-	"instance.filtered":    {"warning: instance %s matches the request (%s) but -t leaves it out; add -t %s to use it", "avertissement : l'instance %s correspond à la demande (%s) mais -t l'écarte ; ajouter -t %s pour l'utiliser"},
 	"triage":               {"triage: locate the failing component and read its exact error", "tri : localiser le composant en échec et lire son erreur exacte"},
 	"continuation":         {"continuation of %s: %s", "suite de %s : %s"},
 	"dropped":              {"dropped: unavailable for this run: %s", "écarté : indisponible pour ce run : %s"},
@@ -145,6 +144,7 @@ var msgs = map[string]msg{
 	"instance.discovering": {"instance %s: activation (template %s)…", "instance %s : activation (template %s)…"},
 	"templates.head":       {"TEMPLATE\tVERSION\tSOURCE\tINSTANCES\tDESCRIPTION", "TEMPLATE\tVERSION\tSOURCE\tINSTANCES\tDESCRIPTION"},
 	"templates.dir":        {"templates directory: %s (clotr templates <name> prints a template)", "répertoire des templates : %s (clotr templates <nom> affiche un template)"},
+	"instances.filtered":   {"warning: -t leaves out %s matching the request (instance_filtered in the audit; name with -t to use)", "avertissement : -t écarte %s correspondant à la demande (instance_filtered dans l'audit ; à nommer avec -t pour s'en servir)"},
 	"instances.title":      {"INSTANCES", "INSTANCES"},
 	"instances.head":       {"INSTANCE\tTEMPLATE\tSTATE", "INSTANCE\tTEMPLATE\tÉTAT"},
 	"instances.enabled":    {"enabled", "active"},
@@ -210,6 +210,7 @@ var reportMsgs = map[string]msg{
 
 var plurals = map[string]msg{
 	"task":      {"task|tasks", "tâche|tâches"},
+	"instance":  {"instance|instances", "instance|instances"},
 	"step":      {"step|steps", "étape|étapes"},
 	"tool call": {"tool call|tool calls", "appel d'outil|appels d'outils"},
 	"finding":   {"finding|findings", "constat|constats"},
