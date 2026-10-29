@@ -119,6 +119,21 @@ func New(ids []string, mem *memory.Store, ev *evidence.Store, log *audit.Logger)
 	return &Store{Events: progress.Nop{}, IDs: ids, mem: mem, ev: ev, audit: log, seen: map[string]int{}, mark: map[string]int{}}
 }
 
+func (s *Store) Restore(advisories []Advisory, findings []Finding) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range advisories {
+		s.advisories = slices.DeleteFunc(s.advisories, func(x *Advisory) bool { return x.CVE == a.CVE })
+		s.advisories = append(s.advisories, &a)
+	}
+	for _, f := range findings {
+		s.findings = slices.DeleteFunc(s.findings, func(x *Finding) bool {
+			return x.CVE == f.CVE && strings.EqualFold(x.Asset, f.Asset)
+		})
+		s.findings = append(s.findings, &f)
+	}
+}
+
 func (s *Store) Tools() []tools.Tool { return []tools.Tool{advisoryTool{s}, reportTool{s}} }
 
 func ToolNames() []string { return []string{AdvisoryTool, ReportTool} }
