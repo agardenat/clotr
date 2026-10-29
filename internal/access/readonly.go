@@ -166,7 +166,7 @@ var (
 		"ps", "df", "du", "free", "uptime", "echo", "printf", "true", "false", "test", "[", "pwd", "nproc", "arch",
 		"getconf", "lsb_release", "sha1sum", "sha256sum", "sha512sum", "md5sum", "strings", "od", "tac", "nl", "comm",
 		"diff", "cmp", "getent", "locale", "lscpu", "column", "expr", "seq", "dpkg-query", "ldconfig", "netstat",
-		"lsof", "last", "lastlog", "who", "w", "getfacl", "lsattr", "pgrep", "ldd")
+		"lsof", "last", "lastlog", "who", "w", "getfacl", "lsattr", "pgrep", "ldd", "findmnt", "lsblk")
 	nodeEval        = set("-p", "--print", "-e", "--eval")
 	nodeVersionExpr = regexp.MustCompile(`^\s*(console\.log\(\s*)?process\.(version|versions(\.[A-Za-z0-9_]+|\[\s*["'][A-Za-z0-9_]+["']\s*\])?)(\s*\))?\s*;?\s*$`)
 	versionArgs     = []string{"-v", "-V", "--version", "-version", "version", "-m", "-i", "-M", "-l"}

@@ -39,6 +39,8 @@ func TestReadOnlyAccepted(t *testing.T) {
 		{"ip", "addr", "show"},
 		{"ip", "route"},
 		{"lsof", "-i", "-P", "-n"},
+		sh("ls -ld /data /data/* ; id; echo ---; findmnt -no SOURCE,FSTYPE /data"),
+		{"lsblk", "-f"},
 		{"snap", "list"},
 		{"flatpak", "list", "--app"},
 		{"ldd", "/usr/bin/node"},

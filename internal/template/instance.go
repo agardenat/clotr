@@ -112,6 +112,7 @@ type Instance struct {
 	pool      sshExecutor
 	rules     *ssh.Rules
 	sudo      bool
+	execSudo  bool
 	sudoPass  map[string]bool
 	script    *script
 	memo      map[string]*memoEntry
@@ -223,6 +224,10 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 			return nil, fmt.Errorf("instance %s: %w", name, err)
 		}
 		in.sudo, err = in.conns[in.sshName].bool("sudo", false)
+		if err != nil {
+			return nil, i18n.E("tpl.instance_connector", name, in.sshName, err)
+		}
+		in.execSudo, err = in.conns[in.sshName].bool("exec_sudo", false)
 		if err != nil {
 			return nil, i18n.E("tpl.instance_connector", name, in.sshName, err)
 		}

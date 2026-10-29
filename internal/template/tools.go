@@ -462,9 +462,14 @@ func sshResolveTool(in *Instance, name, desc string) tools.Tool {
 }
 
 func sshExecTool(in *Instance, name, desc string) tools.Tool {
+	var prefix []string
+	how := "sans shell ni sudo"
+	if in.execSudo {
+		prefix, how = []string{"sudo", "-n"}, "en sudo -n (root, sans mot de passe), sans shell"
+	}
 	return fnTool{
 		name:   name,
-		desc:   withDesc(desc, "Exécute une commande sur un hôte en SSH, sans shell ni sudo (argv : programme puis arguments, aucune redirection ni substitution), et renvoie sa sortie (64 Kio max, secrets masqués) et son code de sortie.\n"+in.commandsDesc()),
+		desc:   withDesc(desc, "Exécute une commande sur un hôte en SSH, "+how+" (argv : programme puis arguments, aucune redirection ni substitution), et renvoie sa sortie (64 Kio max, secrets masqués) et son code de sortie.\n"+in.commandsDesc()),
 		schema: `{"type":"object","properties":{` + hostProps + `,"argv":{"type":"array","items":{"type":"string"},"description":"programme puis arguments, ex: [\"php\", \"-v\"]"}},"required":["host","argv"]}`,
 		call: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			a, err := tools.Decode[struct {
@@ -479,7 +484,7 @@ func sshExecTool(in *Instance, name, desc string) tools.Tool {
 			if err != nil {
 				return "", err
 			}
-			res, err := in.remoteExec(ctx, name, t, h, a.Argv, maxRead)
+			res, err := in.remoteExec(ctx, name, t, h, a.Argv, maxRead, prefix...)
 			if err != nil {
 				return "", err
 			}
