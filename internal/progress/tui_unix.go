@@ -27,6 +27,27 @@ func promptMode(f *os.File) (restore func(), err error) {
 	return func() { _ = unix.IoctlSetTermios(fd, ioctlSetTermios, &saved) }, nil
 }
 
+func quietInput(f *os.File) (restore func()) {
+	fd := int(f.Fd())
+	t, err := unix.IoctlGetTermios(fd, ioctlGetTermios)
+	if err != nil {
+		return func() {}
+	}
+	saved := *t
+	t.Lflag &^= unix.ECHO
+	if err := unix.IoctlSetTermios(fd, ioctlSetTermios, t); err != nil {
+		return func() {}
+	}
+	return func() {
+		flushInput(fd)
+		_ = unix.IoctlSetTermios(fd, ioctlSetTermios, &saved)
+	}
+}
+
+func discardInput(f *os.File) {
+	flushInput(int(f.Fd()))
+}
+
 func watchResize(p *tea.Program, stop <-chan struct{}, out *os.File) {
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)

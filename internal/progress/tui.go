@@ -461,13 +461,14 @@ type TUI struct {
 	stop    chan struct{}
 	once    sync.Once
 	restore func()
+	echo    func()
 	drained chan struct{}
 }
 
 func NewTUI(stderr *os.File, maxSteps int, title string) *TUI {
 	t := &TUI{done: make(chan struct{}), stop: make(chan struct{}), drained: make(chan struct{})}
 	out, pipe, restore := captureStderr(stderr)
-	t.out, t.restore = out, restore
+	t.out, t.restore, t.echo = out, restore, quietInput(os.Stdin)
 	width, height, err := term.GetSize(out.Fd())
 	if err != nil || width <= 0 || height <= 0 {
 		width, height = 120, 40
@@ -527,6 +528,7 @@ func (t *TUI) Prompt(ctx context.Context, in *os.File, question string, secret b
 		return "", creds.ErrNoPrompter
 	}
 	defer restore()
+	discardInput(in)
 	r, err := cancelreader.NewReader(in)
 	if err != nil {
 		return "", creds.ErrNoPrompter
@@ -605,5 +607,6 @@ func (t *TUI) Close() {
 		}
 		t.p.Send(finishMsg{})
 		<-t.done
+		t.echo()
 	})
 }
