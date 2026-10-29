@@ -2,7 +2,11 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
-## [Unreleased]
+## [0.46.1] - 2026-10-29
+
+### Corrigé
+- Tableau de progression : pendant le run, il ne dépasse plus la hauteur du terminal. Les tâches en cours ou en échec restent affichées, les autres sont résumées sur une ligne. Une question posée sous un tableau arrivé en bas de l'écran faisait défiler le terminal et laissait une copie du tableau au-dessus.
+- `session <nom> --synthesize` sur un tour lancé avec `--cve` : il échouait sur `-t/-x cve: no tool group with this name`. Il reprend désormais le mode CVE du tour, avec ses fiches et ses statuts, et le rapport régénéré garde le tableau des statuts en tête.
 
 ## [0.46.0] - 2026-10-27
 
