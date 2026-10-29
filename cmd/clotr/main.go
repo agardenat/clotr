@@ -842,11 +842,15 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 }
 
 func (rt *app) warnFiltered(text string) {
+	n := 0
 	for _, in := range rt.filtered {
 		if why := in.Mention(text); why != "" {
-			fmt.Fprintln(os.Stderr, i18n.T("instance.filtered", in.Name, why, in.Name))
 			rt.audit.Log("instance_filtered", map[string]any{"instance": in.Name, "match": why})
+			n++
 		}
+	}
+	if n > 0 {
+		fmt.Fprintln(os.Stderr, i18n.T("instances.filtered", i18n.N(n, "instance")))
 	}
 }
 
