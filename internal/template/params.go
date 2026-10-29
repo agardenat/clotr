@@ -219,7 +219,7 @@ func (in *Instance) UseShell(s *config.Shell) error {
 	for i, a := range s.Then {
 		then[i] = a
 	}
-	o := options{"command": cmd, "then": then, "sudo": old["sudo"], "max_conns": old["max_conns"], "open_timeout": old["open_timeout"], "ready": old["ready"], "prompt": old["prompt"]}
+	o := options{"command": cmd, "then": then, "sudo": old["sudo"], "exec_sudo": old["exec_sudo"], "max_conns": old["max_conns"], "open_timeout": old["open_timeout"], "ready": old["ready"], "prompt": old["prompt"]}
 	for k, v := range map[string]string{"ready": s.Ready, "prompt": s.Prompt} {
 		if v != "" {
 			if _, err := regexp.Compile(v); err != nil {

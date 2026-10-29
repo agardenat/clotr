@@ -102,6 +102,60 @@ func writeAndParseErr(t *testing.T, yaml, star string) error {
 	return err
 }
 
+func TestSSHExecSudo(t *testing.T) {
+	tpl := writeTemplate(t, `name: x
+script: x.star
+params:
+  exec_sudo: {type: bool, default: false}
+connectors:
+  ssh: {driver: ssh, user: ops, exec_sudo: "{{.exec_sudo}}"}
+tools:
+  - kind: ssh_exec
+ssh_paths: {allow: [/var/log/**]}
+`, `
+def discover(ctx):
+    return {"targets": [{"name": "t", "kind": "hosts", "hosts": [{"name": "web1", "ip": "10.0.0.7"}]}]}
+`)
+	for _, c := range []struct {
+		on   bool
+		want string
+	}{{false, "exec 'df' '-h' </dev/null"}, {true, "exec 'sudo' '-n' 'df' '-h' </dev/null"}} {
+		in, err := NewInstance("i", tpl, map[string]any{"exec_sudo": c.on})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := in.Discover(context.Background(), "", 0, true); err != nil {
+			t.Fatal(err)
+		}
+		rec := &execSSH{}
+		in.pool = rec
+		in.SetAccess(access.Exec)
+		tools := toolMap(in)
+		if _, err := tools["i_ssh_exec"](`{"host":"web1","argv":["df","-h"]}`); err != nil {
+			t.Fatal(err)
+		}
+		if len(rec.cmds) != 1 || rec.cmds[0] != c.want {
+			t.Errorf("exec_sudo %v : %q, attendu %q", c.on, rec.cmds, c.want)
+		}
+		if desc := in.Tools()[0].Description(); strings.Contains(desc, "sudo -n") != c.on {
+			t.Errorf("exec_sudo %v : description %q", c.on, desc)
+		}
+	}
+	if err := writeAndParseErr(t, `name: x
+script: x.star
+connectors:
+  sh: {driver: shell, command: [gw, "%h"], exec_sudo: true}
+tools:
+  - kind: ssh_exec
+ssh_paths: {allow: [/var/log/**]}
+`, `
+def discover(ctx):
+    return {"targets": []}
+`); err != nil {
+		t.Errorf("exec_sudo refusé sur le driver shell : %v", err)
+	}
+}
+
 func TestSSHExec(t *testing.T) {
 	tpl := writeTemplate(t, `name: x
 script: x.star
