@@ -2,6 +2,21 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.49.0] - 2026-11-03
+
+### Ajouté
+- `run --incident` : les constats de chaque tâche s'affichent dès sa fin, au-dessus du tableau de progression.
+- `results.json` est écrit à la fin de chaque tâche, hors `--direct`, et plus seulement à la fin du run : un échec du planificateur ou une interruption ne fait plus perdre les résultats déjà obtenus.
+
+### Modifié
+- Non-progression : `evidence_read` ne compte comme un appel nouveau que si elle couvre des lignes pas encore lues dans la tâche. Changer `offset` ou `lines` sur des lignes déjà lues ne relance plus le compteur de `limits.stall_steps`.
+- `run --incident` : une cause établie au tri limite le plan aux instances utilisées par le tri ; une tâche prévue uniquement sur d'autres instances est écartée (audit `plan_limited`).
+- Un jeton HTTP saisi sans Vault (`auth` avec `header`) est partagé par libellé et hôte de `base_url`, et n'est plus redemandé pour chaque instance. Un jeton différent sur le même hôte se donne par `password_env`.
+- Un argument absent du schéma d'un outil est refusé avec la liste des arguments acceptés, au lieu d'être ignoré. Les schémas qui autorisent des propriétés supplémentaires ou composent des sous-schémas ne sont pas concernés.
+
+### Corrigé
+- `ssh_grep` et `ssh.grep` sur un répertoire sans `recursive` répondaient `0` ou « aucune correspondance » : ils échouent désormais avec un message explicite.
+
 ## [0.48.0] - 2026-10-29
 
 ### Ajouté
