@@ -141,3 +141,84 @@ func TestReadOnlyTrustingScript(t *testing.T) {
 		t.Fatal("arguments ajoutés acceptés")
 	}
 }
+
+func TestReadOnlySudo(t *testing.T) {
+	ok := [][]string{
+		{"sudo", "-n", "journalctl", "-u", "demo", "--since", "2020-01-01", "--no-pager"},
+		{"sudo", "du", "-sh", "/var"},
+		{"/usr/bin/sudo", "-n", "ls", "/root"},
+		{"sudo", "-n", "sh", "-c", "du -sh /var | sort -h; uptime"},
+		sh("sudo -n du -sh /var 2>/dev/null | tail -2; sudo journalctl -n 5"),
+		sh("sudo -n sh -c 'journalctl -n 5 | wc -l'"),
+	}
+	for _, argv := range ok {
+		if err := ReadOnly(argv); err != nil {
+			t.Errorf("%q : %v", argv, err)
+		}
+	}
+	refused := [][]string{
+		{"sudo"},
+		{"sudo", "-n"},
+		{"sudo", "-n", "-u", "demo", "ls"},
+		{"sudo", "-i", "--version"},
+		{"sudo", "-n", "A=b", "--version"},
+		{"sudo", "-n", "rm", "-rf", "/tmp/x"},
+		{"sudo", "-n", "journalctl", "--since", "2020-01-01", "--vacuum-time=1s"},
+		{"sudo", "-n", "cat", "/etc/shadow"},
+		{"sudo", "-n", "sh", "-c", "du -sh / > /tmp/x"},
+		{"sudo", "-n", "sh", "-c", "ls; rm /tmp/x"},
+		sh("sudo -n rm /tmp/x"),
+		sh("sudo $X ls"),
+		sh("$X -n ls /tmp; sudo -n sh -c 'rm /tmp/x'"),
+	}
+	for _, argv := range refused {
+		if err := ReadOnly(argv); err == nil {
+			t.Errorf("%q accepté", argv)
+		}
+	}
+}
+
+func TestReadOnlyAllowingPatterns(t *testing.T) {
+	rules, err := CompileCommands(Rules{
+		Allow: []string{"demo-stat *", "demo-stat * *", "sleep *", "demo-all **"},
+		Deny:  []string{"demo-stat -w **", "demo-stat * -w", "demo-all --purge **"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok := [][]string{
+		{"demo-stat", "a"},
+		{"sudo", "-n", "demo-stat", "a", "b"},
+		sh("demo-stat a; sleep 5; demo-stat b | grep x"),
+		sh("sudo -n demo-stat a b 2>/dev/null | tail -1"),
+		{"sudo", "-n", "sh", "-c", "demo-stat a; sleep 1"},
+		sh("for i in 1 2; do demo-all x; done"),
+	}
+	for _, argv := range ok {
+		if err := ReadOnlyAllowing(argv, nil, rules); err != nil {
+			t.Errorf("%q : %v", argv, err)
+		}
+	}
+	refused := [][]string{
+		{"demo-stat", "a", "b", "c"},
+		{"demo-stat", "-w", "a"},
+		{"sudo", "-n", "demo-stat", "a", "-w"},
+		sh("demo-stat -w a"),
+		sh("sudo -n demo-stat a -w"),
+		sh("demo-all --purge x"),
+		sh("demo-stat $X"),
+		sh("demo-stat a > /tmp/x"),
+		sh("demo-stat a &"),
+		sh("demo-stat a; rm /tmp/x"),
+		sh("/tmp/demo-stat a"),
+		sh("demo-all /tmp/token"),
+	}
+	for _, argv := range refused {
+		if err := ReadOnlyAllowing(argv, nil, rules); err == nil {
+			t.Errorf("%q accepté", argv)
+		}
+	}
+	if err := ReadOnly(sh("demo-stat a")); err == nil {
+		t.Fatal("motif appliqué sans règles")
+	}
+}
