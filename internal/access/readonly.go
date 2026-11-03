@@ -225,6 +225,11 @@ var (
 	journalWrite    = set("--rotate", "--flush", "--relinquish-var", "--smart-relinquish-var", "--sync", "--setup-keys", "--update-catalog")
 	ipWrite         = set("add", "del", "delete", "change", "replace", "set", "flush", "append", "save", "restore", "exec", "up", "down", "attach", "detach")
 	systemctlRead   = set("list-units", "list-unit-files", "list-timers", "list-sockets", "list-dependencies", "list-jobs", "status", "show", "cat", "is-active", "is-enabled", "is-failed", "is-system-running", "get-default")
+	kubectlRead     = set("get", "describe", "logs", "top", "version", "api-resources", "api-versions", "explain", "events")
+	kubectlGlobal   = set("-n", "--namespace", "--kubeconfig", "--context", "--cluster", "--user")
+	kubectlOption   = regexp.MustCompile(`^(-A|--all-namespaces|--(namespace|kubeconfig|context|cluster|user|request-timeout)=.*)$`)
+	kubectlRefused  = regexp.MustCompile(`^(-[a-zA-Z]*w[a-zA-Z]*|--watch(-only)?(=.*)?|--follow(=.*)?|--raw(=.*)?|-v(=.*)?|--v(=.*)?|--as(-group|-uid)?(=.*)?)$`)
+	kubectlFollow   = regexp.MustCompile(`^-[a-zA-Z]*f[a-zA-Z]*$`)
 	dpkgRead        = set("-l", "-L", "-s", "-S", "-p", "--list", "--listfiles", "--status", "--search", "--print-avail", "--print-architecture", "--version")
 )
 
@@ -368,6 +373,11 @@ func readOnlyCall(args []arg) error {
 			}
 		}
 		return nil
+	case prog == "kubectl" || prog == "oc":
+		if err := literal(); err != nil {
+			return err
+		}
+		return readOnlyKubectl(prog, rest)
 	case prog == "command":
 		if len(rest) >= 2 && (first == "-v" || first == "-V") {
 			return nil
@@ -446,6 +456,38 @@ func readOnlyCall(args []arg) error {
 		return nil
 	}
 	return fmt.Errorf("programme %s non reconnu en lecture seule", prog)
+}
+
+func readOnlyKubectl(prog string, rest []arg) error {
+	i := 0
+	for i < len(rest) && strings.HasPrefix(rest[i].s, "-") {
+		switch {
+		case kubectlGlobal[rest[i].s]:
+			i += 2
+		case kubectlOption.MatchString(rest[i].s):
+			i++
+		default:
+			return fmt.Errorf("%s %s : option globale non admise", prog, rest[i].s)
+		}
+	}
+	if i >= len(rest) {
+		return fmt.Errorf("%s sans sous-commande", prog)
+	}
+	verb := rest[i].s
+	after := rest[i+1:]
+	switch {
+	case verb == "cluster-info" && len(after) == 0:
+		return nil
+	case verb == "auth" && len(after) > 0 && after[0].s == "can-i":
+	case !kubectlRead[verb]:
+		return fmt.Errorf("%s %s n'est pas une consultation", prog, verb)
+	}
+	for _, a := range after {
+		if kubectlRefused.MatchString(a.s) || verb == "logs" && kubectlFollow.MatchString(a.s) {
+			return fmt.Errorf("%s %s %s : suivi sans fin ou accès brut", prog, verb, a.s)
+		}
+	}
+	return nil
 }
 
 func trustedCall(args []arg, trusted []string) bool {

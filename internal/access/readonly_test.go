@@ -222,3 +222,58 @@ func TestReadOnlyAllowingPatterns(t *testing.T) {
 		t.Fatal("motif appliqué sans règles")
 	}
 }
+
+func TestReadOnlyKubectl(t *testing.T) {
+	ok := [][]string{
+		{"kubectl", "get", "nodes", "-o", "wide"},
+		{"kubectl", "--kubeconfig=/etc/demo/admin.yaml", "get", "nodes"},
+		{"kubectl", "--kubeconfig", "/etc/demo/admin.yaml", "-n", "demo", "get", "pods", "-A"},
+		{"/opt/demo/bin/kubectl", "-A", "get", "pods"},
+		{"kubectl", "describe", "node", "demo"},
+		{"kubectl", "logs", "demo", "-n", "demo", "--tail=50", "-c", "main"},
+		{"kubectl", "top", "nodes"},
+		{"kubectl", "version"},
+		{"kubectl", "cluster-info"},
+		{"kubectl", "auth", "can-i", "list", "pods"},
+		{"oc", "get", "pods"},
+		{"sudo", "-n", "kubectl", "get", "nodes"},
+		sh("kubectl get pods -A | grep -v Running | wc -l"),
+		sh("sudo -n kubectl get events -A | tail -20"),
+	}
+	for _, argv := range ok {
+		if err := ReadOnly(argv); err != nil {
+			t.Errorf("%q : %v", argv, err)
+		}
+	}
+	refused := [][]string{
+		{"kubectl"},
+		{"kubectl", "-n", "demo"},
+		{"kubectl", "delete", "pod", "demo"},
+		{"kubectl", "apply", "-f", "demo.yaml"},
+		{"kubectl", "exec", "demo", "--", "ls"},
+		{"kubectl", "cp", "a", "b"},
+		{"kubectl", "-n", "get", "delete", "pod", "demo"},
+		{"kubectl", "--server=http://demo", "get", "pods"},
+		{"kubectl", "--as=admin", "get", "pods"},
+		{"kubectl", "get", "pods", "--as=admin"},
+		{"kubectl", "get", "secrets", "-A"},
+		{"kubectl", "get", "pods,secrets", "-o", "yaml"},
+		{"kubectl", "describe", "secret", "demo"},
+		{"kubectl", "get", "--raw=/api/v1/pods"},
+		{"kubectl", "get", "pods", "-w"},
+		{"kubectl", "get", "pods", "--watch"},
+		{"kubectl", "logs", "demo", "-f"},
+		{"kubectl", "logs", "demo", "--follow"},
+		{"kubectl", "get", "pods", "-v=9"},
+		{"kubectl", "cluster-info", "dump"},
+		{"kubectl", "auth", "reconcile", "-f", "demo.yaml"},
+		{"kubectl", "config", "view", "--raw"},
+		sh("kubectl get pods; kubectl delete pod demo"),
+		sh("kubectl $X pods"),
+	}
+	for _, argv := range refused {
+		if err := ReadOnly(argv); err == nil {
+			t.Errorf("%q accepté", argv)
+		}
+	}
+}
