@@ -34,6 +34,7 @@ var cveReportMsgs = map[string]msg{
 	"cve.assets":         {"assets", "actifs"},
 	"cve.clean_title":    {"Clean assets", "Actifs sains"},
 	"cve.clean_note":     {"details in the session memory and --json", "détail dans la mémoire de session et --json"},
+	"cve.runs_on":        {"on", "sur"},
 	"cve.unverified":     {"unverified", "non vérifiée"},
 	"cve.st.vulnerable":  {"vulnerable", "vulnérable(s)"},
 	"cve.st.compromised": {"compromised", "compromis"},
