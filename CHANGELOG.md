@@ -2,6 +2,12 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.51.0] - 2026-11-03
+
+### Modifié
+- Analyse de lecture seule : `sudo` et `sudo -n` sont transparents, c'est la commande qui suit qui est analysée, y compris `sudo -n sh -c '…'` et dans un script. Une commande de consultation n'est plus soumise à l'utilisateur à chaque variation de ses arguments, comme une date. Les autres options de `sudo` restent soumises à l'utilisateur.
+- Les motifs `commands` s'appliquent aussi derrière `sudo` et à chaque commande simple littérale d'un `sh -c` : un motif `allow` l'admet, un motif `deny` fait passer tout le script en confirmation.
+
 ## [0.50.0] - 2026-11-03
 
 ### Modifié
