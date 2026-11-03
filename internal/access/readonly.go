@@ -24,20 +24,65 @@ func ReadOnly(argv []string) error {
 }
 
 func ReadOnlyTrusting(argv []string, trusted []string) error {
+	return ReadOnlyAllowing(argv, trusted, nil)
+}
+
+func ReadOnlyAllowing(argv []string, trusted []string, rules *Commands) error {
 	if err := CheckArgv(argv); err != nil {
 		return err
 	}
-	if script, ok := ShellScript(argv); ok {
-		return readOnlyScript(script, trusted)
+	if err := sensitive(strings.Join(argv, " ")); err != nil {
+		return err
 	}
 	args := make([]arg, len(argv))
 	for i, a := range argv {
 		args[i] = arg{a, true}
 	}
-	if err := sensitive(strings.Join(argv, " ")); err != nil {
+	return checkCall(args, trusted, rules)
+}
+
+func sudoLen(args []arg) int {
+	n := 0
+	for n < len(args) && args[n].lit && (args[n].s == "sudo" || args[n].s == "/usr/bin/sudo") {
+		n++
+		if n < len(args) && args[n].lit && args[n].s == "-n" {
+			n++
+		}
+	}
+	return n
+}
+
+func checkCall(args []arg, trusted []string, rules *Commands) error {
+	if n := sudoLen(args); n > 0 {
+		args = args[n:]
+		if len(args) == 0 {
+			return fmt.Errorf("sudo sans commande")
+		}
+		if name := args[0].s; args[0].lit && (strings.HasPrefix(name, "-") || strings.Contains(name, "=")) {
+			return fmt.Errorf("sudo %s : seule l'option -n est admise", name)
+		}
+	}
+	words := make([]string, len(args))
+	literal := true
+	for i, a := range args {
+		words[i] = a.s
+		literal = literal && a.lit
+	}
+	if literal {
+		if script, ok := ShellScript(words); ok {
+			return readOnlyScript(script, trusted, rules)
+		}
+		switch rules.Check(words) {
+		case Denied:
+			return fmt.Errorf("%s : refusée par les motifs deny", Display(words))
+		case Allowed:
+			return nil
+		}
+	}
+	if err := readOnlyCall(args); err != nil && !trustedCall(args, trusted) {
 		return err
 	}
-	return readOnlyCall(args)
+	return nil
 }
 
 var sensitivePatterns = regexp.MustCompile(`(?i)/var/run/secrets|/run/secrets|serviceaccount|\.kube/config|/etc/shadow|/etc/gshadow|/etc/sudoers|environ|id_rsa|id_ecdsa|id_ed25519|\.pem\b|\.key\b|\.p12\b|\.pfx\b|\.jks\b|keytab|\.vault-token|\.aws/credentials|\.docker/config\.json|password|passwd|secret|token|credential`)
@@ -49,7 +94,7 @@ func sensitive(text string) error {
 	return nil
 }
 
-func readOnlyScript(script string, trusted []string) error {
+func readOnlyScript(script string, trusted []string, rules *Commands) error {
 	if err := sensitive(script); err != nil {
 		return err
 	}
@@ -102,7 +147,7 @@ func readOnlyScript(script string, trusted []string) error {
 			for i, w := range x.Args {
 				args[i] = wordArg(w)
 			}
-			if err := readOnlyCall(args); err != nil && !trustedCall(args, trusted) {
+			if err := checkCall(args, trusted, rules); err != nil {
 				return fail("%v", err)
 			}
 			return true

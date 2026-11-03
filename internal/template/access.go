@@ -179,7 +179,7 @@ func (in *Instance) commandsDesc() string {
 	if len(src.Allow) > 0 {
 		allow = strings.Join(src.Allow, " ; ")
 	}
-	s := "Commandes exécutées sans confirmation : " + allow + "."
+	s := "Commandes exécutées sans confirmation, seules, derrière sudo ou -n, ou dans un sh -c : " + allow + "."
 	if len(src.Deny) > 0 {
 		s += " Refusées : " + strings.Join(src.Deny, " ; ") + "."
 	}
@@ -211,7 +211,7 @@ func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []s
 		in.audit("exec_decision", f)
 		return nil
 	}
-	roErr := access.ReadOnlyTrusting(argv, trusted)
+	roErr := access.ReadOnlyAllowing(argv, trusted, in.commands)
 	if roErr == nil {
 		f["decision"] = "readonly"
 		in.audit("exec_decision", f)
