@@ -2,6 +2,16 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.50.0] - 2026-11-03
+
+### Modifié
+- `run --cve` : `cve_advisory` exige `host_component`, vrai si le composant est fourni par l'hôte et partagé avec ses conteneurs, comme le noyau.
+- `run --cve` : pour un tel composant, `cve_report` exige `asset_type` (`host` ou `workload`) et n'accepte un statut sain ou vulnérable pour un workload que si c'est celui des hôtes cités dans `runs_on`, déjà signalés. Les hôtes s'affichent dans le détail du statut et du tableau du rapport.
+- `run --cve` : les agents signalent les hôtes, puis les workloads réunissant une condition d'exposition de la fiche, mesurée dans leur propre réseau. Une version de compilateur ou un fichier absent ne suffisent plus à conclure.
+
+### Corrigé
+- `run --cve` : un conteneur pouvait être déclaré sain pour une faille du noyau parce que son image ne contient pas de paquet noyau, alors que son hôte est vulnérable.
+
 ## [0.49.0] - 2026-11-03
 
 ### Ajouté
