@@ -50,19 +50,19 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 	if !slices.Equal(s.Missing(), []string{"CVE-2026-0001"}) {
 		t.Fatal(s.Missing())
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","detection":"x"}`)); err == nil || !strings.Contains(err.Error(), "commands") {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","host_component":false,"detection":"x"}`)); err == nil || !strings.Contains(err.Error(), "commands") {
 		t.Fatalf("fiche sans commandes: %v", err)
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-9999","product":"x","affected":"x","fixed":"x","detection":"x","commands":["x"]}`)); err == nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-9999","product":"x","affected":"x","fixed":"x","host_component":false,"detection":"x","commands":["x"]}`)); err == nil {
 		t.Fatal("CVE hors demande acceptée")
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"cve-2026-0001","product":"PHP","affected":"8.2 < 8.2.27","fixed":"8.2.27","detection":"php -v","commands":["php -v","rpm -qa  | grep -i php"],"evidence":["`+src+`"]}`)); err != nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"cve-2026-0001","product":"PHP","affected":"8.2 < 8.2.27","fixed":"8.2.27","host_component":false,"detection":"php -v","commands":["php -v","rpm -qa  | grep -i php"],"evidence":["`+src+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(s.Commands(), []string{"php -v", "rpm -qa | grep -i php"}) || !strings.Contains(s.Advisories()[0].line(), "`rpm -qa | grep -i php`") {
 		t.Fatalf("commandes: %v", s.Commands())
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","detection":"x","commands":["a\nb"]}`)); err == nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","host_component":false,"detection":"x","commands":["a\nb"]}`)); err == nil {
 		t.Fatal("commande multiligne acceptée")
 	}
 	if len(s.Missing()) != 0 || !s.Advisories()[0].Verified {
@@ -124,7 +124,7 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 func TestUnverifiedAdvisory(t *testing.T) {
 	s := New([]string{"CVE-2026-0002"}, memory.NewStore(), evidence.Open(t.TempDir(), 1), audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0002","product":"x","affected":"y","fixed":"z","detection":"w","commands":["x --version"]}`)); err != nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0002","product":"x","affected":"y","fixed":"z","host_component":false,"detection":"w","commands":["x --version"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if a := s.Advisories()[0]; a.Verified || !strings.Contains(a.line(), "NON VÉRIFIÉE") {
@@ -225,14 +225,14 @@ func TestSubjectsAndCompromise(t *testing.T) {
 	subject := "LiteLLM 1.107.0 supply chain"
 	s := New([]string{subject}, memory.NewStore(), ev, audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"litellm 1.107.0 SUPPLY chain","kind":"compromise","product":"litellm (PyPI)","affected":"1.107.0","fixed":"1.106.x","detection":"pip show litellm","commands":["pip show litellm"],"iocs":["/tmp/.x","evil.example"]}`)); err != nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"litellm 1.107.0 SUPPLY chain","kind":"compromise","product":"litellm (PyPI)","affected":"1.107.0","fixed":"1.106.x","host_component":false,"detection":"pip show litellm","commands":["pip show litellm"],"iocs":["/tmp/.x","evil.example"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	a := s.Advisories()[0]
 	if a.CVE != subject || a.Kind != KindCompr || len(a.IOCs) != 2 || !strings.Contains(a.line(), "(compromission)") || !strings.Contains(a.line(), "evil.example") {
 		t.Fatalf("fiche: %+v", a)
 	}
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"`+subject+`","kind":"ransomware","product":"x","affected":"x","fixed":"x","detection":"x","commands":["x"]}`)); err == nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"`+subject+`","kind":"ransomware","product":"x","affected":"x","fixed":"x","host_component":false,"detection":"x","commands":["x"]}`)); err == nil {
 		t.Fatal("kind invalide accepté")
 	}
 	for asset, st := range map[string]string{"gw/clovis": "compromised", "gw/onellm": "vulnerable", "gw/other": "clean"} {
@@ -243,5 +243,90 @@ func TestSubjectsAndCompromise(t *testing.T) {
 	sec := s.Section()
 	if !strings.Contains(sec, "☠️ 1 compromised · 🚨 1 vulnerable") || strings.Index(sec, "| ☠️ | gw/clovis") > strings.Index(sec, "| 🚨 | gw/onellm") || strings.Index(sec, "| ☠️ | gw/clovis") < 0 {
 		t.Fatalf("section:\n%s", sec)
+	}
+}
+
+func TestHostComponent(t *testing.T) {
+	ev := evidence.Open(t.TempDir(), 1)
+	e := ev.Add("t1", "x", "{}", "o", nil)
+	s := New([]string{"CVE-2026-0020"}, memory.NewStore(), ev, audit.Nop())
+	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
+	adv, rep := s.Tools()[0], s.Tools()[1]
+	base := `"cve":"CVE-2026-0020","product":"noyau","affected":"< 2","fixed":"2","detection":"uname -r","commands":["uname -r"]`
+	if _, err := adv.Call(ctx, json.RawMessage(`{`+base+`}`)); err == nil || !strings.Contains(err.Error(), "host_component") {
+		t.Fatalf("fiche sans host_component: %v", err)
+	}
+	if _, err := adv.Call(ctx, json.RawMessage(`{`+base+`,"host_component":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(s.Advisories()[0].line(), "composant de l'hôte") {
+		t.Fatal(s.Advisories()[0].line())
+	}
+	report := func(asset, status, extra string) error {
+		_, err := rep.Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0020","asset":"`+asset+`","status":"`+status+`","detail":"d","evidence":["`+e+`"]`+extra+`}`))
+		return err
+	}
+	const work = `,"asset_type":"workload"`
+	if err := report("k8s/prod/ns/web", "clean", ""); err == nil || !strings.Contains(err.Error(), "asset_type") {
+		t.Fatalf("sans asset_type: %v", err)
+	}
+	if err := report("k8s/prod/ns/web", "clean", work); err == nil || !strings.Contains(err.Error(), "runs_on") {
+		t.Fatalf("workload sain sans hôte: %v", err)
+	}
+	if err := report("k8s/prod/ns/web", "vulnerable", work+`,"runs_on":["vm/n1"]`); err == nil || !strings.Contains(err.Error(), "vm/n1") {
+		t.Fatalf("hôte non signalé: %v", err)
+	}
+	if err := report("k8s/prod/ns/web", "unknown", work); err != nil {
+		t.Fatalf("indéterminé sans hôte: %v", err)
+	}
+	for asset, status := range map[string]string{"vm/n1": "vulnerable", "vm/n2": "clean", "vm/n3": "unknown"} {
+		if err := report(asset, status, `,"asset_type":"host"`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		status, hosts string
+		ok            bool
+	}{
+		{"clean", `"vm/n1"`, false},
+		{"clean", `"vm/n3"`, false},
+		{"clean", `"vm/n2","vm/n1"`, false},
+		{"vulnerable", `"vm/n2"`, false},
+		{"vulnerable", `"vm/n3"`, false},
+		{"clean", `"VM/n2"`, true},
+		{"vulnerable", `"vm/n2","vm/n3","vm/n1"`, true},
+	} {
+		err := report("k8s/prod/ns/web", c.status, work+`,"runs_on":[`+c.hosts+`]`)
+		if (err == nil) != c.ok {
+			t.Fatalf("%s sur %s: %v", c.status, c.hosts, err)
+		}
+	}
+	for i := range 6 {
+		if err := report(fmt.Sprintf("vm/x%d", i), "vulnerable", `,"asset_type":"host"`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := report("k8s/prod/ns/dae", "vulnerable", work+`,"runs_on":["vm/x0","vm/x1","vm/x2","vm/x3","vm/x4"]`); err != nil {
+		t.Fatal(err)
+	}
+	if sec := s.Section(); !strings.Contains(sec, "on vm/x0, vm/x1, vm/x2 +2 : d") {
+		t.Fatalf("hôtes absents du tableau:\n%s", sec)
+	}
+	f := s.Findings()
+	if got := f[len(f)-1].RunsOn; len(got) != 5 {
+		t.Fatalf("runs_on: %v", got)
+	}
+}
+
+func TestNotHostComponentKeepsImageRule(t *testing.T) {
+	ev := evidence.Open(t.TempDir(), 1)
+	e := ev.Add("t1", "x", "{}", "o", nil)
+	s := New([]string{"CVE-2026-0021"}, memory.NewStore(), ev, audit.Nop())
+	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0021","product":"php","affected":"< 2","fixed":"2","host_component":false,"detection":"php -v","commands":["php -v"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0021","asset":"k8s/prod/ns/web","status":"clean","detail":"php absent de l'image","evidence":["`+e+`"]}`)); err != nil {
+		t.Fatalf("image sans le composant: %v", err)
 	}
 }
