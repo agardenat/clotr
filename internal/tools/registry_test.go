@@ -100,3 +100,35 @@ func TestWithout(t *testing.T) {
 		t.Fatal("registre d'origine modifié")
 	}
 }
+
+type schemaTool struct {
+	fake
+	schema string
+}
+
+func (t schemaTool) Schema() json.RawMessage { return json.RawMessage(t.schema) }
+
+func TestCallRejectsUnknownArguments(t *testing.T) {
+	declared := `{"type":"object","properties":{"path":{"type":"string"},"count":{"type":"boolean"}}}`
+	r := NewRegistry(1000)
+	r.Add(
+		schemaTool{fake{"strict"}, declared},
+		schemaTool{fake{"open"}, `{"type":"object","properties":{"path":{"type":"string"}},"additionalProperties":true}`},
+		schemaTool{fake{"typed"}, `{"type":"object","properties":{"path":{"type":"string"}},"additionalProperties":{"type":"string"}}`},
+		schemaTool{fake{"union"}, `{"type":"object","properties":{"path":{"type":"string"}},"anyOf":[{"properties":{"a":{}}}]}`},
+		schemaTool{fake{"free"}, `{"type":"object"}`},
+	)
+	all := []string{"strict", "open", "typed", "union", "free"}
+	_, err := r.Call(context.Background(), all, "strict", `{"path":"/x","glob":"a*","zone":"b"}`)
+	if err == nil || !strings.Contains(err.Error(), "glob, zone") || !strings.Contains(err.Error(), "count, path") {
+		t.Fatalf("argument inconnu: %v", err)
+	}
+	if _, err := r.Call(context.Background(), all, "strict", `{"path":"/x","count":true}`); err != nil {
+		t.Fatalf("arguments déclarés refusés: %v", err)
+	}
+	for _, name := range []string{"open", "typed", "union", "free"} {
+		if _, err := r.Call(context.Background(), all, name, `{"other":"y"}`); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}

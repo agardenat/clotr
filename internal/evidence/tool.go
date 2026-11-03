@@ -180,6 +180,56 @@ func (t readTool) Call(_ context.Context, raw json.RawMessage) (string, error) {
 	return fmt.Sprintf("%s (%s) : lignes %d à %d sur %d\n%s", id, it.Tool, from, to, len(all), b.String()), nil
 }
 
+func (s *Store) Unread(read map[string]map[int]bool, raw string) bool {
+	var a struct {
+		ID      string `json:"id"`
+		Pattern string `json:"pattern"`
+		Exclude string `json:"exclude"`
+		Offset  int    `json:"offset"`
+		Lines   int    `json:"lines"`
+	}
+	if json.Unmarshal([]byte(raw), &a) != nil {
+		return false
+	}
+	id := strings.Trim(strings.TrimSpace(a.ID), "[]")
+	s.mu.Lock()
+	it, ok := s.items[id]
+	s.mu.Unlock()
+	if !ok {
+		return false
+	}
+	data, err := os.ReadFile(it.File)
+	if err != nil {
+		return false
+	}
+	body := string(data)
+	if _, rest, found := strings.Cut(body, "\n---\n"); found {
+		body = rest
+	}
+	total := strings.Count(body, "\n") + 1
+	limit := a.Lines
+	if limit <= 0 {
+		limit = 200
+	}
+	from := max(a.Offset, 1)
+	if a.Pattern != "" || a.Exclude != "" {
+		from = 1
+	}
+	key := id + "\x00" + a.Pattern + "\x00" + a.Exclude
+	seen := read[key]
+	if seen == nil {
+		seen = map[int]bool{}
+		read[key] = seen
+	}
+	fresh := false
+	for i := from; i < from+limit && i <= total; i++ {
+		if !seen[i] {
+			seen[i], fresh = true, true
+		}
+	}
+	return fresh
+}
+
 func compileFilter(name, expr string) (*regexp.Regexp, error) {
 	if expr == "" {
 		return nil, nil

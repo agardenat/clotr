@@ -59,7 +59,7 @@ func TestQuoteAndBuilders(t *testing.T) {
 		b.Read("/etc/app/conf/a", 0, 0, 100):                                           `sudo -n head -c 100 -- '/etc/app/conf/a'`,
 		b.Read("/etc/app/conf/a", 10, 20, 100):                                         `sudo -n sed -n '10,20p' -- '/etc/app/conf/a' | head -c 100`,
 		b.Grep("/var/log", "ERROR|$(reboot)", true, true, 5, []string{"*.keytab"}, 10): `sudo -n grep -n -E -I -m 5 -i -r --exclude='*.keytab' -e 'ERROR|$(reboot)' -- '/var/log' | head -c 10`,
-		b.GrepCount("/var/log/a.log", "PREAUTH", false, false, nil, 10):                `sudo -n grep -c -E -I -e 'PREAUTH' -- '/var/log/a.log' | head -c 10`,
+		b.GrepCount("/var/log/a.log", "PREAUTH", false, false, nil, 10):                `sudo -n test -d '/var/log/a.log' 2>/dev/null; if [ $? -eq 0 ]; then echo '/var/log/a.log: is a directory, pass recursive or target a file' >&2; (exit 2); else sudo -n grep -c -E -I -e 'PREAUTH' -- '/var/log/a.log' | head -c 10; fi`,
 		b.GrepCount("/var/log", "x'y", true, true, []string{"*.keytab"}, 10):           `sudo -n grep -c -E -I -i -r --exclude='*.keytab' -e 'x'"'"'y' -- '/var/log' | grep -v ':0$' | head -c 10`,
 		Builder{}.Tail("/var/log/x", 1):                                                `tail -n 1 -- '/var/log/x'`,
 		b.Tail("/var/log/x.log.gz", 5):                                                 `sudo -n gzip -t -- '/var/log/x.log.gz' && sudo -n gzip -cd -- '/var/log/x.log.gz' | tail -n 5`,
@@ -110,6 +110,13 @@ func TestCompressedCommands(t *testing.T) {
 	got, err := run(b.StatTail(f, 30))
 	if head, body, _ := strings.Cut(got, "\n"); err != nil || !strings.HasPrefix(head, "83 ") || body != "b\n2026-10-13 10:00:02 ERROR c\n" {
 		t.Errorf("stat_tail: %q, %v", got, err)
+	}
+	for name, c := range map[string]string{"count": b.GrepCount(dir, "ERROR", false, false, nil, 10), "grep": b.Grep(dir, "ERROR", false, false, 5, nil, 1000)} {
+		got, err := run(c)
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(got, "is a directory") {
+			t.Errorf("%s sur un répertoire: %q, %v", name, got, err)
+		}
 	}
 	if got, err := run(b.GrepCount(bad, "ERROR", false, false, nil, 10)); err == nil || !strings.Contains(got, "not in gzip format") {
 		t.Errorf("fichier non compressé: %q, %v", got, err)

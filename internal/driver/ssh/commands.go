@@ -239,7 +239,16 @@ func (b Builder) Grep(p, pattern string, ignoreCase, recursive bool, maxCount in
 			opts = append(opts, "--exclude="+Quote(e))
 		}
 	}
-	return fmt.Sprintf("%sgrep %s -e %s -- %s | head -c %d", b.prefix(), strings.Join(opts, " "), Quote(pattern), Quote(p), maxBytes)
+	cmd := fmt.Sprintf("%sgrep %s -e %s -- %s | head -c %d", b.prefix(), strings.Join(opts, " "), Quote(pattern), Quote(p), maxBytes)
+	if !recursive {
+		return b.rejectDir(p, cmd)
+	}
+	return cmd
+}
+
+func (b Builder) rejectDir(p, cmd string) string {
+	msg := Quote(p + ": is a directory, pass recursive or target a file")
+	return fmt.Sprintf("%stest -d %s 2>/dev/null; if [ $? -eq 0 ]; then echo %s >&2; (exit 2); else %s; fi", b.prefix(), Quote(p), msg, cmd)
 }
 
 func (b Builder) GrepCount(p, pattern string, ignoreCase, recursive bool, excludes []string, maxBytes int) string {
@@ -260,7 +269,11 @@ func (b Builder) GrepCount(p, pattern string, ignoreCase, recursive bool, exclud
 		}
 		nonZero = " | grep -v ':0$'"
 	}
-	return fmt.Sprintf("%sgrep %s -e %s -- %s%s | head -c %d", b.prefix(), strings.Join(opts, " "), Quote(pattern), Quote(p), nonZero, maxBytes)
+	cmd := fmt.Sprintf("%sgrep %s -e %s -- %s%s | head -c %d", b.prefix(), strings.Join(opts, " "), Quote(pattern), Quote(p), nonZero, maxBytes)
+	if !recursive {
+		return b.rejectDir(p, cmd)
+	}
+	return cmd
 }
 
 func (b Builder) Recent(dirs []string, minutes, limit int) string {

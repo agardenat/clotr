@@ -80,6 +80,16 @@ func (r *Registry) Without(prefixes ...string) *Registry {
 	return out
 }
 
+func (r *Registry) GroupOf(name string) string {
+	best := ""
+	for _, prefix := range r.groups {
+		if strings.HasPrefix(name, prefix) && len(prefix) > len(best) {
+			best = prefix
+		}
+	}
+	return best
+}
+
 func (r *Registry) GroupMembers(selected []string) []string {
 	var out []string
 	for _, prefix := range r.groups {
@@ -199,7 +209,49 @@ func (r *Registry) Call(ctx context.Context, allowed []string, name, args string
 	if !json.Valid([]byte(args)) {
 		return "", fmt.Errorf("arguments JSON invalides pour %s", name)
 	}
+	if unknown, known := unknownArgs(t.Schema(), json.RawMessage(args)); len(unknown) > 0 {
+		return "", fmt.Errorf("arguments inconnus pour %s : %s ; arguments acceptés : %s", name, strings.Join(unknown, ", "), strings.Join(known, ", "))
+	}
 	return t.Call(ctx, json.RawMessage(args))
+}
+
+func unknownArgs(schema, args json.RawMessage) (unknown, known []string) {
+	var s struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Additional json.RawMessage            `json:"additionalProperties"`
+		AllOf      json.RawMessage            `json:"allOf"`
+		AnyOf      json.RawMessage            `json:"anyOf"`
+		OneOf      json.RawMessage            `json:"oneOf"`
+		Ref        json.RawMessage            `json:"$ref"`
+		Patterns   json.RawMessage            `json:"patternProperties"`
+	}
+	if json.Unmarshal(schema, &s) != nil || len(s.Properties) == 0 {
+		return nil, nil
+	}
+	if s.AllOf != nil || s.AnyOf != nil || s.OneOf != nil || s.Ref != nil || s.Patterns != nil {
+		return nil, nil
+	}
+	if s.Additional != nil && string(s.Additional) != "false" {
+		return nil, nil
+	}
+	var a map[string]json.RawMessage
+	if json.Unmarshal(args, &a) != nil {
+		return nil, nil
+	}
+	for k := range a {
+		if _, ok := s.Properties[k]; !ok {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil, nil
+	}
+	for k := range s.Properties {
+		known = append(known, k)
+	}
+	slices.Sort(unknown)
+	slices.Sort(known)
+	return unknown, known
 }
 
 func (r *Registry) Clip(out, evidence string) string {

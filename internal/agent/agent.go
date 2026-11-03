@@ -32,7 +32,7 @@ var (
 
 const (
 	concludeMsg      = "Limite d'étapes atteinte. Conclus maintenant avec les éléments déjà collectés, au format demandé, sans appeler d'outil. Indique dans gaps ce qui reste à faire."
-	concludeStallMsg = "Tes derniers appels n'apportent plus rien de nouveau (mêmes outils, mêmes paramètres). Conclus maintenant avec les éléments collectés, au format demandé, sans appeler d'outil. Indique dans gaps ce qui reste à faire et pourquoi tu n'as pas pu avancer."
+	concludeStallMsg = "Tes derniers appels n'apportent plus rien de nouveau (mêmes outils, mêmes paramètres, ou relectures de preuves déjà lues). Conclus maintenant avec les éléments collectés, au format demandé, sans appeler d'outil. Indique dans gaps ce qui reste à faire et pourquoi tu n'as pas pu avancer."
 	emptyMsg         = "Ta réponse ne contient aucun texte (seulement un raisonnement). Écris maintenant la réponse finale au format demandé, sans appeler d'outil."
 	continueMsg      = "Ta réponse a été coupée par la limite de longueur. Continue exactement là où elle s'arrête, sans rien répéter ni ajouter de préambule."
 	concludeTimeMsg  = "Temps presque écoulé. Conclus maintenant avec les éléments déjà collectés, au format demandé, sans appeler d'outil. Indique dans gaps ce qui reste à faire."
@@ -108,6 +108,7 @@ type Spec struct {
 }
 
 type Output struct {
+	Used      []string
 	Content   string
 	Model     string
 	Steps     int
@@ -159,6 +160,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 	var lastStep time.Duration
 	var produced, calls []toolMsg
 	seen := map[string]bool{}
+	read := map[string]map[int]bool{}
 	idle, checks := 0, 0
 	reached := ""
 	for step := 1; ; step++ {
@@ -268,6 +270,12 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 		}
 		fresh := false
 		for _, tc := range msg.ToolCalls {
+			if tc.Function.Name == evidence.ToolName && r.Evidence != nil {
+				if r.Evidence.Unread(read, tc.Function.Arguments) {
+					fresh = true
+				}
+				continue
+			}
 			key := tc.Function.Name + "\x00" + canonicalArgs(tc.Function.Arguments)
 			if !seen[key] {
 				seen[key], fresh = true, true
@@ -603,6 +611,9 @@ func (s *session) execTools(ctx context.Context, step int, calls []llm.ToolCall)
 	}
 	wg.Wait()
 	s.out.ToolCalls += len(calls)
+	for _, tc := range calls {
+		s.out.Used = append(s.out.Used, tc.Function.Name)
+	}
 	return out
 }
 

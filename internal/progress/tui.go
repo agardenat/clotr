@@ -137,7 +137,7 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return b, b.println(stFaint.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
 		case "finding", "gap":
 			return b, b.println(ansi.Wrap(m.Task+" · "+i18n.T("journal."+m.Kind, m.Detail), max(b.width-1, 20), ""))
-		case "concluding":
+		case "concluding", "plan_limited":
 			return b, b.println(stWarn.Render(ansi.Wrap(m.Detail, max(b.width-1, 20), "")))
 		}
 		b.apply(Event(m))
