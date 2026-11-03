@@ -2,6 +2,11 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.52.0] - 2026-11-03
+
+### Modifié
+- Analyse de lecture seule : `kubectl` et `oc` en consultation passent sans question. Le filtre des chemins et motifs sensibles reste actif, donc les Secrets restent soumis à l'utilisateur.
+
 ## [0.51.0] - 2026-11-03
 
 ### Modifié
