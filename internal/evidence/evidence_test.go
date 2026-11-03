@@ -150,3 +150,32 @@ func TestWithContent(t *testing.T) {
 		t.Fatal("rapport sans preuve modifié")
 	}
 }
+
+func TestUnread(t *testing.T) {
+	s := Open(t.TempDir(), 1)
+	id := s.Add("t", "tool", "{}", strings.TrimSuffix(strings.Repeat("ligne\n", 300), "\n"), nil)
+	short := s.Add("t", "tool", "{}", "a\nb\nc", nil)
+	read := map[string]map[int]bool{}
+	steps := []struct {
+		args string
+		want bool
+	}{
+		{`{"id":"` + id + `"}`, true},
+		{`{"id":"` + id + `"}`, false},
+		{`{"id":"[` + id + `]","offset":1,"lines":50}`, false},
+		{`{"id":"` + id + `","offset":150,"lines":50}`, false},
+		{`{"id":"` + id + `","offset":150,"lines":60}`, true},
+		{`{"id":"` + id + `","pattern":"lig"}`, true},
+		{`{"id":"` + id + `","pattern":"lig","offset":99}`, false},
+		{`{"id":"` + short + `"}`, true},
+		{`{"id":"` + short + `","offset":2}`, false},
+		{`{"id":"` + short + `","offset":50}`, false},
+		{`{"id":"E9.999"}`, false},
+		{`pas du json`, false},
+	}
+	for i, c := range steps {
+		if got := s.Unread(read, c.args); got != c.want {
+			t.Errorf("%d %s: %v", i, c.args, got)
+		}
+	}
+}

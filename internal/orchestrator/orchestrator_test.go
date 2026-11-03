@@ -16,6 +16,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/cve"
 	"github.com/agardenat/clotr/internal/evidence"
+	"github.com/agardenat/clotr/internal/lead"
 	"github.com/agardenat/clotr/internal/llm"
 	"github.com/agardenat/clotr/internal/memory"
 	"github.com/agardenat/clotr/internal/progress"
@@ -552,6 +553,61 @@ func TestIncidentPlanReservesTriageID(t *testing.T) {
 	}
 }
 
+func TestLimitToTriageAfterEstablishedCause(t *testing.T) {
+	o, _ := newOrch(t, nil, nil)
+	for _, n := range []string{"used_list", "other_list", "mcp_a"} {
+		o.Tools.Add(testutil.FakeTool{ToolName: n})
+	}
+	o.Tools.AddGroup("used_")
+	o.Tools.AddGroup("other_")
+	ev := &recEvents{}
+	o.Events = ev
+	o.triaged = &Result{TaskID: triageID, Status: "ok", Used: []string{"used_list", "mcp_a"}}
+	plan := func() *Plan {
+		return &Plan{Tasks: []Task{
+			{ID: "t1", Tools: []string{"used_list", "other_list", "mcp_a"}},
+			{ID: "t2", Tools: []string{"other_list", "mcp_a"}},
+			{ID: "t3", Tools: []string{"mcp_a"}},
+			{ID: "t4", DependsOn: []string{"t1", "t2"}},
+		}}
+	}
+	p := plan()
+	o.limitToTriage(p)
+	if len(p.Tasks) != 4 || len(ev.events) != 0 {
+		t.Fatalf("sans cause établie: %+v", p.Tasks)
+	}
+	if _, err := o.Memory.Put(memory.Entry{Key: "c", Content: "cause", Kind: lead.Kind, Task: triageID, Tags: []string{lead.Established}}); err != nil {
+		t.Fatal(err)
+	}
+	p = plan()
+	o.limitToTriage(p)
+	ids := []string{}
+	for _, task := range p.Tasks {
+		ids = append(ids, task.ID)
+	}
+	if strings.Join(ids, ",") != "t1,t3,t4" || strings.Join(p.Tasks[0].Tools, ",") != "used_list,mcp_a" || strings.Join(p.Tasks[2].DependsOn, ",") != "t1" {
+		t.Fatalf("plan limité: %+v", p.Tasks)
+	}
+	if len(ev.events) != 1 || ev.events[0].Kind != "plan_limited" || !strings.Contains(ev.events[0].Detail, "used") || !strings.Contains(ev.events[0].Detail, "t2") {
+		t.Fatalf("événements: %+v", ev.events)
+	}
+	if in := o.planInput("demande"); !strings.Contains(in, "restent utilisables : used.") {
+		t.Fatalf("entrée du planner: %q", in)
+	}
+	o.triaged.Used = []string{"mcp_a"}
+	p = plan()
+	o.limitToTriage(p)
+	if len(p.Tasks) != 4 {
+		t.Fatalf("tri sans instance: %+v", p.Tasks)
+	}
+	o.triaged.Used = []string{"used_list"}
+	p = &Plan{Tasks: []Task{{ID: "t1", Tools: []string{"other_list"}}}}
+	o.limitToTriage(p)
+	if res := o.Execute(context.Background(), "demande", p); len(p.Tasks) != 0 || len(res) != 0 {
+		t.Fatalf("plan vide: %+v %+v", p.Tasks, res)
+	}
+}
+
 func TestConcludeNowSkipsPendingTasks(t *testing.T) {
 	o, _ := newOrch(t, []string{dagPlan}, nil)
 	o.Cfg.Limits.MaxAgents = 1
@@ -649,6 +705,35 @@ func TestJournalShowsFindingsWhenTaskEnds(t *testing.T) {
 		if journal != (len(found) == 4) || (!journal && len(found) != 0) {
 			t.Fatalf("journal=%v, constats affichés pour %v", journal, found)
 		}
+	}
+}
+
+func TestIncidentShowsFindingsAndSavesEachResult(t *testing.T) {
+	o, _ := newOrch(t, []string{dagPlan}, nil)
+	ev := &recEvents{}
+	o.Events, o.Incident = ev, true
+	var mu sync.Mutex
+	saved := map[string]bool{}
+	o.OnResult = func(r Result) {
+		mu.Lock()
+		defer mu.Unlock()
+		saved[r.TaskID] = r.Status == "ok"
+	}
+	report, err := o.Run(context.Background(), "analyse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, e := range ev.events {
+		if e.Kind == "gap" {
+			t.Fatalf("lacune affichée sans journal: %+v", e)
+		}
+		if e.Kind == "finding" {
+			found[e.Task] = true
+		}
+	}
+	if len(saved) != len(report.Results) || len(found) != len(report.Results) {
+		t.Fatalf("résultats %d, sauvés %v, affichés %v", len(report.Results), saved, found)
 	}
 }
 

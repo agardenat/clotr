@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"text/tabwriter"
@@ -1334,6 +1335,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 			conclude := orch.ConcludeNow
 			interruptHook.Store(&conclude)
 		}
+		orch.OnResult = rt.resultSaver(sess, turnDir)
 		report, runErr = orch.Run(ctx, request)
 		interruptHook.Store(nil)
 	}
@@ -1691,6 +1693,19 @@ func compliantCited(cfg *config.Config, cl config.Client, forced []string, text 
 		}
 	}
 	return template.MentionTerm(text, terms) != "" || slices.ContainsFunc(forced, func(t string) bool { return slices.Contains(groups, toolGroup(t)) })
+}
+
+func (rt *app) resultSaver(sess *session.Session, dir string) func(orchestrator.Result) {
+	var mu sync.Mutex
+	var results []orchestrator.Result
+	return func(r orchestrator.Result) {
+		mu.Lock()
+		defer mu.Unlock()
+		results = append(results, r)
+		if err := sess.WriteJSON(dir, "results.json", results); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.T("cli.warn.session"), err)
+		}
+	}
 }
 
 func (rt *app) saveTurn(sess *session.Session, n int, dir string, report *orchestrator.Report, runErr error, used []usedModel, costs []budget.Line) {

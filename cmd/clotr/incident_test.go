@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/agardenat/clotr/internal/orchestrator"
+	"github.com/agardenat/clotr/internal/session"
 )
 
 func TestWatchInterruptsConcludesThenCancels(t *testing.T) {
@@ -32,6 +37,22 @@ func TestWatchInterruptsConcludesThenCancels(t *testing.T) {
 	<-done
 	if called.Load() != 1 || ctx.Err() == nil {
 		t.Fatal("second ctrl+c: contexte non annulé")
+	}
+}
+
+func TestResultSaverWritesAfterEachTask(t *testing.T) {
+	dir := t.TempDir()
+	save := (&app{}).resultSaver(&session.Session{}, dir)
+	for i, id := range []string{"t0", "t1"} {
+		save(orchestrator.Result{TaskID: id, Status: "ok", Findings: []string{"vu"}})
+		data, err := os.ReadFile(filepath.Join(dir, "results.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []orchestrator.Result
+		if err := json.Unmarshal(data, &got); err != nil || len(got) != i+1 || got[i].TaskID != id {
+			t.Fatalf("après %s: %+v %v", id, got, err)
+		}
 	}
 }
 

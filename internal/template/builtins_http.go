@@ -56,6 +56,15 @@ type httpConn struct {
 	via      *httpVia
 }
 
+func (hc *httpConn) credLabel(instance string) string {
+	if hc.auth.header != "" && hc.auth.passVault == "" {
+		if u, err := url.Parse(hc.base); err == nil && u.Host != "" {
+			return hc.auth.label + " (" + u.Host + ")"
+		}
+	}
+	return instance + " (" + hc.auth.label + ")"
+}
+
 var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "deny", "proxy", "proxy_port", "verify_tls", "ca_file", "levels", "via"}
 
 func checkHTTPOptions(o options) error {

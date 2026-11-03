@@ -582,6 +582,28 @@ func TestStallEndsTaskWithoutProgress(t *testing.T) {
 	}
 }
 
+func TestStallCountsEvidenceRereads(t *testing.T) {
+	var cur, peak int32
+	ev := evidence.Open(t.TempDir(), 1)
+	id := ev.Add("t", "k8s_list", "{}", strings.Repeat("ligne\n", 100), nil)
+	reg := registry(&cur, &peak)
+	reg.Add(ev.Tool())
+	var n atomic.Int32
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		if len(req.Tools) == 0 {
+			return testutil.Reply(`{"findings":["fin"]}`), nil
+		}
+		return testutil.Reply("", testutil.Call(evidence.ToolName, map[string]any{"id": id, "offset": 1 + int(n.Add(1))})), nil
+	}}
+	r := runner(chat, reg)
+	r.Evidence = ev
+	r.MaxSteps, r.StallSteps = 100, 2
+	out, err := r.Run(context.Background(), Spec{TaskID: "t", System: "s", User: "u", Tools: []string{evidence.ToolName}, Candidates: models})
+	if err != nil || out.Limit != "stall" || out.Steps != 4 {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+}
+
 func TestCheckRejectsThenAccepts(t *testing.T) {
 	var cur, peak int32
 	var n atomic.Int32

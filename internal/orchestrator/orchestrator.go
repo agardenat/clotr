@@ -68,6 +68,7 @@ type Result struct {
 	ToolCalls     int      `json:"tool_calls"`
 	Cost          float64  `json:"cost"`
 	Duration      string   `json:"duration"`
+	Used          []string `json:"-"`
 }
 
 type Report struct {
@@ -96,6 +97,7 @@ type Orchestrator struct {
 	Incident        bool
 	CVE             *cve.Store
 	Journal         bool
+	OnResult        func(Result)
 	triaged         *Result
 	stopVerify      atomic.Pointer[context.CancelFunc]
 }
@@ -412,6 +414,7 @@ func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) 
 		} else if err := o.Validate(&plan); err != nil {
 			lastErr = err
 		} else {
+			o.limitToTriage(&plan)
 			if dropped := pruneSameRoleDeps(&plan); len(dropped) > 0 {
 				o.Audit.Log("plan_deps_dropped", map[string]any{"dependencies": dropped})
 			}
@@ -432,6 +435,59 @@ func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) 
 	return nil, i18n.E("orch.plan_invalid", lastErr)
 }
 
+func (o *Orchestrator) triageGroups() []string {
+	if o.triaged == nil || o.CVE != nil || o.causeEstablished() == "" {
+		return nil
+	}
+	var groups []string
+	for _, n := range o.triaged.Used {
+		if g := o.Tools.GroupOf(n); g != "" && !slices.Contains(groups, g) {
+			groups = append(groups, g)
+		}
+	}
+	slices.Sort(groups)
+	return groups
+}
+
+func groupNames(groups []string) string {
+	names := make([]string, len(groups))
+	for i, g := range groups {
+		names[i] = strings.TrimSuffix(g, "_")
+	}
+	return strings.Join(names, ", ")
+}
+
+func (o *Orchestrator) limitToTriage(p *Plan) {
+	groups := o.triageGroups()
+	if len(groups) == 0 {
+		return
+	}
+	var kept []Task
+	var dropped []string
+	for _, t := range p.Tasks {
+		scoped := false
+		tools := slices.DeleteFunc(slices.Clone(t.Tools), func(n string) bool {
+			g := o.Tools.GroupOf(n)
+			scoped = scoped || g != ""
+			return g != "" && !slices.Contains(groups, g)
+		})
+		if scoped && !slices.ContainsFunc(tools, func(n string) bool { return o.Tools.GroupOf(n) != "" }) {
+			dropped = append(dropped, t.ID)
+			continue
+		}
+		t.Tools = tools
+		kept = append(kept, t)
+	}
+	for i := range kept {
+		kept[i].DependsOn = slices.DeleteFunc(kept[i].DependsOn, func(d string) bool { return slices.Contains(dropped, d) })
+	}
+	p.Tasks = kept
+	o.Audit.Log("plan_limited", map[string]any{"groups": groups, "dropped": dropped})
+	if len(dropped) > 0 {
+		o.Events.Emit(progress.Event{Kind: "plan_limited", Detail: i18n.T("plan.limited", groupNames(groups), strings.Join(dropped, ", "))})
+	}
+}
+
 func (o *Orchestrator) planInput(request string) string {
 	user := o.withHistory(request)
 	if o.triaged == nil {
@@ -439,6 +495,9 @@ func (o *Orchestrator) planInput(request string) string {
 	}
 	if o.CVE != nil {
 		return user + "\n\nFiches CVE établies par la tâche " + triageID + " (déjà exécutée ; fiches transmises à chaque tâche):" + synthInput([]Result{*o.triaged}) + "\nNe replanifie pas les fiches. Planifie la vérification des actifs : une tâche par périmètre (instance, cible, cluster ou contexte, groupe d'hôtes) concerné par la demande, chargée d'inventorier tous ses actifs susceptibles de contenir le composant (workloads et leurs images, conteneurs, hôtes, paquets) et de signaler chacun avec cve_report dès que son statut est établi. L'id " + triageID + " est réservé: ne l'utilise pas."
+	}
+	if groups := o.triageGroups(); len(groups) > 0 {
+		user += "\n\nCause établie au tri : seules ces instances, celles du tri, restent utilisables : " + groupNames(groups) + ". Ne planifie aucune tâche sur une autre instance, et aucune tâche fondée sur un identifiant absent des preuves du tri."
 	}
 	return user + "\n\nRésultat du tri d'incident (tâche " + triageID + ", déjà exécutée ; son résultat est transmis à chaque tâche, qui n'a pas à relocaliser le composant):" + synthInput([]Result{*o.triaged}) + "\nNe replanifie pas ce que le tri a établi. Si la cause est établie par une preuve, ne planifie que la vérification de cette cause et la recherche du correctif durable; sinon, découpe l'investigation à partir de ce qu'il a trouvé. L'id " + triageID + " est réservé: ne l'utilise pas."
 }
@@ -658,10 +717,15 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 		if res.Status != "ok" {
 			kind, detail = "failed", res.Error
 		}
-		if o.Journal {
+		if o.OnResult != nil {
+			o.OnResult(res)
+		}
+		if o.Journal || o.Incident {
 			for _, f := range res.Findings {
 				o.Events.Emit(progress.Event{Task: t.ID, Kind: "finding", Detail: f})
 			}
+		}
+		if o.Journal {
 			for _, g := range res.Gaps {
 				o.Events.Emit(progress.Event{Task: t.ID, Kind: "gap", Detail: g})
 			}
@@ -701,6 +765,7 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 	out, err := o.Runner.Run(tctx, spec)
 	if out != nil {
 		res.Model, res.Steps, res.ToolCalls, res.Cost, res.Limited, res.Limit = out.Model, out.Steps, out.ToolCalls, out.Cost, out.Limited, out.Limit
+		res.Used = out.Used
 	}
 	if err != nil {
 		res.Status, res.Error = "failed", err.Error()

@@ -916,3 +916,21 @@ def discover(ctx):
 		t.Fatalf("chemins reçus : %q", got)
 	}
 }
+
+func TestHTTPCredLabel(t *testing.T) {
+	label := func(base string, a httpAuth) string {
+		return (&httpConn{base: base, auth: &a}).credLabel("inst")
+	}
+	if got := label("https://git.example.com/api/v4", httpAuth{label: "Git", header: "X-Token"}); got != "Git (git.example.com)" {
+		t.Errorf("jeton partagé par hôte: %q", got)
+	}
+	if got := label("https://other.example.com:8443", httpAuth{label: "Git", header: "X-Token"}); got != "Git (other.example.com:8443)" {
+		t.Errorf("autre hôte: %q", got)
+	}
+	if got := label("https://git.example.com", httpAuth{label: "Git", header: "X-Token", passVault: "kv/a"}); got != "inst (Git)" {
+		t.Errorf("secret Vault: %q", got)
+	}
+	if got := label("https://git.example.com", httpAuth{label: "Git"}); got != "inst (Git)" {
+		t.Errorf("utilisateur et mot de passe: %q", got)
+	}
+}

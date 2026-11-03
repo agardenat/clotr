@@ -317,7 +317,7 @@ func (in *Instance) Prepare(ctx context.Context) error {
 		if _, ok := in.creds[cn]; ok {
 			continue
 		}
-		label := in.Name + " (" + hc.auth.label + ")"
+		label := hc.credLabel(in.Name)
 		var p creds.Pair
 		var err error
 		if hc.auth.header != "" {
