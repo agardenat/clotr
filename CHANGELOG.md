@@ -2,6 +2,11 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.53.0] - 2026-11-04
+
+### Ajouté
+- `profiles[].reasoning_effort` : niveau de raisonnement par rôle pour un modèle, envoyé tel quel au provider et tracé dans l'audit. Un rôle absent et un modèle de repli sans réglage n'envoient pas le paramètre.
+
 ## [0.52.0] - 2026-11-03
 
 ### Modifié
