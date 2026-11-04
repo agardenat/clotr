@@ -479,6 +479,7 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 			}
 			req.Model = m.ID
 			req.MaxTokens = min(m.MaxOutput, maxOutputTokens)
+			req.ReasoningEffort = m.ReasoningEffort[s.spec.Role]
 			sent := req
 			if s.spec.OnText != nil {
 				sent.OnContent = liveText(s.spec.OnText, s.shown)
@@ -494,6 +495,9 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 				var resp *llm.Response
 				resp, err = r.Chat.Chat(ctx, m.Provider, sent)
 				rec := map[string]any{"task": s.spec.TaskID, "role": s.spec.Role, "model": m.Ref(), "step": step, "attempt": attempt, "duration_ms": time.Since(t0).Milliseconds(), "tools_offered": len(req.Tools), "max_tokens": sent.MaxTokens}
+				if sent.ReasoningEffort != "" {
+					rec["reasoning_effort"] = sent.ReasoningEffort
+				}
 				for k, d := range map[string]time.Duration{"queue_ms": tm.Queue, "headers_ms": tm.Headers, "first_chunk_ms": tm.FirstChunk} {
 					if d >= time.Millisecond {
 						rec[k] = d.Milliseconds()

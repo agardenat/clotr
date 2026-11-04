@@ -320,6 +320,8 @@ type Profile struct {
 	Exclude   bool   `yaml:"exclude"`
 	Priority  int    `yaml:"priority"`
 	Sovereign *bool  `yaml:"sovereign"`
+
+	ReasoningEffort map[string]string `yaml:"reasoning_effort"`
 }
 
 type Role struct {
@@ -644,6 +646,16 @@ func (c *Config) validate() error {
 		}
 		if r.Sovereign != "" && !ValidSovereignPolicy(r.Sovereign) {
 			fail(i18n.T("config.role_sovereign", name, r.Sovereign))
+		}
+	}
+	for i, p := range c.Profiles {
+		for role, effort := range p.ReasoningEffort {
+			if _, ok := c.Roles[role]; !ok {
+				fail(i18n.T("config.profile_reasoning_role", i, role))
+			}
+			if effort == "" {
+				fail(i18n.T("config.profile_reasoning_value", i, role))
+			}
 		}
 	}
 	for _, req := range []string{RolePlanner, RoleSynthesizer} {

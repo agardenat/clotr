@@ -106,17 +106,18 @@ type FunctionDef struct {
 }
 
 type Request struct {
-	Model         string               `json:"model"`
-	Messages      []Message            `json:"messages"`
-	Tools         []ToolDef            `json:"tools,omitempty"`
-	Temperature   *float64             `json:"temperature,omitempty"`
-	MaxTokens     int                  `json:"max_tokens,omitempty"`
-	Stream        bool                 `json:"stream,omitempty"`
-	StreamOptions *StreamOptions       `json:"stream_options,omitempty"`
-	Session       string               `json:"-"`
-	OnProgress    func(StreamProgress) `json:"-"`
-	OnContent     func(delta string)   `json:"-"`
-	Timing        *Timing              `json:"-"`
+	Model           string               `json:"model"`
+	Messages        []Message            `json:"messages"`
+	Tools           []ToolDef            `json:"tools,omitempty"`
+	Temperature     *float64             `json:"temperature,omitempty"`
+	MaxTokens       int                  `json:"max_tokens,omitempty"`
+	ReasoningEffort string               `json:"reasoning_effort,omitempty"`
+	Stream          bool                 `json:"stream,omitempty"`
+	StreamOptions   *StreamOptions       `json:"stream_options,omitempty"`
+	Session         string               `json:"-"`
+	OnProgress      func(StreamProgress) `json:"-"`
+	OnContent       func(delta string)   `json:"-"`
+	Timing          *Timing              `json:"-"`
 }
 
 type Timing struct {
