@@ -29,6 +29,7 @@ profiles:
     tier: deep
     context: 200000
     tools: true
+    # reasoning_effort: {planner: max}
   - match: "*qwen2.5-coder:7b*"
     tier: fast
     context: 32000

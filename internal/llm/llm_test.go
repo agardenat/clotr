@@ -275,3 +275,27 @@ func TestStreamResetIsTransient(t *testing.T) {
 		t.Fatal("erreur TLS traitée comme temporaire")
 	}
 }
+
+func TestReasoningEffortInBody(t *testing.T) {
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		bodies = append(bodies, b)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"x"}}]}`))
+	}))
+	defer srv.Close()
+	cfg, _ := config.Parse([]byte("providers:\n  - {name: p, base_url: " + srv.URL + ", stream: false}\n"))
+	pool := NewPool(cfg, srv.Client())
+	for _, effort := range []string{"max", ""} {
+		if _, err := pool.Chat(context.Background(), "p", Request{Model: "m", ReasoningEffort: effort}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if bodies[0]["reasoning_effort"] != "max" {
+		t.Fatalf("avec réglage: %+v", bodies[0])
+	}
+	if _, ok := bodies[1]["reasoning_effort"]; ok {
+		t.Fatalf("sans réglage: %+v", bodies[1])
+	}
+}

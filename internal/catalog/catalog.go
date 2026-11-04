@@ -33,6 +33,8 @@ type ModelInfo struct {
 	Source     string  `json:"source"`
 	InputCost  float64 `json:"input_cost_per_token,omitempty"`
 	OutputCost float64 `json:"output_cost_per_token,omitempty"`
+
+	ReasoningEffort map[string]string `json:"reasoning_effort,omitempty"`
 }
 
 func (m ModelInfo) Score() int {
@@ -284,6 +286,7 @@ func Build(cfg *config.Config, snaps []Snapshot) *Catalog {
 					m.Tools = *prof.Tools
 				}
 				m.Priority = prof.Priority
+				m.ReasoningEffort = prof.ReasoningEffort
 				if prof.Sovereign != nil {
 					m.Sovereign = *prof.Sovereign
 				}

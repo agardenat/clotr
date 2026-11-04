@@ -47,6 +47,8 @@ func TestDefaults(t *testing.T) {
 func TestValidationErrors(t *testing.T) {
 	cases := map[string]string{
 		"providers: []\n": "at least one provider",
+		"providers:\n  - name: a\n    base_url: http://x\nprofiles:\n  - {match: m, reasoning_effort: {absent: max}}\n":                        "unknown role",
+		"providers:\n  - name: a\n    base_url: http://x\nprofiles:\n  - {match: m, reasoning_effort: {planner: \"\"}}\n":                      "value required",
 		"providers:\n  - name: a\n    base_url: nope\n":                                                                                        "invalid URL",
 		"providers:\n  - name: a\n    base_url: http://x\nroles:\n  planner: {tier: huge}\n":                                                   "tier",
 		"providers:\n  - name: a\n    base_url: http://x\nunknown: 1\n":                                                                        "unknown",

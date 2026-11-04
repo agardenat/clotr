@@ -846,3 +846,34 @@ func TestHistoryCompactionUnderPressure(t *testing.T) {
 		t.Fatal("dernière étape raccourcie")
 	}
 }
+
+func TestReasoningEffortByRoleAndModel(t *testing.T) {
+	type call struct{ model, effort string }
+	var calls []call
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		calls = append(calls, call{req.Model, req.ReasoningEffort})
+		if req.Model == "thinker" {
+			return nil, &llm.APIError{Status: 400, Body: "refus"}
+		}
+		return testutil.Reply("# Rapport"), nil
+	}}
+	var cur, peak int32
+	r := runner(chat, registry(&cur, &peak))
+	cands := []catalog.ModelInfo{
+		{Provider: "p", ID: "thinker", ReasoningEffort: map[string]string{"planner": "max"}},
+		{Provider: "p", ID: "writer"},
+	}
+	if _, err := r.Run(context.Background(), Spec{TaskID: "planner", Role: "planner", System: "s", User: "u", Candidates: cands}); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls[0] != (call{"thinker", "max"}) || calls[1] != (call{"writer", ""}) {
+		t.Fatalf("planner: %+v", calls)
+	}
+	calls = nil
+	if _, err := r.Run(context.Background(), Spec{TaskID: "synthesizer", Role: "synthesizer", System: "s", User: "u", Candidates: cands[:1]}); err == nil {
+		t.Fatal("erreur attendue")
+	}
+	if len(calls) == 0 || calls[0] != (call{"thinker", ""}) {
+		t.Fatalf("synthesizer: %+v", calls)
+	}
+}

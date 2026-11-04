@@ -38,7 +38,7 @@ providers:
   - {name: b, base_url: ` + b.URL + `/v1, api_key_env: KEY, model_info: true}
 profiles:
   - {match: "*embed*", exclude: true}
-  - {match: "*opus*", tier: deep, context: 200000, tools: true}
+  - {match: "*opus*", tier: deep, context: 200000, tools: true, reasoning_effort: {planner: max}}
   - {match: "b/qwen*", tier: fast, sovereign: true}
 `))
 	if err != nil {
@@ -55,6 +55,9 @@ profiles:
 	opus, _ := cat.Find("a/big-opus")
 	if opus.Tier != "deep" || !opus.Tools || opus.Context != 200000 || !opus.Sovereign || opus.Weight != 5 {
 		t.Fatalf("opus: %+v", opus)
+	}
+	if opus.ReasoningEffort["planner"] != "max" {
+		t.Fatalf("raisonnement: %+v", opus)
 	}
 	qwen, _ := cat.Find("b/qwen:7b")
 	if qwen.Tier != "fast" || !qwen.Tools || qwen.Context != 32000 || !qwen.Sovereign {
