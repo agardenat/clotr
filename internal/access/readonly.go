@@ -211,7 +211,9 @@ var (
 		"ps", "df", "du", "free", "uptime", "echo", "printf", "true", "false", "test", "[", "pwd", "nproc", "arch",
 		"getconf", "lsb_release", "sha1sum", "sha256sum", "sha512sum", "md5sum", "strings", "od", "tac", "nl", "comm",
 		"diff", "cmp", "getent", "locale", "lscpu", "column", "expr", "seq", "dpkg-query", "ldconfig", "netstat",
-		"lsof", "last", "lastlog", "who", "w", "getfacl", "lsattr", "pgrep", "ldd", "findmnt", "lsblk")
+		"lsof", "last", "lastlog", "who", "w", "getfacl", "lsattr", "pgrep", "ldd", "findmnt", "lsblk", "namei")
+	dateLongValue   = set("date", "file", "reference")
+	dateLongFlag    = set("utc", "universal", "rfc-email", "rfc-3339", "iso-8601", "debug", "help", "version", "resolution")
 	nodeEval        = set("-p", "--print", "-e", "--eval")
 	nodeVersionExpr = regexp.MustCompile(`^\s*(console\.log\(\s*)?process\.(version|versions(\.[A-Za-z0-9_]+|\[\s*["'][A-Za-z0-9_]+["']\s*\])?)(\s*\))?\s*;?\s*$`)
 	versionArgs     = []string{"-v", "-V", "--version", "-version", "version", "-m", "-i", "-M", "-l"}
@@ -310,12 +312,7 @@ func readOnlyCall(args []arg) error {
 		if err := literal(); err != nil {
 			return err
 		}
-		for _, a := range rest {
-			if a.s == "-s" || strings.HasPrefix(a.s, "--set") || (!strings.HasPrefix(a.s, "-") && !strings.HasPrefix(a.s, "+")) {
-				return fmt.Errorf("date %s modifie l'heure", a.s)
-			}
-		}
-		return nil
+		return readOnlyDate(rest)
 	case prog == "hostname":
 		if err := literal(); err != nil {
 			return err
@@ -456,6 +453,51 @@ func readOnlyCall(args []arg) error {
 		return nil
 	}
 	return fmt.Errorf("programme %s non reconnu en lecture seule", prog)
+}
+
+func readOnlyDate(rest []arg) error {
+	for i := 0; i < len(rest); i++ {
+		a := rest[i].s
+		switch {
+		case strings.HasPrefix(a, "+"):
+		case strings.HasPrefix(a, "--") && len(a) > 2:
+			name, _, attached := strings.Cut(a[2:], "=")
+			switch {
+			case dateLongValue[name]:
+				if !attached {
+					i++
+				}
+			case !dateLongFlag[name]:
+				return fmt.Errorf("date %s modifie l'heure ou n'est pas reconnue", a)
+			}
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			next, err := dateShort(a)
+			if err != nil {
+				return err
+			}
+			if next {
+				i++
+			}
+		default:
+			return fmt.Errorf("date %s modifie l'heure", a)
+		}
+	}
+	return nil
+}
+
+func dateShort(a string) (bool, error) {
+	for i, c := range a[1:] {
+		switch c {
+		case 'u', 'R':
+		case 'I':
+			return false, nil
+		case 'd', 'f', 'r':
+			return i == len(a)-2, nil
+		default:
+			return false, fmt.Errorf("date %s modifie l'heure ou n'est pas reconnue", a)
+		}
+	}
+	return false, nil
 }
 
 func readOnlyKubectl(prog string, rest []arg) error {
