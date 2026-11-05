@@ -2,6 +2,15 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.55.0] - 2026-11-05
+
+### Modifié
+- Analyse de lecture seule : `namei` passe sans question.
+- Analyse de lecture seule : `date -d`, `--date`, `-r` et `-f` passent sans question ; une valeur d'option n'est plus prise pour une nouvelle heure.
+
+### Corrigé
+- Analyse de lecture seule : `date -s@1`, `date -us@1` et les abréviations comme `--se=` passaient pour de la lecture alors qu'ils changent l'heure. Ils sont maintenant soumis à l'utilisateur, comme toute option de `date` non reconnue.
+
 ## [0.54.0] - 2026-11-05
 
 ### Ajouté
