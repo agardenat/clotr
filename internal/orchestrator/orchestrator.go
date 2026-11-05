@@ -239,11 +239,29 @@ func needsContinuation(r Result) bool {
 	return r.Limited || (r.Status != "ok" && r.Steps > 1)
 }
 
-func continuationTask(t Task, n int) Task {
+func continuationScope(t Task, plan []Task) string {
+	var b strings.Builder
+	for _, other := range plan {
+		if other.ID == t.ID || slices.Contains(other.DependsOn, t.ID) {
+			continue
+		}
+		goal := []rune(other.Goal)
+		if len(goal) > 200 {
+			goal = append(goal[:200], '…')
+		}
+		fmt.Fprintf(&b, "\n- %s : %s", other.ID, string(goal))
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "\nNe recherche pas ce que couvrent les autres tâches du plan, elles s'en chargent, même si cela figure dans tes gaps :" + b.String()
+}
+
+func continuationTask(t Task, n int, plan []Task) Task {
 	c := t
 	c.ID = fmt.Sprintf("%s.%d", t.ID, n)
 	c.DependsOn = nil
-	c.Goal = fmt.Sprintf("Suite de la tâche %s, interrompue par la limite d'étapes ou de temps. Objectif initial: %s\nLe résultat partiel est fourni ci-dessous: ne refais pas ce qui y est établi, traite en priorité ses gaps et ce qui manque à l'objectif, puis conclus.", t.ID, t.Goal)
+	c.Goal = fmt.Sprintf("Suite de la tâche %s, interrompue par la limite d'étapes ou de temps. Objectif initial: %s\nLe résultat partiel est fourni ci-dessous: ne refais pas ce qui y est établi, traite en priorité ses gaps et ce qui manque à l'objectif, puis conclus.%s", t.ID, t.Goal, continuationScope(t, plan))
 	return c
 }
 
@@ -688,7 +706,7 @@ func (o *Orchestrator) Execute(ctx context.Context, request string, p *Plan) []R
 				mu.Unlock()
 				res = o.runTask(ctx, request, t, deps, nil)
 				for n := 2; n <= o.continuations()+1 && ctx.Err() == nil && !o.Runner.Concluding() && needsContinuation(res); n++ {
-					c := continuationTask(t, n)
+					c := continuationTask(t, n, p.Tasks)
 					o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: c.ID, Role: c.Role, Goal: i18n.T("continuation", t.ID, t.Goal)}}})
 					o.Audit.Log("continuation", map[string]any{"task": t.ID, "id": c.ID, "limited": res.Limited, "error": res.Error})
 					next := o.runTask(ctx, request, c, append(append([]Result(nil), deps...), res), nil)

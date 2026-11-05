@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -795,6 +796,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		rt.filtered = append(rt.filtered, in)
 		rt.closers = append(rt.closers, in.Close)
 	}
+	approvals := access.NewApprovals()
 	for _, ic := range active {
 		t, ok := set.Get(ic.Template)
 		if !ok {
@@ -805,7 +807,8 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		if err == nil {
 			in.Audit = rt.audit.Log
 			in.Warn = warn
-			in.Confirm = confirmCommand
+			in.Confirm = confirmWithin(cfg.Limits.ConfirmTimeout.Duration)
+			in.Approvals = approvals
 			in.Highlight = progress.Command
 			if len(o.cveIDs) > 0 {
 				in.SetCeiling(access.Create)
@@ -1409,12 +1412,20 @@ func accessSummary(instances []*template.Instance, reg *tools.Registry) string {
 	return strings.Join(parts, ", ")
 }
 
-func confirmCommand(ctx context.Context, question string) (access.Answer, error) {
-	s, err := creds.Ask(ctx, question)
-	if err != nil {
-		return access.No, err
+func confirmWithin(within time.Duration) func(context.Context, string) (access.Answer, error) {
+	return func(ctx context.Context, question string) (access.Answer, error) {
+		if within > 0 {
+			question = "\n" + i18n.T("confirm.deadline", int(within.Seconds())) + question
+		}
+		s, err := creds.AskWithin(ctx, question, within)
+		if errors.Is(err, creds.ErrNoAnswer) {
+			return access.No, access.ErrNoAnswer
+		}
+		if err != nil {
+			return access.No, err
+		}
+		return access.ParseAnswer(s), nil
 	}
-	return access.ParseAnswer(s), nil
 }
 
 func (rt *app) cleanup(ctx context.Context) []string {

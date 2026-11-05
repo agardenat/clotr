@@ -9,8 +9,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/muesli/cancelreader"
 
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/vault"
@@ -46,6 +48,10 @@ var OpenTTY = openConsole
 var Suspend func() (resume func())
 
 var ErrNoPrompter = errors.New("creds: prompter unavailable")
+
+var ErrNoAnswer = errors.New("creds: no answer")
+
+var promptMu sync.Mutex
 
 var Prompter func(ctx context.Context, in *os.File, question string, secret bool) (string, error)
 
@@ -135,6 +141,8 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 	if !term.IsTerminal(tty.In.Fd()) {
 		return Pair{}, errors.New(missing)
 	}
+	promptMu.Lock()
+	defer promptMu.Unlock()
 	defer suspend()()
 	var notice string
 	if vaultErr != nil {
@@ -184,8 +192,14 @@ func prompt(ctx context.Context, tty *Console, question string, secret bool) (st
 	}
 	fmt.Fprint(tty.Out, question)
 	if !secret {
+		var in io.Reader = tty.In
+		if r, err := cancelreader.NewReader(tty.In); err == nil {
+			defer r.Close()
+			defer context.AfterFunc(ctx, func() { r.Cancel() })()
+			in = r
+		}
 		return readInterruptible(ctx, tty, func() (string, error) {
-			return bufio.NewReader(tty.In).ReadString('\n')
+			return bufio.NewReader(in).ReadString('\n')
 		})
 	}
 	s, err := readInterruptible(ctx, tty, func() (string, error) {
@@ -248,8 +262,12 @@ func Confirm(question string) (bool, error) {
 }
 
 func Ask(ctx context.Context, question string) (string, error) {
-	mu.Lock()
-	defer mu.Unlock()
+	return AskWithin(ctx, question, 0)
+}
+
+func AskWithin(ctx context.Context, question string, within time.Duration) (string, error) {
+	promptMu.Lock()
+	defer promptMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -262,12 +280,22 @@ func Ask(ctx context.Context, question string) (string, error) {
 		return "", i18n.E("creds.notty")
 	}
 	defer suspend()()
-	return prompt(ctx, tty, question, false)
+	asked := ctx
+	if within > 0 {
+		var cancel context.CancelFunc
+		asked, cancel = context.WithTimeout(ctx, within)
+		defer cancel()
+	}
+	s, err := prompt(asked, tty, question, false)
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return "", ErrNoAnswer
+	}
+	return s, err
 }
 
 func AskSecret(ctx context.Context, question string) (string, error) {
-	mu.Lock()
-	defer mu.Unlock()
+	promptMu.Lock()
+	defer promptMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

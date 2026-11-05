@@ -93,6 +93,7 @@ type Instance struct {
 	Activating func()
 	Confirm    func(ctx context.Context, question string) (access.Answer, error)
 	Trusted    func() []string
+	Approvals  *access.Approvals
 	Highlight  func(string) string
 
 	Client       string
@@ -136,7 +137,6 @@ type Instance struct {
 	ceiling  access.Level
 	commands *access.Commands
 	accessMu sync.Mutex
-	always   map[string]bool
 	tracked  []*trackedRes
 }
 

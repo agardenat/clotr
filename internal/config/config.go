@@ -340,6 +340,7 @@ type Limits struct {
 	AgentTimeout       Duration `yaml:"agent_timeout"`
 	RequestTimeout     Duration `yaml:"request_timeout"`
 	IdleTimeout        Duration `yaml:"idle_timeout"`
+	ConfirmTimeout     Duration `yaml:"confirm_timeout"`
 	ToolOutputMaxChars int      `yaml:"tool_output_max_chars"`
 	StallSteps         *int     `yaml:"stall_steps"`
 	VerifyFindings     *bool    `yaml:"verify_findings"`
@@ -516,6 +517,9 @@ func (c *Config) applyDefaults() {
 	}
 	if l.IdleTimeout.Duration <= 0 {
 		l.IdleTimeout.Duration = 2 * time.Minute
+	}
+	if l.ConfirmTimeout.Duration == 0 {
+		l.ConfirmTimeout.Duration = time.Minute
 	}
 	if l.ToolOutputMaxChars <= 0 {
 		l.ToolOutputMaxChars = 20000
