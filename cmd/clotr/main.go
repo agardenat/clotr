@@ -1331,10 +1331,8 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	if o.direct != "" {
 		report, runErr = orch.Direct(ctx, request, o.directRole())
 	} else {
-		if orch.Incident || orch.CVE != nil {
-			conclude := orch.ConcludeNow
-			interruptHook.Store(&conclude)
-		}
+		conclude := orch.ConcludeNow
+		interruptHook.Store(&conclude)
 		orch.OnResult = rt.resultSaver(sess, turnDir)
 		report, runErr = orch.Run(ctx, request)
 		interruptHook.Store(nil)
