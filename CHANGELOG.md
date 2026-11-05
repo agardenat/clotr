@@ -2,6 +2,11 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.56.0] - 2026-11-05
+
+### Modifié
+- `run` : le premier Ctrl-C demande la conclusion dans tous les modes avec plan, plus seulement avec `--incident` et `--cve`. Le rapport est produit avec ce que les tâches ont déjà trouvé ; le second Ctrl-C interrompt tout.
+
 ## [0.55.0] - 2026-11-05
 
 ### Modifié
