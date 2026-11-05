@@ -614,7 +614,7 @@ clotr run --access exec "version de PHP dans les pods du namespace web" -t prod
 | `--access read\|exec\|create` (`run`) | niveau d'accès de toutes les instances pour ce run, prioritaire sur `access` des clients, voir Niveaux d'accès |
 | `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
 
-La demande `-` est lue sur stdin. Ctrl-C annule proprement les agents en cours.
+La demande `-` est lue sur stdin. Pendant un `run` avec plan, un premier Ctrl-C demande la conclusion : les tâches en cours concluent avec ce qu'elles ont, celles pas encore lancées sont abandonnées, la vérification est sautée et le rapport est produit. Un second Ctrl-C interrompt tout, le rapport peut alors être produit par `clotr session <nom> --synthesize` à partir des tâches terminées. Avec `--direct`, Ctrl-C interrompt aussitôt.
 
 ### Progression
 
