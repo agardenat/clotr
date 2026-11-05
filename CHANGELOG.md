@@ -2,6 +2,16 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.54.0] - 2026-11-05
+
+### Ajouté
+- `run --cve` : `cve_advisory` exige `score` pour une faille, le score publié par la source (CVSS avec sa version et sa sévérité) ou « non publié ». Il figure dans la fiche transmise aux tâches et dans une colonne du tableau du rapport.
+
+### Modifié
+- `run --cve` : la fiche s'affiche en colonnes au-dessus du tableau, le score en tête, coloré selon la sévérité. `--plain` garde la ligne compacte.
+- `run --cve` : la tâche des fiches ne reçoit plus que la recherche web, les preuves, la mémoire et `cve_advisory`, ce qui réduit fortement son premier prompt et évite une compaction de l'historique dès la première étape.
+- `run --cve` : après quatre sorties de recherche sans nouvelle fiche, un rappel demande à cette tâche d'enregistrer ce que les sources établissent déjà ; les versions propres à une distribution se vérifient une fois l'actif lu.
+
 ## [0.53.0] - 2026-11-04
 
 ### Ajouté
