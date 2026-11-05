@@ -2,6 +2,7 @@ package template
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -186,6 +187,15 @@ func (in *Instance) commandsDesc() string {
 	return s + " Toute autre commande est soumise à l'utilisateur, qui peut la refuser : ne demander que des commandes sans effet de bord (versions, inventaire de paquets, état), jamais de modification."
 }
 
+func (in *Instance) approvals() *access.Approvals {
+	in.accessMu.Lock()
+	defer in.accessMu.Unlock()
+	if in.Approvals == nil {
+		in.Approvals = access.NewApprovals()
+	}
+	return in.Approvals
+}
+
 func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []string) error {
 	if err := access.CheckArgv(argv); err != nil {
 		return err
@@ -219,13 +229,16 @@ func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []s
 	}
 	f["not_readonly"] = roErr.Error()
 	key := strings.Join(argv, "\x00")
-	in.accessMu.Lock()
-	ok := in.always[key]
-	in.accessMu.Unlock()
-	if ok {
+	approvals := in.approvals()
+	if approvals.Granted(key) {
 		f["decision"] = "always"
 		in.audit("exec_decision", f)
 		return nil
+	}
+	if approvals.Unanswered(key) {
+		f["decision"] = "unanswered"
+		in.audit("exec_decision", f)
+		return i18n.E("tpl.exec.unanswered", shown)
 	}
 	if in.Confirm == nil {
 		f["decision"] = "refused"
@@ -233,6 +246,13 @@ func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []s
 		return i18n.E("tpl.exec.no_confirm", shown)
 	}
 	ans, err := in.Confirm(ctx, i18n.T("exec.ask", in.Name, where, in.highlight(shown), roErr))
+	if errors.Is(err, access.ErrNoAnswer) {
+		approvals.MarkUnanswered(key)
+		f["decision"] = "unanswered"
+		in.audit("exec_decision", f)
+		in.warn(i18n.T("exec.unanswered", in.Name, where, shown))
+		return i18n.E("tpl.exec.unanswered", shown)
+	}
 	if err != nil {
 		f["decision"], f["error"] = "refused", err.Error()
 		in.audit("exec_decision", f)
@@ -240,12 +260,7 @@ func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []s
 	}
 	switch ans {
 	case access.Always:
-		in.accessMu.Lock()
-		if in.always == nil {
-			in.always = map[string]bool{}
-		}
-		in.always[key] = true
-		in.accessMu.Unlock()
+		approvals.Grant(key)
 		f["decision"] = "always"
 	case access.Once:
 		f["decision"] = "confirmed"

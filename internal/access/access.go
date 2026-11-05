@@ -1,9 +1,11 @@
 package access
 
 import (
+	"errors"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/agardenat/clotr/internal/i18n"
 )
@@ -229,4 +231,40 @@ func Matches(argv []string, commands []string) bool {
 		}
 	}
 	return false
+}
+
+var ErrNoAnswer = errors.New("no answer")
+
+type Approvals struct {
+	mu         sync.Mutex
+	granted    map[string]bool
+	unanswered map[string]bool
+}
+
+func NewApprovals() *Approvals {
+	return &Approvals{granted: map[string]bool{}, unanswered: map[string]bool{}}
+}
+
+func (a *Approvals) Granted(key string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.granted[key]
+}
+
+func (a *Approvals) Grant(key string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.granted[key] = true
+}
+
+func (a *Approvals) Unanswered(key string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.unanswered[key]
+}
+
+func (a *Approvals) MarkUnanswered(key string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.unanswered[key] = true
 }

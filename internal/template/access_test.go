@@ -934,3 +934,36 @@ func TestHTTPCredLabel(t *testing.T) {
 		t.Errorf("utilisateur et mot de passe: %q", got)
 	}
 }
+
+func TestConfirmUnansweredAndSharedAlways(t *testing.T) {
+	asks := 0
+	answer := func() (access.Answer, error) { return access.No, access.ErrNoAnswer }
+	shared := access.NewApprovals()
+	a, b := &Instance{Name: "a", Approvals: shared}, &Instance{Name: "b", Approvals: shared}
+	confirm := func(context.Context, string) (access.Answer, error) {
+		asks++
+		return answer()
+	}
+	a.Confirm, b.Confirm = confirm, confirm
+	argv := []string{"demo-tool", "--run"}
+	if err := a.authorizeCommand(context.Background(), "h1", argv); err == nil || !strings.Contains(err.Error(), "demo-tool") {
+		t.Fatalf("sans réponse : %v", err)
+	}
+	if err := b.authorizeCommand(context.Background(), "h2", argv); err == nil || asks != 1 {
+		t.Fatalf("question reposée après une absence de réponse : %d, %v", asks, err)
+	}
+	asks = 0
+	answer = func() (access.Answer, error) { return access.Always, nil }
+	other := []string{"demo-tool", "--other"}
+	if err := a.authorizeCommand(context.Background(), "h1", other); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.authorizeCommand(context.Background(), "h2", other); err != nil || asks != 1 {
+		t.Fatalf("toujours non partagé entre instances : %d, %v", asks, err)
+	}
+	alone := &Instance{Name: "c"}
+	alone.Confirm = confirm
+	if err := alone.authorizeCommand(context.Background(), "h3", other); err != nil || asks != 2 {
+		t.Fatalf("instance sans partage : %d, %v", asks, err)
+	}
+}

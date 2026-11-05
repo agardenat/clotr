@@ -85,7 +85,7 @@ func checkCall(args []arg, trusted []string, rules *Commands) error {
 	return nil
 }
 
-var sensitivePatterns = regexp.MustCompile(`(?i)/var/run/secrets|/run/secrets|serviceaccount|\.kube/config|/etc/shadow|/etc/gshadow|/etc/sudoers|environ|id_rsa|id_ecdsa|id_ed25519|\.pem\b|\.key\b|\.p12\b|\.pfx\b|\.jks\b|keytab|\.vault-token|\.aws/credentials|\.docker/config\.json|password|passwd|secret|token|credential`)
+var sensitivePatterns = regexp.MustCompile(`(?i)/var/run/secrets|/run/secrets|serviceaccount|\.kube/config|/etc/shadow|/etc/gshadow|/etc/sudoers|environ|id_rsa|id_ecdsa|id_ed25519|\.pem\b|\.key\b|\.p12\b|\.pfx\b|\.jks\b|keytab|\.vault-token|\.[a-z_]*history\b|\.aws/credentials|\.docker/config\.json|password|passwd|secret|token|credential`)
 
 func sensitive(text string) error {
 	if m := sensitivePatterns.FindString(text); m != "" {
@@ -217,10 +217,13 @@ var (
 	nodeEval        = set("-p", "--print", "-e", "--eval")
 	nodeVersionExpr = regexp.MustCompile(`^\s*(console\.log\(\s*)?process\.(version|versions(\.[A-Za-z0-9_]+|\[\s*["'][A-Za-z0-9_]+["']\s*\])?)(\s*\))?\s*;?\s*$`)
 	versionArgs     = []string{"-v", "-V", "--version", "-version", "version", "-m", "-i", "-M", "-l"}
-	versioned       = regexp.MustCompile(`^(php[0-9.]*|php-fpm[0-9.]*|php-cgi[0-9.]*|java|python[0-9.]*|node|nodejs|nginx|httpd|apache2|apachectl|apache2ctl|perl|ruby|go|mysql|mysqld|mariadb|postgres|psql|redis-server|curl|wget|git|openssl|dotnet|tomcat[0-9.]*|catalina\.sh|lighttpd|caddy|frankenphp|litespeed|lsphp[0-9.]*)$`)
+	versioned       = regexp.MustCompile(`^(php[0-9.]*|php-fpm[0-9.]*|php-cgi[0-9.]*|java|python[0-9.]*|node|nodejs|nginx|httpd|apache2|apachectl|apache2ctl|perl|ruby|go|mysql|mysqld|mariadb|postgres|psql|redis-server|curl|wget|git|openssl|dotnet|tomcat[0-9.]*|catalina\.sh|lighttpd|caddy|frankenphp|litespeed|lsphp[0-9.]*|rke2|k3s)$`)
 	dupTarget       = regexp.MustCompile(`^(\d+|-)$`)
 	sortOutput      = regexp.MustCompile(`^-[a-zA-Z]*o`)
 	pipName         = regexp.MustCompile(`^pip[0-9.]*$`)
+	rpmVerify       = regexp.MustCompile(`^-V[a-zA-Z]*$`)
+	dnfCached       = set("list", "info", "repoquery", "check-update")
+	dnfHistoryRead  = set("list", "info", "summary", "userinstalled")
 	findActions     = set("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls")
 	rpmWrite        = set("-i", "-U", "-F", "-e", "--install", "--upgrade", "--freshen", "--erase", "--import", "--rebuilddb", "--initdb", "--setperms", "--setugids", "--restore", "--delsign", "--addsign", "--reinstall")
 	ssWrite         = set("-K", "--kill")
@@ -394,10 +397,15 @@ func readOnlyCall(args []arg) error {
 				return fmt.Errorf("rpm %s écrit", a.s)
 			}
 		}
-		if strings.HasPrefix(first, "-q") || first == "--query" || first == "-V" || first == "--verify" || first == "--version" {
+		if strings.HasPrefix(first, "-q") || first == "--query" || rpmVerify.MatchString(first) || first == "--verify" || first == "--version" {
 			return nil
 		}
 		return fmt.Errorf("rpm %s n'est pas une interrogation", first)
+	case prog == "dnf" || prog == "yum" || prog == "dnf5":
+		if err := literal(); err != nil {
+			return err
+		}
+		return readOnlyDnf(prog, rest)
 	case prog == "apk":
 		if ops := operands(); len(ops) > 0 && set("info", "list", "version", "search", "policy")[ops[0]] || first == "--version" {
 			return literal()
@@ -453,6 +461,37 @@ func readOnlyCall(args []arg) error {
 		return nil
 	}
 	return fmt.Errorf("programme %s non reconnu en lecture seule", prog)
+}
+
+func readOnlyDnf(prog string, rest []arg) error {
+	var ops []string
+	cached := false
+	for _, a := range rest {
+		switch {
+		case a.s == "-C" || a.s == "--cacheonly":
+			cached = true
+		case a.s == "-q" || a.s == "--quiet" || a.s == "--reverse":
+		case strings.HasPrefix(a.s, "--disablerepo=") || strings.HasPrefix(a.s, "--enablerepo="):
+		case strings.HasPrefix(a.s, "-"):
+			return fmt.Errorf("%s %s : option non admise en lecture seule", prog, a.s)
+		default:
+			ops = append(ops, a.s)
+		}
+	}
+	if len(ops) == 0 {
+		return fmt.Errorf("%s sans sous-commande", prog)
+	}
+	switch {
+	case ops[0] == "repolist":
+		return nil
+	case ops[0] == "history" && (len(ops) == 1 || dnfHistoryRead[ops[1]]):
+		return nil
+	case dnfCached[ops[0]] && cached:
+		return nil
+	case dnfCached[ops[0]]:
+		return fmt.Errorf("%s %s peut rafraîchir le cache sans -C", prog, ops[0])
+	}
+	return fmt.Errorf("%s %s n'est pas une interrogation", prog, ops[0])
 }
 
 func readOnlyDate(rest []arg) error {

@@ -798,3 +798,26 @@ func TestCVEMode(t *testing.T) {
 		t.Fatal("consigne CVE absente")
 	}
 }
+
+func TestContinuationLeavesOtherTasksAlone(t *testing.T) {
+	long := strings.Repeat("é", 300)
+	plan := []Task{
+		{ID: "t1", Goal: "décrire"},
+		{ID: "t2", Goal: "matrice de compatibilité"},
+		{ID: "t3", Goal: long},
+		{ID: "t4", Goal: "synthèse", DependsOn: []string{"t1"}},
+	}
+	c := continuationTask(plan[0], 2, plan)
+	if c.ID != "t1.2" || !strings.Contains(c.Goal, "- t2 : matrice de compatibilité") {
+		t.Fatalf("objectif : %s", c.Goal)
+	}
+	if strings.Contains(c.Goal, "synthèse") || strings.Contains(c.Goal, "- t1 :") {
+		t.Fatalf("tâche dépendante ou elle-même listée : %s", c.Goal)
+	}
+	if strings.Contains(c.Goal, long) || !strings.Contains(c.Goal, strings.Repeat("é", 200)+"…") {
+		t.Fatalf("objectif non coupé : %s", c.Goal)
+	}
+	if c = continuationTask(plan[0], 2, plan[:1]); strings.Contains(c.Goal, "autres tâches") {
+		t.Fatalf("tâche seule : %s", c.Goal)
+	}
+}
