@@ -2,6 +2,20 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.57.0] - 2026-11-05
+
+### Ajouté
+- `limits.confirm_timeout` (défaut 60 s, une valeur négative attend sans limite) : une commande ou une élévation d'accès restée sans réponse est refusée, et la tâche continue. L'agent la note dans ses lacunes, et la commande n'est pas reposée pendant le run.
+
+### Modifié
+- La réponse « toujours » à une commande vaut pour toutes les instances du run.
+- Une tâche reprise après une limite ne recherche plus ce que couvrent les autres tâches du plan.
+- Analyse de lecture seule : `rke2` et `k3s` avec une option de version, `rpm -V` avec ses options groupées, `dnf`, `yum` et `dnf5` en `history`, `repolist`, et `list`, `info`, `repoquery`, `check-update` avec `-C` ou `--cacheonly`, passent sans question.
+- Analyse de lecture seule : les historiques de commandes (`.bash_history`, `.zsh_history`…) sont soumis à question.
+
+### Corrigé
+- Une question en attente ne bloque plus la lecture des identifiants, ni donc l'activation des instances par les autres tâches.
+
 ## [0.56.0] - 2026-11-05
 
 ### Modifié
