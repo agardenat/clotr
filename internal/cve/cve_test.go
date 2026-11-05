@@ -50,19 +50,19 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 	if !slices.Equal(s.Missing(), []string{"CVE-2026-0001"}) {
 		t.Fatal(s.Missing())
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","host_component":false,"detection":"x"}`)); err == nil || !strings.Contains(err.Error(), "commands") {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x"}`)); err == nil || !strings.Contains(err.Error(), "commands") {
 		t.Fatalf("fiche sans commandes: %v", err)
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-9999","product":"x","affected":"x","fixed":"x","host_component":false,"detection":"x","commands":["x"]}`)); err == nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-9999","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x","commands":["x"]}`)); err == nil {
 		t.Fatal("CVE hors demande acceptée")
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"cve-2026-0001","product":"PHP","affected":"8.2 < 8.2.27","fixed":"8.2.27","host_component":false,"detection":"php -v","commands":["php -v","rpm -qa  | grep -i php"],"evidence":["`+src+`"]}`)); err != nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"cve-2026-0001","product":"PHP","affected":"8.2 < 8.2.27","fixed":"8.2.27","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"php -v","commands":["php -v","rpm -qa  | grep -i php"],"evidence":["`+src+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(s.Commands(), []string{"php -v", "rpm -qa | grep -i php"}) || !strings.Contains(s.Advisories()[0].line(), "`rpm -qa | grep -i php`") {
 		t.Fatalf("commandes: %v", s.Commands())
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","host_component":false,"detection":"x","commands":["a\nb"]}`)); err == nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x","commands":["a\nb"]}`)); err == nil {
 		t.Fatal("commande multiligne acceptée")
 	}
 	if len(s.Missing()) != 0 || !s.Advisories()[0].Verified {
@@ -113,7 +113,7 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 	}
 
 	sec := s.Section()
-	for _, want := range []string{"| CVE-2026-0001 | PHP | 8.2 < 8.2.27 | 8.2.27 | [E001] |", "🚨 1", "✅ 1", "| 🚨 | k8s/prod/web/app | 🚨 | php 8.2.4 < 8.2.27 | [E002] |", "- `vm` (1) : web1"} {
+	for _, want := range []string{"| CVE-2026-0001 | PHP | 8.2 < 8.2.27 | 8.2.27 | CVSS 3.1 9.8 CRITICAL | [E001] |", "🚨 1", "✅ 1", "| 🚨 | k8s/prod/web/app | 🚨 | php 8.2.4 < 8.2.27 | [E002] |", "- `vm` (1) : web1"} {
 		if !strings.Contains(sec, want) {
 			t.Fatalf("%q absent de\n%s", want, sec)
 		}
@@ -124,7 +124,7 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 func TestUnverifiedAdvisory(t *testing.T) {
 	s := New([]string{"CVE-2026-0002"}, memory.NewStore(), evidence.Open(t.TempDir(), 1), audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0002","product":"x","affected":"y","fixed":"z","host_component":false,"detection":"w","commands":["x --version"]}`)); err != nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0002","product":"x","affected":"y","fixed":"z","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"w","commands":["x --version"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if a := s.Advisories()[0]; a.Verified || !strings.Contains(a.line(), "NON VÉRIFIÉE") {
@@ -157,12 +157,6 @@ func TestReminder(t *testing.T) {
 	if s.Inbox(reader) != "" {
 		t.Fatal("rappel répété sans nouvelle sortie")
 	}
-	for range ReminderEvery {
-		ev.Add("t0", "k8s_pod_exec", "{}", "out", nil)
-	}
-	if s.Inbox(tools.Caller{Task: "t0"}) != "" {
-		t.Fatal("rappel à la tâche des fiches")
-	}
 	for range ReminderEvery - 1 {
 		ev.Add("t2", "k8s_pod_exec", "{}", "out", nil)
 	}
@@ -173,6 +167,56 @@ func TestReminder(t *testing.T) {
 	ev.Add("t2", "k8s_pod_exec", "{}", "out", nil)
 	if got := s.Inbox(reader); strings.Contains(got, "Rappel") {
 		t.Fatalf("compteur non remis à zéro par cve_report: %q", got)
+	}
+}
+
+func TestTriageReminder(t *testing.T) {
+	ev := evidence.Open(t.TempDir(), 1)
+	s := New([]string{"CVE-2026-0003", "CVE-2026-0004"}, memory.NewStore(), ev, audit.Nop())
+	reader := tools.Caller{Task: "t0"}
+	for range ReminderEvery - 1 {
+		ev.Add("t0", "mcp_websearch_search", "{}", "out", nil)
+		ev.Add("t0", "evidence_read", "{}", "out", nil)
+	}
+	if got := s.Inbox(reader); got != "" {
+		t.Fatalf("rappel trop tôt: %q", got)
+	}
+	last := ev.Add("t0", "mcp_websearch_search", "{}", "out", nil)
+	got := s.Inbox(reader)
+	if !strings.Contains(got, "Rappel : 4 sorties") || !strings.Contains(got, AdvisoryTool) || !strings.Contains(got, "CVE-2026-0003, CVE-2026-0004") {
+		t.Fatalf("rappel: %q", got)
+	}
+	if s.Inbox(reader) != "" {
+		t.Fatal("rappel répété sans nouvelle sortie")
+	}
+	for range ReminderEvery {
+		ev.Add("t0", "mcp_websearch_search", "{}", "out", nil)
+	}
+	ctx := tools.WithCaller(context.Background(), reader)
+	fiche := func(id string) json.RawMessage {
+		return json.RawMessage(`{"cve":"` + id + `","product":"p","affected":"a","fixed":"f","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"d","commands":["p -v"],"evidence":["` + last + `"]}`)
+	}
+	if _, err := s.Tools()[0].Call(ctx, fiche("CVE-2026-0003")); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Inbox(reader); strings.Contains(got, "Rappel") {
+		t.Fatalf("compteur non remis à zéro par la fiche: %q", got)
+	}
+	for range ReminderEvery {
+		ev.Add("t0", "mcp_websearch_search", "{}", "out", nil)
+	}
+	got = s.Inbox(reader)
+	if !strings.Contains(got, "sujets sans fiche : CVE-2026-0004.") {
+		t.Fatalf("sujets manquants: %q", got)
+	}
+	if _, err := s.Tools()[0].Call(ctx, fiche("CVE-2026-0004")); err != nil {
+		t.Fatal(err)
+	}
+	for range ReminderEvery {
+		ev.Add("t0", "mcp_websearch_search", "{}", "out", nil)
+	}
+	if got := s.Inbox(reader); strings.Contains(got, "Rappel") {
+		t.Fatalf("rappel alors que toutes les fiches existent: %q", got)
 	}
 }
 
@@ -225,14 +269,14 @@ func TestSubjectsAndCompromise(t *testing.T) {
 	subject := "LiteLLM 1.107.0 supply chain"
 	s := New([]string{subject}, memory.NewStore(), ev, audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"litellm 1.107.0 SUPPLY chain","kind":"compromise","product":"litellm (PyPI)","affected":"1.107.0","fixed":"1.106.x","host_component":false,"detection":"pip show litellm","commands":["pip show litellm"],"iocs":["/tmp/.x","evil.example"]}`)); err != nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"litellm 1.107.0 SUPPLY chain","kind":"compromise","product":"litellm (PyPI)","affected":"1.107.0","fixed":"1.106.x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"pip show litellm","commands":["pip show litellm"],"iocs":["/tmp/.x","evil.example"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	a := s.Advisories()[0]
 	if a.CVE != subject || a.Kind != KindCompr || len(a.IOCs) != 2 || !strings.Contains(a.line(), "(compromission)") || !strings.Contains(a.line(), "evil.example") {
 		t.Fatalf("fiche: %+v", a)
 	}
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"`+subject+`","kind":"ransomware","product":"x","affected":"x","fixed":"x","host_component":false,"detection":"x","commands":["x"]}`)); err == nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"`+subject+`","kind":"ransomware","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x","commands":["x"]}`)); err == nil {
 		t.Fatal("kind invalide accepté")
 	}
 	for asset, st := range map[string]string{"gw/clovis": "compromised", "gw/onellm": "vulnerable", "gw/other": "clean"} {
@@ -252,7 +296,7 @@ func TestHostComponent(t *testing.T) {
 	s := New([]string{"CVE-2026-0020"}, memory.NewStore(), ev, audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
 	adv, rep := s.Tools()[0], s.Tools()[1]
-	base := `"cve":"CVE-2026-0020","product":"noyau","affected":"< 2","fixed":"2","detection":"uname -r","commands":["uname -r"]`
+	base := `"cve":"CVE-2026-0020","product":"noyau","affected":"< 2","fixed":"2","score":"non publié","detection":"uname -r","commands":["uname -r"]`
 	if _, err := adv.Call(ctx, json.RawMessage(`{`+base+`}`)); err == nil || !strings.Contains(err.Error(), "host_component") {
 		t.Fatalf("fiche sans host_component: %v", err)
 	}
@@ -323,10 +367,58 @@ func TestNotHostComponentKeepsImageRule(t *testing.T) {
 	e := ev.Add("t1", "x", "{}", "o", nil)
 	s := New([]string{"CVE-2026-0021"}, memory.NewStore(), ev, audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0021","product":"php","affected":"< 2","fixed":"2","host_component":false,"detection":"php -v","commands":["php -v"]}`)); err != nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0021","product":"php","affected":"< 2","fixed":"2","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"php -v","commands":["php -v"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0021","asset":"k8s/prod/ns/web","status":"clean","detail":"php absent de l'image","evidence":["`+e+`"]}`)); err != nil {
 		t.Fatalf("image sans le composant: %v", err)
+	}
+}
+
+func TestAdvisoryScoreAndCard(t *testing.T) {
+	ev := evidence.Open(t.TempDir(), 1)
+	src := ev.Add("t0", "web", "{}", "avis", nil)
+	s := New([]string{"CVE-2026-0005"}, memory.NewStore(), ev, audit.Nop())
+	rec := &cardEvents{}
+	s.Events = rec
+	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
+	base := `"cve":"CVE-2026-0005","product":"Noyau","affected":"< 6.6.159","fixed":"6.6.159","host_component":true,"detection":"version du noyau","commands":["uname -r","rpm -q kernel"],"evidence":["` + src + `"]`
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{`+base+`}`)); err == nil || !strings.Contains(err.Error(), "score requis") {
+		t.Fatalf("faille sans score acceptée: %v", err)
+	}
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{`+base+`,"score":"CVSS 3.1 7.8 HIGH"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if rec.card == nil || rec.card.Title != "CVE-2026-0005" || rec.card.Score != "CVSS 3.1 7.8 HIGH" {
+		t.Fatalf("carte: %+v", rec.card)
+	}
+	var commands []string
+	for _, f := range rec.card.Fields {
+		if f.Code {
+			commands = f.Lines
+		}
+	}
+	if !slices.Equal(commands, []string{"uname -r", "rpm -q kernel"}) {
+		t.Fatalf("commandes: %v", commands)
+	}
+	if sec := s.Section(); !strings.Contains(sec, "| CVSS 3.1 7.8 HIGH |") {
+		t.Fatalf("score absent du rapport: %s", sec)
+	}
+	if adv := s.Advisories()[0]; !strings.Contains(adv.line(), "score : CVSS 3.1 7.8 HIGH") {
+		t.Fatalf("score absent de la fiche transmise: %s", adv.line())
+	}
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0005","kind":"compromise","product":"p","affected":"1.0","fixed":"0.9","host_component":false,"detection":"d","commands":["p -v"]}`)); err != nil {
+		t.Fatalf("compromission sans score refusée: %v", err)
+	}
+}
+
+type cardEvents struct {
+	progress.Nop
+	card *progress.Card
+}
+
+func (c *cardEvents) Emit(e progress.Event) {
+	if e.Card != nil {
+		c.card = e.Card
 	}
 }

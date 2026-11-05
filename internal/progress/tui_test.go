@@ -1,6 +1,7 @@
 package progress
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -210,5 +211,44 @@ func TestBoardPromptBox(t *testing.T) {
 	b.Update(promptMsg{})
 	if out := ansi.Strip(b.render()); strings.Contains(out, "╭") {
 		t.Fatalf("cadre resté après la saisie : %s", out)
+	}
+}
+
+func TestCardRender(t *testing.T) {
+	c := &Card{Title: "CVE-1", Score: "CVSS 3.1 7.8 HIGH", Fields: []CardField{
+		{Label: "Produit", Lines: []string{"Noyau Linux, composant réseau avec un libellé assez long pour passer à la ligne"}},
+		{Label: "Versions touchées", Lines: []string{"< 6.6.159"}},
+		{Label: "Commandes", Lines: []string{"uname -r", "rpm -q kernel"}, Code: true},
+	}}
+	lines := strings.Split(ansi.Strip(c.render(60)), "\n")
+	if !strings.HasPrefix(lines[0], "── CVE-1 · CVSS 3.1 7.8 HIGH ─") {
+		t.Fatalf("titre: %q", lines[0])
+	}
+	col := len([]rune("Versions touchées")) + 2
+	var seen []string
+	for _, l := range lines[1:] {
+		if w := ansi.StringWidth(l); w > 60 {
+			t.Fatalf("ligne de %d colonnes: %q", w, l)
+		}
+		seen = append(seen, strings.TrimSpace(string([]rune(l)[col:])))
+	}
+	if !slices.Contains(seen, "uname -r") || !slices.Contains(seen, "rpm -q kernel") || !slices.Contains(seen, "< 6.6.159") {
+		t.Fatalf("valeurs mal alignées: %q", lines)
+	}
+	if !strings.HasPrefix(lines[2], strings.Repeat(" ", col)) {
+		t.Fatalf("suite sans retrait: %q", lines[2])
+	}
+	if got := ansi.Strip((&Card{Title: "CVE-2"}).render(40)); !strings.HasPrefix(got, "── CVE-2 ─") {
+		t.Fatalf("sans score: %q", got)
+	}
+	long := strings.Repeat("CVSS 3.1 9.8 CRITICAL, vecteur et commentaire ", 3)
+	got := strings.Split(ansi.Strip((&Card{Title: "CVE-3", Score: long}).render(60)), "\n")
+	if strings.Contains(got[0], "CVSS") || !strings.HasPrefix(got[1], "Score  CVSS 3.1") {
+		t.Fatalf("score long: %q", got)
+	}
+	for _, l := range got {
+		if w := ansi.StringWidth(l); w > 60 {
+			t.Fatalf("ligne de %d colonnes: %q", w, l)
+		}
 	}
 }

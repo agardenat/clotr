@@ -19,6 +19,20 @@ type Event struct {
 	Cost     float64
 	Duration time.Duration
 	Plan     []PlanItem
+	Card     *Card
+}
+
+type Card struct {
+	Title  string
+	Score  string
+	Fields []CardField
+}
+
+type CardField struct {
+	Label string
+	Lines []string
+	Code  bool
+	score bool
 }
 
 type PlanItem struct {

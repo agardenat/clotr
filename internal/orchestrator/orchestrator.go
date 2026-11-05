@@ -149,16 +149,25 @@ func (o *Orchestrator) triage(ctx context.Context, request string) Result {
 	if err != nil {
 		return Result{TaskID: triageID, Goal: goal, Status: "failed", Error: err.Error()}
 	}
-	t := Task{ID: triageID, Role: role, Goal: goal, Tools: o.Tools.Names()}
+	t := Task{ID: triageID, Role: role, Goal: goal, Tools: o.triageTools()}
 	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: t.ID, Role: t.Role, Goal: label}}})
 	o.Audit.Log("triage", map[string]any{"role": role, "cve": o.CVE != nil})
 	return o.runTask(ctx, request, t, nil, reached)
 }
 
 const (
-	cveGoal = "Fiches, avant toute planification : pour chacun des sujets %s (CVE, avis GHSA, ou compromission sans CVE désignée par ce libellé exact), établis depuis des sources vérifiées (avis de l'éditeur, NVD, GHSA, distribution, rapport d'incident ; recherche web) le type (faille ou compromission de chaîne d'approvisionnement), le produit et le composant touchés, les versions touchées ou malveillantes et les versions corrigées ou saines, et pour une compromission les indicateurs de compromission (empreintes, fichiers déposés, domaines et IP contactés, processus, persistance), les conditions d'exposition et le moyen de vérifier un actif (commande de version, paquet, fichier), puis enregistre-la aussitôt avec cve_advisory en citant les preuves des sources. host_component (obligatoire) : true si le composant est fourni par l'hôte et partagé avec ses conteneurs, comme le noyau. commands (obligatoire) : les commandes de détection exactes à lancer sur un actif, une ligne shell chacune, sans effet de bord (versions du binaire et de ses variantes, interrogation du gestionnaire de paquets, recherche des fichiers), et pour chaque condition d'exposition la commande qui la mesure ; elles s'exécuteront sans confirmation de l'utilisateur. Ne vérifie aucun actif : la vérification des actifs est confiée aux tâches planifiées ensuite. Un sujet introuvable dans les sources s'enregistre quand même, sans preuve (fiche non vérifiée), avec ce que la demande en dit."
+	cveGoal = "Fiches, avant toute planification : pour chacun des sujets %s (CVE, avis GHSA, ou compromission sans CVE désignée par ce libellé exact), établis depuis des sources vérifiées (avis de l'éditeur, NVD, GHSA, distribution, rapport d'incident ; recherche web) le type (faille ou compromission de chaîne d'approvisionnement), le produit et le composant touchés, les versions touchées ou malveillantes et les versions corrigées ou saines, le score de gravité publié (CVSS avec sa version et sa sévérité), et pour une compromission les indicateurs de compromission (empreintes, fichiers déposés, domaines et IP contactés, processus, persistance), les conditions d'exposition et le moyen de vérifier un actif (commande de version, paquet, fichier), puis enregistre-la aussitôt avec cve_advisory en citant les preuves des sources. host_component (obligatoire) : true si le composant est fourni par l'hôte et partagé avec ses conteneurs, comme le noyau. commands (obligatoire) : les commandes de détection exactes à lancer sur un actif, une ligne shell chacune, sans effet de bord (versions du binaire et de ses variantes, interrogation du gestionnaire de paquets, recherche des fichiers), et pour chaque condition d'exposition la commande qui la mesure ; elles s'exécuteront sans confirmation de l'utilisateur. Ne vérifie aucun actif : la vérification des actifs est confiée aux tâches planifiées ensuite. Un sujet introuvable dans les sources s'enregistre quand même, sans preuve (fiche non vérifiée), avec ce que la demande en dit."
 	cveDone = "Toutes les fiches CVE sont enregistrées : l'objectif est atteint. Conclus maintenant, au format demandé, sans appeler d'outil : résumé de chaque fiche avec ses preuves ; indique dans gaps ce qui reste incertain (versions, conditions d'exposition)."
 )
+
+func (o *Orchestrator) triageTools() []string {
+	names := o.Tools.Names()
+	if o.CVE == nil {
+		return names
+	}
+	allowed := append(append([]string{evidence.ToolName, evidence.SearchName, cve.AdvisoryTool}, memory.ToolNames()...), o.WebTools...)
+	return slices.DeleteFunc(names, func(n string) bool { return !slices.Contains(allowed, n) })
+}
 
 func (o *Orchestrator) advisoriesDone() string {
 	if len(o.CVE.Missing()) == 0 {

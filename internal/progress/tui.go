@@ -123,6 +123,9 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "lead":
 			return b, b.println(stLead.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
 		case "cve":
+			if m.Card != nil {
+				return b, b.println(m.Card.render(max(b.width-1, 20)) + "\n")
+			}
 			line := ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")
 			switch m.Status {
 			case "vulnerable", "compromised":
@@ -153,6 +156,65 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return b, tea.Quit
 	}
 	return b, nil
+}
+
+var severityStyles = []struct {
+	words []string
+	style lipgloss.Style
+}{
+	{[]string{"critical", "critique", "high", "élevé", "elevé", "haut"}, stFailed.Bold(true)},
+	{[]string{"medium", "moyen", "modéré"}, stWarn.Bold(true)},
+}
+
+func scoreStyle(score string) lipgloss.Style {
+	low := strings.ToLower(score)
+	for _, s := range severityStyles {
+		for _, w := range s.words {
+			if strings.Contains(low, w) {
+				return s.style
+			}
+		}
+	}
+	return stHeader
+}
+
+func (c *Card) render(width int) string {
+	head := " " + c.Title + " "
+	styled := stAdvice.Render(head)
+	fields := c.Fields
+	if c.Score != "" {
+		const margin = 6
+		if withScore := head + "· " + c.Score + " "; ansi.StringWidth(withScore)+margin <= width {
+			head = withScore
+			styled += stAdvice.Render("· ") + scoreStyle(c.Score).Render(c.Score+" ")
+		} else {
+			fields = append([]CardField{{Label: "Score", Lines: []string{c.Score}, score: true}}, fields...)
+		}
+	}
+	rule := strings.Repeat("─", max(width-ansi.StringWidth(head)-2, 2))
+	out := []string{stAdvice.Render("──") + styled + stAdvice.Render(rule)}
+	col := 0
+	for _, f := range fields {
+		col = max(col, ansi.StringWidth(f.Label))
+	}
+	col += 2
+	room := max(width-col, 20)
+	for _, f := range fields {
+		label := stHeader.Render(f.Label) + strings.Repeat(" ", col-ansi.StringWidth(f.Label))
+		for _, value := range f.Lines {
+			for _, part := range strings.Split(ansi.Wrap(value, room, ""), "\n") {
+				if f.Code {
+					part = stRunning.Render(part)
+				}
+				if f.score {
+					part = scoreStyle(c.Score).Render(part)
+				}
+				out = append(out, label+part)
+				label = strings.Repeat(" ", col)
+			}
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 func (b *board) println(line string) tea.Cmd {
