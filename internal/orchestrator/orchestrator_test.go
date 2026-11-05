@@ -737,6 +737,31 @@ func TestIncidentShowsFindingsAndSavesEachResult(t *testing.T) {
 	}
 }
 
+func TestTriageTools(t *testing.T) {
+	o, _ := newOrch(t, []string{dagPlan}, nil)
+	web := testutil.FakeTool{ToolName: "mcp_web_search", Fn: func(context.Context, json.RawMessage) (string, error) { return "ok", nil }}
+	o.Tools.Add(web)
+	o.WebTools = []string{web.ToolName, "absent_du_registre"}
+	all := o.Tools.Names()
+	if got := o.triageTools(); !slices.Equal(got, all) {
+		t.Fatalf("tri d'incident: %v, attendu %v", got, all)
+	}
+	ev := evidence.Open(t.TempDir(), 1)
+	o.CVE = cve.New([]string{"CVE-2026-0001"}, o.Memory, ev, audit.Nop())
+	o.Tools.Add(o.CVE.Tools()...)
+	got := o.triageTools()
+	for _, want := range []string{web.ToolName, cve.AdvisoryTool} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("%s absent: %v", want, got)
+		}
+	}
+	for _, no := range []string{"k8s_list", "fs_read", cve.ReportTool, "absent_du_registre"} {
+		if slices.Contains(got, no) {
+			t.Fatalf("%s offert au tri CVE: %v", no, got)
+		}
+	}
+}
+
 func TestCVEMode(t *testing.T) {
 	o, tl := newOrch(t, []string{dagPlan}, nil)
 	ev := evidence.Open(t.TempDir(), 1)
@@ -744,7 +769,7 @@ func TestCVEMode(t *testing.T) {
 	o.CVE = cve.New([]string{"CVE-2026-0001"}, o.Memory, ev, audit.Nop())
 	o.Tools.Add(o.CVE.Tools()...)
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
-	if _, err := o.CVE.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0001","product":"PHP","affected":"< 8.2.27","fixed":"8.2.27","host_component":false,"detection":"php -v","commands":["php -v"],"evidence":["`+src+`"]}`)); err != nil {
+	if _, err := o.CVE.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0001","product":"PHP","affected":"< 8.2.27","fixed":"8.2.27","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"php -v","commands":["php -v"],"evidence":["`+src+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if o.advisoriesDone() == "" {
