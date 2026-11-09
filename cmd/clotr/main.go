@@ -1532,6 +1532,42 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	return runErr
 }
 
+func withRequest(md string, turns []session.Turn) string {
+	if strings.TrimSpace(md) == "" || len(turns) == 0 {
+		return md
+	}
+	var b strings.Builder
+	for i, t := range turns {
+		if i > 0 {
+			b.WriteString(">\n")
+		}
+		for j, l := range strings.Split(strings.TrimSpace(t.Request), "\n") {
+			if j == 0 && len(turns) > 1 {
+				l = fmt.Sprintf("**%d.** %s", t.N, l)
+			}
+			b.WriteString(strings.TrimRight("> "+l, " \t\r") + "\n")
+		}
+	}
+	return b.String() + "\n---\n\n" + stripRequest(md)
+}
+
+func stripRequest(md string) string {
+	lines := strings.Split(md, "\n")
+	quoted := false
+	for i, l := range lines {
+		switch t := strings.TrimSpace(l); {
+		case t == "":
+		case strings.HasPrefix(t, ">"):
+			quoted = true
+		case t == "---" && quoted:
+			return strings.TrimLeft(strings.Join(lines[i+1:], "\n"), "\n")
+		default:
+			return md
+		}
+	}
+	return md
+}
+
 func (o *options) fullReport(md, sessDir string) string {
 	if !o.withEvidence || md == "" {
 		return md
@@ -1740,6 +1776,7 @@ func (rt *app) saveTurn(sess *session.Session, n int, dir string, report *orches
 		}
 		warn(sess.WriteJSON(dir, "results.json", report.Results))
 		if report.Markdown != "" {
+			report.Markdown = withRequest(report.Markdown, sess.Turns[:n])
 			warn(sess.WriteReport(dir, report.Markdown))
 		} else if t.Status == "ok" {
 			t.Status = "partial"
@@ -1870,6 +1907,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 			md = sec + "\n\n---\n\n" + md
 		}
 	}
+	md = withRequest(md, sess.Turns[:n])
 	if err := sess.WriteReport(dir, md); err != nil {
 		return err
 	}
@@ -2016,6 +2054,13 @@ func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error
 		fmt.Fprintln(os.Stderr, i18n.T("session.noreport"))
 		return nil
 	}
+	n := o.turn
+	if n == 0 {
+		n = len(s.Turns)
+	}
+	if stripRequest(report) == report {
+		report = withRequest(report, s.Turns[:n])
+	}
 	report = o.fullReport(report, s.Dir())
 	if o.output != "" {
 		if err := writeReport(w, o.output, []byte(report+"\n"), nil); err != nil {
@@ -2027,10 +2072,6 @@ func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error
 	}
 	if o.exportFmt == "" {
 		return nil
-	}
-	n := o.turn
-	if n == 0 {
-		n = len(s.Turns)
 	}
 	if o.sovereign == "" {
 		o.sovereign = s.Sovereign
