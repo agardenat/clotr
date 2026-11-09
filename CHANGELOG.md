@@ -2,6 +2,11 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Corrigé
+- Question restée sans réponse : à l'expiration du délai, clotr attend la fin de la lecture interrompue avant de fermer le terminal, au lieu de le fermer pendant qu'elle lisait encore.
+
 ## [0.58.0] - 2026-11-09
 
 ### Ajouté
