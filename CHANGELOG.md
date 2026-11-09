@@ -2,6 +2,12 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
+## [0.58.0] - 2026-11-09
+
+### Ajouté
+- Le rapport commence par la demande en citation, suivie d'une ligne `---` : sur un affinage, toutes les demandes de la session sont reprises, numérotées par tour. Le bloc est ajouté par clotr à l'écriture de `report.md` (run, chat, `session --synthesize`), et à l'affichage ou à l'export d'un rapport plus ancien qui n'en a pas.
+- Le tableau de progression et le journal affichent le niveau de raisonnement entre parenthèses après le modèle d'un agent, par exemple `fournisseur/modele (max)`, quand le profil du modèle en définit un pour le rôle de l'agent (`reasoning_effort`). Le modèle est tronqué avant le niveau si la colonne est trop étroite. `results.json` reprend le niveau par tâche (`reasoning_effort`).
+
 ## [0.57.0] - 2026-11-05
 
 ### Ajouté
