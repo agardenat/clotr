@@ -111,6 +111,7 @@ type Output struct {
 	Used      []string
 	Content   string
 	Model     string
+	Effort    string
 	Steps     int
 	ToolCalls int
 	Usage     llm.Usage
@@ -130,13 +131,17 @@ func (r *Runner) unavailable(m catalog.ModelInfo) string {
 	return ""
 }
 
-func (r *Runner) First(cands []catalog.ModelInfo) string {
+func (r *Runner) First(cands []catalog.ModelInfo, role string) (string, string) {
 	for _, c := range cands {
 		if r.unavailable(c) == "" {
-			return c.Ref()
+			return c.Ref(), c.ReasoningEffort[role]
 		}
 	}
-	return i18n.T("agent.none")
+	return i18n.T("agent.none"), ""
+}
+
+func (s *session) effort(m catalog.ModelInfo) string {
+	return m.ReasoningEffort[s.spec.Role]
 }
 
 type session struct {
@@ -196,7 +201,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 			r.Audit.Log("time_limit", map[string]any{"task": spec.TaskID, "step": step})
 		}
 		if !final && step > 1 && r.Inbox != nil {
-			if news := r.Inbox(tools.Caller{Task: spec.TaskID, Model: s.model.Ref(), Sovereign: s.model.Sovereign}); news != "" {
+			if news := r.Inbox(tools.Caller{Task: spec.TaskID, Model: s.model.Ref(), Effort: s.effort(s.model), Sovereign: s.model.Sovereign}); news != "" {
 				format := inboxMsg
 				if r.InboxFormat != "" {
 					format = r.InboxFormat
@@ -253,7 +258,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 					checks++
 					idle = 0
 					r.Audit.Log("answer_rejected", map[string]any{"task": spec.TaskID, "step": step, "model": s.out.Model, "problem": problem, "content": truncate(content, 2000)})
-					r.Events.Emit(progress.Event{Task: spec.TaskID, Kind: "step", Model: s.out.Model, Detail: i18n.T("answer.rejected"), Step: step})
+					r.Events.Emit(progress.Event{Task: spec.TaskID, Kind: "step", Model: s.out.Model, Effort: s.out.Effort, Detail: i18n.T("answer.rejected"), Step: step})
 					msgs = append(msgs, llm.Message{Role: "assistant", Content: content}, llm.Message{Role: "user", Content: problem})
 					continue
 				}
@@ -429,7 +434,7 @@ func (s *session) switchIfOutputExhausted(ctx context.Context, step int, req llm
 		}
 		s.cur = next
 		s.r.Audit.Log("output_exhausted", map[string]any{"task": s.spec.TaskID, "step": step, "model": from, "completion_tokens": resp.Usage.CompletionTokens, "next": cands[next].Ref()})
-		s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[next].Ref(), Detail: i18n.T("fallback.exhausted", from)})
+		s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[next].Ref(), Effort: s.effort(cands[next]), Detail: i18n.T("fallback.exhausted", from)})
 		var err error
 		if resp, err = s.chat(ctx, step, req); err != nil {
 			return nil, err
@@ -461,7 +466,7 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 					pause = min(ra, maxRoundPause)
 				}
 			}
-			r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[s.cur].Ref(), Detail: i18n.T("fallback.round", truncate(lastErr.Error(), 120), pause)})
+			r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cands[s.cur].Ref(), Effort: s.effort(cands[s.cur]), Detail: i18n.T("fallback.round", truncate(lastErr.Error(), 120), pause)})
 			r.Audit.Log("retry_round", map[string]any{"task": s.spec.TaskID, "step": step, "round": round, "pause": pause.String(), "persistent": persistent, "error": lastErr.Error()})
 			select {
 			case <-ctx.Done():
@@ -530,6 +535,7 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 					s.cur = i
 					s.model = m
 					s.out.Model = m.Ref()
+					s.out.Effort = req.ReasoningEffort
 					s.out.Sovereign = m.Sovereign
 					s.out.Usage.PromptTokens += resp.Usage.PromptTokens
 					s.out.Usage.CompletionTokens += resp.Usage.CompletionTokens
@@ -538,7 +544,7 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 						r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "budget", Model: m.Provider, Detail: i18n.T("budget.dropped", reason)})
 						r.Audit.Log("budget_exhausted", map[string]any{"provider": m.Provider, "reason": reason})
 					}
-					r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "step", Model: m.Ref(), Detail: fmt.Sprintf("%d", step), Step: step})
+					r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "step", Model: m.Ref(), Effort: req.ReasoningEffort, Detail: fmt.Sprintf("%d", step), Step: step})
 					return resp, nil
 				}
 				if ctx.Err() != nil {
@@ -551,7 +557,7 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 				if ra := llm.RetryAfter(err); ra > wait {
 					wait = min(ra, 30*time.Second)
 				}
-				r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "retry", Model: m.Ref(), Detail: i18n.T("retry", attempt, m.Ref(), truncate(err.Error(), 120), wait)})
+				r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "retry", Model: m.Ref(), Effort: req.ReasoningEffort, Detail: i18n.T("retry", attempt, m.Ref(), truncate(err.Error(), 120), wait)})
 				select {
 				case <-ctx.Done():
 					return nil, ctx.Err()
@@ -567,13 +573,13 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 			}
 			if llm.Unavailable(err) {
 				if _, loaded := r.down.LoadOrStore(m.Ref(), true); !loaded {
-					r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "dropped", Model: m.Ref(), Detail: i18n.T("dropped", truncate(err.Error(), 120))})
+					r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "dropped", Model: m.Ref(), Effort: req.ReasoningEffort, Detail: i18n.T("dropped", truncate(err.Error(), 120))})
 					r.Audit.Log("model_down", map[string]any{"model": m.Ref(), "error": err.Error()})
 				}
 			}
 			if k+1 < len(cands) {
 				next := cands[(i+1)%len(cands)]
-				r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: next.Ref(), Detail: i18n.T("fallback.after", m.Ref(), truncate(err.Error(), 120))})
+				r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: next.Ref(), Effort: s.effort(next), Detail: i18n.T("fallback.after", m.Ref(), truncate(err.Error(), 120))})
 			}
 		}
 	}
@@ -592,7 +598,7 @@ func (s *session) execTools(ctx context.Context, step int, calls []llm.ToolCall)
 			defer wg.Done()
 			s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "tool", Detail: tc.Function.Name + " " + truncate(tc.Function.Arguments, 140)})
 			t0 := time.Now()
-			cctx := tools.WithCaller(ctx, tools.Caller{Task: s.spec.TaskID, Model: s.model.Ref(), Sovereign: s.model.Sovereign})
+			cctx := tools.WithCaller(ctx, tools.Caller{Task: s.spec.TaskID, Model: s.model.Ref(), Effort: s.effort(s.model), Sovereign: s.model.Sovereign})
 			res, err := s.r.Tools.Call(cctx, s.spec.Tools, tc.Function.Name, tc.Function.Arguments)
 			rec := map[string]any{"task": s.spec.TaskID, "step": step, "tool": tc.Function.Name, "args": tc.Function.Arguments, "duration_ms": time.Since(t0).Milliseconds(), "output_bytes": len(res)}
 			if err != nil {
@@ -638,7 +644,7 @@ func (s *session) streamProgress(step int) func(llm.StreamProgress) {
 		default:
 			detail = i18n.T("stream.reasoning", approxTokens(p.Chunks))
 		}
-		s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "stream", Model: s.spec.Candidates[s.cur].Ref(), Detail: detail, Step: step})
+		s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "stream", Model: s.spec.Candidates[s.cur].Ref(), Effort: s.effort(s.spec.Candidates[s.cur]), Detail: detail, Step: step})
 	}
 }
 

@@ -5,6 +5,7 @@ import "context"
 type Caller struct {
 	Task      string
 	Model     string
+	Effort    string
 	Sovereign bool
 }
 

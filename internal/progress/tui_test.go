@@ -252,3 +252,28 @@ func TestCardRender(t *testing.T) {
 		}
 	}
 }
+
+func TestBoardShowsReasoningEffort(t *testing.T) {
+	b := newBoard(10)
+	b.width = 160
+	b.apply(Event{Task: "planner", Kind: "start", Model: "local/model-l", Effort: "max"})
+	b.apply(Event{Task: "t1", Kind: "start", Model: "openrouter/some-vendor/a-very-long-model-name-v2", Effort: "high"})
+	b.apply(Event{Task: "t2", Kind: "start", Model: "local/model-s"})
+	if l := ansi.Strip(b.line(b.idx["planner"])); !strings.Contains(l, "local/model-l (max)") {
+		t.Errorf("planner: %s", l)
+	}
+	l := ansi.Strip(b.line(b.idx["t1"]))
+	if !strings.Contains(l, "… (high)") {
+		t.Errorf("modèle long: %s", l)
+	}
+	if l := ansi.Strip(b.line(b.idx["t2"])); strings.Contains(l, "(") {
+		t.Errorf("sans niveau: %s", l)
+	}
+	b.apply(Event{Task: "planner", Kind: "fallback", Model: "local/model-m", Effort: "low", Detail: "x"})
+	if l := ansi.Strip(b.line(b.idx["planner"])); strings.Count(l, "local/model-m (low)") != 2 {
+		t.Errorf("bascule: %s", l)
+	}
+	if got := modelCell("a/b", "medium", 30); got != "a/b (medium)" {
+		t.Errorf("cellule: %q", got)
+	}
+}

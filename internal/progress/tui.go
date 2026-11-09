@@ -51,13 +51,13 @@ const (
 )
 
 type row struct {
-	id, role, model, status, detail string
-	deps                            []string
-	step, tools                     int
-	cost                            float64
-	warn, limited                   bool
-	stop                            string
-	start, end                      time.Time
+	id, role, model, effort, status, detail string
+	deps                                    []string
+	step, tools                             int
+	cost                                    float64
+	warn, limited                           bool
+	stop                                    string
+	start, end                              time.Time
 }
 
 type eventMsg Event
@@ -264,7 +264,7 @@ func (b *board) apply(e Event) {
 	}
 	r := b.get(e.Task)
 	if e.Model != "" && e.Kind != "budget" {
-		r.model = e.Model
+		r.model, r.effort = e.Model, e.Effort
 	}
 	switch e.Kind {
 	case "start":
@@ -307,7 +307,7 @@ func (b *board) apply(e Event) {
 		}
 	case "fallback":
 		r.warn = true
-		r.detail = i18n.T("fallback", e.Model, e.Detail)
+		r.detail = i18n.T("fallback", e.ModelLabel(), e.Detail)
 	case "retry":
 		r.warn = true
 		r.detail = e.Detail
@@ -412,7 +412,7 @@ func (b *board) line(r *row) string {
 		detail += fmt.Sprintf(" · %.4f $", r.cost)
 	}
 	detail = strings.Join(strings.Fields(detail), " ")
-	prefix := fmt.Sprintf(" %s %-12s %-11s %-30s %s %s %7s ", icon, ansi.Truncate(r.id, 12, "…"), ansi.Truncate(r.role, 11, "…"), ansi.Truncate(r.model, 30, "…"), b.bar(r), steps, elapsed)
+	prefix := fmt.Sprintf(" %s %-12s %-11s %-30s %s %s %7s ", icon, ansi.Truncate(r.id, 12, "…"), ansi.Truncate(r.role, 11, "…"), modelCell(r.model, r.effort, 30), b.bar(r), steps, elapsed)
 	room := max(b.width-ansi.StringWidth(prefix)-1, 10)
 	detail = ansi.Truncate(detail, room, "…")
 	switch {
@@ -424,6 +424,14 @@ func (b *board) line(r *row) string {
 		detail = stFaint.Render(detail)
 	}
 	return ansi.Truncate(prefix+detail, max(b.width-1, 20), "…")
+}
+
+func modelCell(model, effort string, w int) string {
+	if effort == "" {
+		return ansi.Truncate(model, w, "…")
+	}
+	suffix := " (" + effort + ")"
+	return ansi.Truncate(ansi.Truncate(model, max(w-ansi.StringWidth(suffix), 8), "…")+suffix, w, "…")
 }
 
 func fmtDur(d time.Duration) string {

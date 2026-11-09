@@ -55,6 +55,7 @@ type Result struct {
 	Role          string   `json:"role"`
 	Goal          string   `json:"goal"`
 	Model         string   `json:"model,omitempty"`
+	Effort        string   `json:"reasoning_effort,omitempty"`
 	Status        string   `json:"status"`
 	Findings      []string `json:"findings,omitempty"`
 	Evidence      []string `json:"evidence,omitempty"`
@@ -430,7 +431,8 @@ func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) 
 	user := o.planInput(request)
 	var lastErr error
 	for attempt := 1; attempt <= 2; attempt++ {
-		o.Events.Emit(progress.Event{Task: "planner", Kind: "start", Model: o.Runner.First(cands)})
+		model, effort := o.Runner.First(cands, config.RolePlanner)
+		o.Events.Emit(progress.Event{Task: "planner", Kind: "start", Model: model, Effort: effort})
 		out, err := o.Runner.Run(ctx, agent.Spec{TaskID: "planner", Role: config.RolePlanner, System: o.plannerPrompt(), User: user, Candidates: cands})
 		if err != nil {
 			return nil, fmt.Errorf("planner: %w", err)
@@ -450,9 +452,9 @@ func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) 
 			for _, t := range plan.Tasks {
 				items = append(items, progress.PlanItem{ID: t.ID, Role: t.Role, Goal: t.Goal, DependsOn: t.DependsOn})
 			}
-			o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Model: out.Model, Plan: items})
+			o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Model: out.Model, Effort: out.Effort, Plan: items})
 			o.Audit.Log("plan", map[string]any{"model": out.Model, "tasks": plan.Tasks})
-			o.Events.Emit(progress.Event{Task: "planner", Kind: "done", Model: out.Model, Detail: i18n.N(len(plan.Tasks), "task")})
+			o.Events.Emit(progress.Event{Task: "planner", Kind: "done", Model: out.Model, Effort: out.Effort, Detail: i18n.N(len(plan.Tasks), "task")})
 			o.afterTask(ctx)
 			return &plan, nil
 		}
@@ -757,7 +759,7 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 				o.Events.Emit(progress.Event{Task: t.ID, Kind: "gap", Detail: g})
 			}
 		}
-		o.Events.Emit(progress.Event{Task: t.ID, Kind: kind, Model: res.Model, Detail: detail, Cost: res.Cost, Step: res.Steps, Duration: time.Since(start)})
+		o.Events.Emit(progress.Event{Task: t.ID, Kind: kind, Model: res.Model, Effort: res.Effort, Detail: detail, Cost: res.Cost, Step: res.Steps, Duration: time.Since(start)})
 		o.afterTask(ctx)
 		return res
 	}
@@ -766,7 +768,8 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 		res.Status, res.Error = "failed", err.Error()
 		return finish()
 	}
-	o.Events.Emit(progress.Event{Task: t.ID, Kind: "start", Model: o.Runner.First(cands), Detail: t.Goal})
+	model, effort := o.Runner.First(cands, t.Role)
+	o.Events.Emit(progress.Event{Task: t.ID, Kind: "start", Model: model, Effort: effort, Detail: t.Goal})
 	tctx, cancel := context.WithCancel(ctx)
 	var deadline time.Time
 	if timeout := o.Cfg.Limits.AgentTimeout.Duration; timeout > 0 {
@@ -791,7 +794,7 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 	}
 	out, err := o.Runner.Run(tctx, spec)
 	if out != nil {
-		res.Model, res.Steps, res.ToolCalls, res.Cost, res.Limited, res.Limit = out.Model, out.Steps, out.ToolCalls, out.Cost, out.Limited, out.Limit
+		res.Model, res.Effort, res.Steps, res.ToolCalls, res.Cost, res.Limited, res.Limit = out.Model, out.Effort, out.Steps, out.ToolCalls, out.Cost, out.Limited, out.Limit
 		res.Used = out.Used
 	}
 	if err != nil {
@@ -864,7 +867,8 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 	if len(leads) > 0 {
 		user += "\n\nCauses et pistes signalées par les agents en cours de run (à confirmer par les preuves citées et les constats ; une piste non établie se présente comme telle):\n" + memory.Format(leads)
 	}
-	o.Events.Emit(progress.Event{Task: "synthesizer", Kind: "start", Model: o.Runner.First(cands)})
+	model, effort := o.Runner.First(cands, config.RoleSynthesizer)
+	o.Events.Emit(progress.Event{Task: "synthesizer", Kind: "start", Model: model, Effort: effort})
 	out, err := o.Runner.Run(ctx, agent.Spec{
 		TaskID:     "synthesizer",
 		Role:       config.RoleSynthesizer,
@@ -876,7 +880,7 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 	if err != nil {
 		return "", "", fmt.Errorf("synthesizer: %w", err)
 	}
-	o.Events.Emit(progress.Event{Task: "synthesizer", Kind: "done", Model: out.Model})
+	o.Events.Emit(progress.Event{Task: "synthesizer", Kind: "done", Model: out.Model, Effort: out.Effort})
 	o.afterTask(ctx)
 	return o.finalize(out.Content), out.Model, nil
 }
@@ -935,7 +939,8 @@ func (o *Orchestrator) Direct(ctx context.Context, request, role string) (*Repor
 		return nil, err
 	}
 	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: t.ID, Role: role, Goal: request}}})
-	o.Events.Emit(progress.Event{Task: t.ID, Kind: "start", Model: o.Runner.First(cands), Detail: request})
+	model, effort := o.Runner.First(cands, role)
+	o.Events.Emit(progress.Event{Task: t.ID, Kind: "start", Model: model, Effort: effort, Detail: request})
 	o.Audit.Log("direct", map[string]any{"role": role, "tools": len(t.Tools)})
 	out, err := o.Runner.Run(ctx, agent.Spec{
 		TaskID:     t.ID,
@@ -947,7 +952,7 @@ func (o *Orchestrator) Direct(ctx context.Context, request, role string) (*Repor
 		OnText:     o.OnAnswer,
 	})
 	if out != nil {
-		res.Model, res.Steps, res.ToolCalls, res.Cost, res.Limited, res.Limit = out.Model, out.Steps, out.ToolCalls, out.Cost, out.Limited, out.Limit
+		res.Model, res.Effort, res.Steps, res.ToolCalls, res.Cost, res.Limited, res.Limit = out.Model, out.Effort, out.Steps, out.ToolCalls, out.Cost, out.Limited, out.Limit
 		plan.Model = out.Model
 	}
 	res.Duration = time.Since(start).Truncate(time.Millisecond).String()
@@ -955,14 +960,14 @@ func (o *Orchestrator) Direct(ctx context.Context, request, role string) (*Repor
 	if err != nil {
 		res.Status, res.Error = "failed", err.Error()
 		report.Results = []Result{res}
-		o.Events.Emit(progress.Event{Task: t.ID, Kind: "failed", Model: res.Model, Detail: res.Error, Step: res.Steps, Duration: time.Since(start)})
+		o.Events.Emit(progress.Event{Task: t.ID, Kind: "failed", Model: res.Model, Effort: res.Effort, Detail: res.Error, Step: res.Steps, Duration: time.Since(start)})
 		o.Audit.Log("task_end", map[string]any{"task": t.ID, "status": res.Status, "model": res.Model, "error": res.Error, "steps": res.Steps, "tool_calls": res.ToolCalls, "duration": res.Duration})
 		return report, err
 	}
 	res.Status, res.Raw = "ok", out.Content
 	report.Results = []Result{res}
 	report.Markdown = o.finalize(out.Content)
-	o.Events.Emit(progress.Event{Task: t.ID, Kind: "done", Model: res.Model, Detail: i18n.N(res.ToolCalls, "tool call"), Cost: res.Cost, Step: res.Steps, Duration: time.Since(start)})
+	o.Events.Emit(progress.Event{Task: t.ID, Kind: "done", Model: res.Model, Effort: res.Effort, Detail: i18n.N(res.ToolCalls, "tool call"), Cost: res.Cost, Step: res.Steps, Duration: time.Since(start)})
 	o.Audit.Log("task_end", map[string]any{"task": t.ID, "status": res.Status, "model": res.Model, "steps": res.Steps, "tool_calls": res.ToolCalls, "duration": res.Duration})
 	o.afterTask(ctx)
 	return report, nil

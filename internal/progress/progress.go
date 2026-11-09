@@ -13,6 +13,7 @@ type Event struct {
 	Task     string
 	Kind     string
 	Model    string
+	Effort   string
 	Detail   string
 	Status   string
 	Step     int
@@ -20,6 +21,17 @@ type Event struct {
 	Duration time.Duration
 	Plan     []PlanItem
 	Card     *Card
+}
+
+func (e Event) ModelLabel() string {
+	return modelLabel(e.Model, e.Effort)
+}
+
+func modelLabel(model, effort string) string {
+	if model == "" || effort == "" {
+		return model
+	}
+	return model + " (" + effort + ")"
 }
 
 type Card struct {
@@ -76,7 +88,7 @@ func NewPrinter(w io.Writer) *Printer {
 			elapsed := time.Since(p.start).Truncate(100 * time.Millisecond)
 			line := fmt.Sprintf("[%7s] %-14s %-10s", elapsed, e.Task, kindLabel(e.Kind))
 			if e.Model != "" {
-				line += " " + e.Model
+				line += " " + e.ModelLabel()
 			}
 			if e.Duration > 0 {
 				e.Detail += fmt.Sprintf(", %s", e.Duration.Truncate(time.Millisecond))
