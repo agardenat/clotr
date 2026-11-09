@@ -159,7 +159,7 @@ func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 	if a.Replaces != 0 {
 		detail += i18n.T("lead.replaces", a.Replaces)
 	}
-	t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "lead", Model: c.Model, Detail: detail})
+	t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "lead", Model: c.Model, Effort: c.Effort, Detail: detail})
 	return fmt.Sprintf("cause signalée (#%d) : affichée à l'utilisateur et transmise aux autres tâches ; poursuis ta tâche", id), nil
 }
 

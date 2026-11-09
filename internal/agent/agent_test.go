@@ -877,3 +877,25 @@ func TestReasoningEffortByRoleAndModel(t *testing.T) {
 		t.Fatalf("synthesizer: %+v", calls)
 	}
 }
+
+func TestReasoningEffortReported(t *testing.T) {
+	chat := &testutil.FakeChat{Fn: func(context.Context, string, llm.Request) (*llm.Response, error) {
+		return testutil.Reply("# Rapport"), nil
+	}}
+	var cur, peak int32
+	r := runner(chat, registry(&cur, &peak))
+	cands := []catalog.ModelInfo{{Provider: "p", ID: "thinker", ReasoningEffort: map[string]string{"planner": "max"}}}
+	if ref, effort := r.First(cands, "planner"); ref != cands[0].Ref() || effort != "max" {
+		t.Fatalf("First planner: %s %s", ref, effort)
+	}
+	if _, effort := r.First(cands, "synthesizer"); effort != "" {
+		t.Fatalf("First synthesizer: %s", effort)
+	}
+	out, err := r.Run(context.Background(), Spec{TaskID: "planner", Role: "planner", System: "s", User: "u", Candidates: cands})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Effort != "max" {
+		t.Fatalf("Output.Effort: %q", out.Effort)
+	}
+}

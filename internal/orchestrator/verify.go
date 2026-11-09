@@ -117,7 +117,8 @@ func (o *Orchestrator) verifyTask(ctx context.Context, id, role string, tools []
 	for n, k := range idx {
 		fmt.Fprintf(&in, "%d. %s\n", n+1, r.Findings[k])
 	}
-	o.Events.Emit(progress.Event{Task: id, Kind: "start", Model: o.Runner.First(cands), Detail: i18n.T("verify.goal", r.TaskID)})
+	model, effort := o.Runner.First(cands, role)
+	o.Events.Emit(progress.Event{Task: id, Kind: "start", Model: model, Effort: effort, Detail: i18n.T("verify.goal", r.TaskID)})
 	out, err := o.Runner.Run(ctx, agent.Spec{
 		TaskID:     id,
 		Role:       role,
@@ -129,7 +130,7 @@ func (o *Orchestrator) verifyTask(ctx context.Context, id, role string, tools []
 	})
 	done := progress.Event{Task: id, Duration: time.Since(start)}
 	if out != nil {
-		done.Model, done.Cost, done.Step = out.Model, out.Cost, out.Steps
+		done.Model, done.Effort, done.Cost, done.Step = out.Model, out.Effort, out.Cost, out.Steps
 	}
 	var parsed struct {
 		Verdicts []verdict `json:"verdicts"`

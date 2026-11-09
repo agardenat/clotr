@@ -346,7 +346,7 @@ func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, er
 		return "", err
 	}
 	t.s.audit.Log("cve_advisory", map[string]any{"task": c.Task, "model": c.Model, "advisory": adv})
-	t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "cve", Status: "advisory", Model: c.Model, Detail: i18n.T("cve.advisory", line), Card: adv.card()})
+	t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "cve", Status: "advisory", Model: c.Model, Effort: c.Effort, Detail: i18n.T("cve.advisory", line), Card: adv.card()})
 	return "fiche enregistrée : affichée à l'utilisateur et transmise aux autres tâches", nil
 }
 
@@ -476,7 +476,7 @@ func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 		return "", err
 	}
 	t.s.audit.Log("cve_report", map[string]any{"task": c.Task, "model": c.Model, "finding": f})
-	t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "cve", Model: c.Model, Detail: f.display(), Status: f.Status})
+	t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "cve", Model: c.Model, Effort: c.Effort, Detail: f.display(), Status: f.Status})
 	return "statut signalé : affiché à l'utilisateur et transmis aux autres tâches ; poursuis avec les autres actifs", nil
 }
 
