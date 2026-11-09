@@ -193,24 +193,24 @@ func prompt(ctx context.Context, tty *Console, question string, secret bool) (st
 	fmt.Fprint(tty.Out, question)
 	if !secret {
 		var in io.Reader = tty.In
+		var cancel func() bool
 		if r, err := cancelreader.NewReader(tty.In); err == nil {
 			defer r.Close()
-			defer context.AfterFunc(ctx, func() { r.Cancel() })()
-			in = r
+			in, cancel = r, r.Cancel
 		}
 		return readInterruptible(ctx, tty, func() (string, error) {
 			return bufio.NewReader(in).ReadString('\n')
-		})
+		}, cancel)
 	}
 	s, err := readInterruptible(ctx, tty, func() (string, error) {
 		b, err := term.ReadPassword(tty.In.Fd())
 		return string(b), err
-	})
+	}, nil)
 	fmt.Fprintln(tty.Out)
 	return s, err
 }
 
-func readInterruptible(ctx context.Context, tty *Console, read func() (string, error)) (string, error) {
+func readInterruptible(ctx context.Context, tty *Console, read func() (string, error), cancel func() bool) (string, error) {
 	state, err := term.GetState(tty.In.Fd())
 	if err != nil {
 		return "", err
@@ -234,6 +234,9 @@ func readInterruptible(ctx context.Context, tty *Console, read func() (string, e
 		}
 		return r.s, nil
 	case <-ctx.Done():
+		if cancel != nil && cancel() {
+			<-ch
+		}
 		_ = term.Restore(tty.In.Fd(), state)
 		fmt.Fprintln(tty.Out)
 		return "", ctx.Err()
