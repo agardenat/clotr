@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -137,7 +138,7 @@ func TestEnsureLogin(t *testing.T) {
 	if b, _ := counts(); b != 1 || token() != "hvs.new1" {
 		t.Fatalf("sans jeton: navigateur=%d jeton=%q", b, token())
 	}
-	if st, _ := os.Stat(tokenFile); st.Mode().Perm() != 0o600 {
+	if st, _ := os.Stat(tokenFile); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Fatalf("droits du jeton: %v", st.Mode())
 	}
 
