@@ -67,7 +67,7 @@ var (
 	identRe     = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	paramTypes  = []string{"string", "url", "int", "bool", "env", "path", "enum", "list"}
 	itemTypes   = []string{"string", "url", "int", "bool", "path"}
-	drivers     = []string{"http", "ssh", "local", "shell"}
+	drivers     = []string{"http", "ssh", "local", "shell", "mcp"}
 	targetKinds = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 	envNameRe   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
@@ -160,6 +160,11 @@ func (t *Template) validate() error {
 		}
 		if c.Driver == "http" {
 			if err := checkHTTPOptions(options(c.Options)); err != nil {
+				fail(fmt.Sprintf("connectors.%s: %v", n, err))
+			}
+		}
+		if c.Driver == "mcp" {
+			if err := checkMCPOptions(options(c.Options)); err != nil {
 				fail(fmt.Sprintf("connectors.%s: %v", n, err))
 			}
 		}

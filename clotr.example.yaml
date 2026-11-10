@@ -97,6 +97,9 @@ mcp:
       Authorization: Bearer ${MCP_REMOTE_TOKEN}
     allow: [search, "get_*"]
     timeout: 30s
+  - name: gitlab
+    url: https://gitlab.example.com/api/v4/mcp
+    auth: oauth
 
 templates:
   dir: ~/.config/clotr/templates

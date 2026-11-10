@@ -47,6 +47,7 @@ import (
 	"github.com/agardenat/clotr/internal/tools/dns"
 	"github.com/agardenat/clotr/internal/tools/files"
 	"github.com/agardenat/clotr/internal/tools/mcp"
+	"github.com/agardenat/clotr/internal/vault"
 	"github.com/agardenat/clotr/internal/websearch"
 )
 
@@ -106,6 +107,7 @@ type app struct {
 	audit        *audit.Logger
 	budget       *budget.Tracker
 	mcpServers   []*mcp.Server
+	mcpByName    map[string]*mcp.Server
 	instances    []*template.Instance
 	memory       *memory.Store
 	lang         string
@@ -634,6 +636,11 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		return nil, err
 	}
 	cfg := rt.cfg
+	if l := cfg.Vault.Login; l != nil {
+		if err := vault.EnsureLogin(ctx, vault.LoginOptions{Path: l.Path, Role: l.Role, Port: l.Port, MinTTL: l.MinTTL.Duration, Wait: 5 * time.Minute}); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cli.warn.vault_login", err))
+		}
+	}
 	rt.pool = llm.NewPool(cfg, &http.Client{})
 	rt.lang = o.lang
 	rt.budget = budget.NewTracker(cfg)
@@ -720,6 +727,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		}
 	}
 	rt.setupInstances(ctx, o, filter, warn)
+	rt.connectTemplateMCP(ctx, warn)
 	rt.baseEnv = envLines
 	for _, in := range rt.instances {
 		envLines = append(envLines, rt.instanceEnv[in.Name]...)
@@ -754,7 +762,14 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 			}
 		}
 	}
-
+	if o.exportFmt != "" {
+		if i := slices.IndexFunc(cfg.MCP, func(m config.MCPServer) bool { return m.Name == cfg.Export.MCP }); i >= 0 {
+			if err := mcp.Login(ctx, cfg.MCP[i], version); err != nil {
+				warn(err.Error())
+			}
+		}
+	}
+	mcp.CloseLogins()
 	return rt, nil
 }
 
@@ -806,6 +821,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		in, err := newInstance(cfg, ic, t, o.levelFor(cfg, ic))
 		if err == nil {
 			in.Audit = rt.audit.Log
+			in.MCP = rt.templateMCP
 			in.Warn = warn
 			in.Confirm = confirmWithin(cfg.Limits.ConfirmTimeout.Duration)
 			in.Approvals = approvals
@@ -843,6 +859,58 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		rt.registry.AddCompanions(in.ToolPrefix(), in.Companions()...)
 		rt.instanceEnv[ic.Name] = in.EnvironmentLines()
 	}
+}
+
+func (rt *app) connectTemplateMCP(ctx context.Context, warn func(string)) {
+	rt.mcpByName = map[string]*mcp.Server{}
+	for _, s := range rt.mcpServers {
+		rt.mcpByName[s.Name()] = s
+	}
+	var need []config.MCPServer
+	seen := map[string]bool{}
+	for _, in := range rt.instances {
+		for _, n := range in.MCPServers() {
+			if seen[n] || rt.mcpByName[n] != nil {
+				continue
+			}
+			seen[n] = true
+			i := slices.IndexFunc(rt.cfg.MCP, func(m config.MCPServer) bool { return m.Name == n })
+			if i < 0 {
+				warn(i18n.T("cli.warn.template_mcp", in.Name, n))
+				continue
+			}
+			need = append(need, rt.cfg.MCP[i])
+		}
+	}
+	if len(need) == 0 {
+		return
+	}
+	servers, warnings := mcp.ConnectAll(ctx, need, version)
+	for _, w := range warnings {
+		warn(w)
+	}
+	for _, s := range servers {
+		rt.mcpByName[s.Name()] = s
+		rt.closers = append(rt.closers, func() { _ = s.Close() })
+	}
+}
+
+type templateMCPCaller struct{ s *mcp.Server }
+
+func (c templateMCPCaller) CallTool(ctx context.Context, tool string, args map[string]any) (*template.MCPResult, error) {
+	text, data, isErr, err := c.s.CallExposed(ctx, tool, args)
+	if err != nil {
+		return nil, err
+	}
+	return &template.MCPResult{Text: text, Data: data, IsError: isErr}, nil
+}
+
+func (rt *app) templateMCP(_ context.Context, server string) (template.MCPCaller, error) {
+	s := rt.mcpByName[server]
+	if s == nil {
+		return nil, i18n.E("tpl.mcp.unavailable", server)
+	}
+	return templateMCPCaller{s}, nil
 }
 
 func (rt *app) warnFiltered(text string) {

@@ -64,6 +64,10 @@ func TestValidationErrors(t *testing.T) {
 		"providers:\n  - name: a\n    base_url: http://x\nreport_export: {mcp: absent}\n":                                                      "report_export.mcp",
 		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m}\nweb_search: {mcp: m}\nreport_export: {mcp: m}\n": "already the web_search",
 		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m}\nreport_export: {mcp: m, role: planner}\n":        "report_export.role",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m, auth: basic}\n":                                   "invalid (oauth)",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m, transport: sse, auth: oauth}\n":                   "oauth requires",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, command: /bin/m, auth: oauth}\n":                                 "oauth requires",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m, auth: oauth, headers: {authorization: x}}\n":      "Authorization header",
 	}
 	for in, want := range cases {
 		_, err := Parse([]byte(in))
@@ -240,5 +244,24 @@ func TestExportRole(t *testing.T) {
 	c.Export.Role = "collector"
 	if got := c.ExportRole(); got != "collector" {
 		t.Fatalf("rôle configuré: %q", got)
+	}
+}
+
+func TestVaultLogin(t *testing.T) {
+	c, err := Parse([]byte("providers:\n  - name: a\n    base_url: http://x\nvault:\n  addr: https://vault.example\n  login: {method: oidc, path: auth0-oidc}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := c.Vault.Login
+	if l == nil || l.Path != "auth0-oidc" || l.Port != 8250 || l.MinTTL.Duration != 4*time.Hour {
+		t.Fatalf("défauts: %+v", l)
+	}
+	for in, want := range map[string]string{
+		"vault:\n  login: {method: userpass}\n":            "invalid (oidc)",
+		"vault:\n  login: {method: oidc, port: 0x1ffff}\n": "1-65535",
+	} {
+		if _, err := Parse([]byte("providers:\n  - name: a\n    base_url: http://x\n" + in)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v", in, err)
+		}
 	}
 }

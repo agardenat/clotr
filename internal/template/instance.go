@@ -87,6 +87,7 @@ type Instance struct {
 	fp     string
 
 	Audit func(kind string, fields map[string]any)
+	MCP   func(ctx context.Context, server string) (MCPCaller, error)
 	Print func(msg string)
 	Warn  func(msg string)
 
@@ -107,6 +108,7 @@ type Instance struct {
 	inv       *Inventory
 	invValue  starlark.Value
 	https     map[string]*httpConn
+	mcps      map[string]string
 	sshName   string
 	local     bool
 	shell     bool
@@ -155,7 +157,7 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 	if err != nil {
 		return nil, fmt.Errorf("instance %s: %w", name, err)
 	}
-	in := &Instance{Name: name, T: t, params: params, conns: map[string]options{}, https: map[string]*httpConn{}, memo: map[string]*memoEntry{}, creds: map[string]creds.Pair{}, getenv: os.Getenv, readFile: os.ReadFile, realPath: filepath.EvalSymlinks, listDir: walkDir, now: time.Now, sleep: sleepCtx}
+	in := &Instance{Name: name, T: t, params: params, conns: map[string]options{}, https: map[string]*httpConn{}, mcps: map[string]string{}, memo: map[string]*memoEntry{}, creds: map[string]creds.Pair{}, getenv: os.Getenv, readFile: os.ReadFile, realPath: filepath.EvalSymlinks, listDir: walkDir, now: time.Now, sleep: sleepCtx}
 	var rendered []string
 	for i, f := range t.Files {
 		r, err := Render(f, params)
@@ -194,6 +196,12 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 				return nil, fmt.Errorf("instance %s: connectors.%s: %w", name, cn, err)
 			}
 			in.https[cn] = hc
+		case "mcp":
+			server := o.str("server")
+			if server == "" {
+				return nil, fmt.Errorf("instance %s: connectors.%s: %w", name, cn, i18n.E("tpl.mcp.server"))
+			}
+			in.mcps[cn] = server
 		case "ssh", "local", "shell":
 			in.sshName = cn
 			in.local = c.Driver == "local"
