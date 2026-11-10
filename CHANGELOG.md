@@ -4,6 +4,11 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 
 ## [Non publié]
 
+### Ajouté
+- `auth: oauth` sur une entrée `mcp` en transport `http` : au premier lancement, clotr s'enregistre auprès du serveur d'autorisation, ouvre le navigateur pour la connexion et conserve le client et le jeton dans `$XDG_STATE_HOME/clotr/oauth/<serveur>.json` (droits 600). Les lancements suivants réutilisent et rafraîchissent le jeton sans navigateur. Permet notamment d'utiliser le serveur MCP natif de GitLab, qui n'accepte pas les jetons d'accès personnels classiques. La connexion n'est demandée qu'au démarrage : pendant le run, un rafraîchissement refusé fait échouer l'appel avec une consigne de relance.
+- Connecteur de template `mcp` (`server` : entrée `mcp` de la configuration) et primitive `mcp.call(conn, tool, args)` : un script lit par les outils en lecture d'un serveur MCP (`readOnlyHint` ou `allow`), connecté au démarrage dès qu'une instance active l'utilise. `template.instance(mcp=…)` et `mcp_calls()` dans les tests de templates.
+- `vault.login` (`method: oidc`, `path`, `role`, `port`, `min_ttl`) : au démarrage, jeton Vault absent, refusé ou proche de l'expiration renouvelé, sinon connexion OIDC dans le navigateur, jeton écrit dans `~/.vault-token`.
+
 ### Corrigé
 - Question restée sans réponse : à l'expiration du délai, clotr attend la fin de la lecture interrompue avant de fermer le terminal, au lieu de le fermer pendant qu'elle lisait encore.
 

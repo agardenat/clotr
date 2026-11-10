@@ -166,6 +166,7 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
   - `ssh` (un seul par template) : `user`, `key`, `key_vault` (clé privée lue dans un secret Vault, `chemin[#champ]`, champ par défaut `private_key`), `auth` (`user_env`, `password_env`, `password_vault`, `label` : mot de passe saisi sur le terminal seulement s'il est nécessaire, voir Outils SSH), `port`, `proxy`, `proxy_port`, `host_key`, `sudo`, `exec_sudo` (`ssh_exec` lancé en `sudo -n`, défaut faux), `max_conns`, `known_hosts` ;
   - `local` (à la place de `ssh`) : `max_conns` seulement. Les outils et primitives SSH s'exécutent sur le poste qui lance clotr, par `sh -c`, avec l'utilisateur et l'environnement de clotr (`PATH` compris), sans sudo ni authentification ; les hôtes de l'inventaire ne servent qu'à la désignation (ex. `localhost`). `ssh_paths`, `commands` et les niveaux d'accès s'appliquent comme en SSH ;
   - `shell` (à la place de `ssh`, Linux et macOS) : `command` (liste, programme et arguments, `%h` remplacé par le nom de l'hôte, `%s` par son nom court, avant le premier point), `then` (liste de lignes tapées dans la session l'une après l'autre, chacune à l'invite suivante, `%h` et `%s` remplacés : rebond par un hôte intermédiaire, ex. `exec ssh %h` ; une question qui correspond à `prompt` est relayée comme pour `command` ; avec `exec`, un rebond qui échoue ferme la session au lieu de laisser les commandes s'exécuter sur l'hôte intermédiaire), `auth` (`user`, `user_env`, `password_env`, `password_vault`, `label` : identifiants du rebond, partagés par les instances qui donnent le même `label` (défaut : propre à l'instance) ; `%u` dans `then` = compte, et une question de mot de passe pendant un rebond reçoit ce mot de passe au lieu d'être relayée ; résolus comme ceux du driver `ssh` : variable, Vault, sinon saisie une fois par run ; oubliés si le mot de passe est redemandé ou si la session se ferme), `ready` (expression régulière de l'invite du shell distant, défaut `[$#] ?$`), `prompt` (expression régulière d'une question à relayer, défaut : mot de passe ou phrase de passe), `open_timeout` (secondes, défaut 120), `max_conns` (sessions ouvertes en même temps, défaut 4), `sudo`, `exec_sudo`. Pour un outil local qui ouvre un shell interactif sur l'hôte (passerelle d'accès, bastion) et gère lui-même l'authentification : clotr lance `command` dans un pseudo-terminal ; avant l'invite, une question qui correspond à `prompt` est posée sur le terminal de clotr (tableau suspendu, saisie masquée) et la réponse transmise ; à l'invite, le shell distant passe en mode brut et reçoit les commandes, exécutées par `sh -c` sans terminal (pas de pager), stdout, stderr et code retour séparés par des marqueurs. Une session sert une commande à la fois et reste ouverte pour les suivantes ; une commande annulée ferme sa session. Pas de mot de passe sudo : `sudo -n` seulement. `ssh_paths`, `commands` et les niveaux d'accès s'appliquent comme en SSH ;
+  - `mcp` : `server`, nom d'une entrée `mcp` de la configuration. Le script appelle les outils de ce serveur par `mcp.call` ; seuls les outils exposés en lecture (annotés `readOnlyHint` ou listés dans `allow`, `deny` prioritaire) sont accessibles. Le serveur est connecté au démarrage dès qu'une instance active l'utilise, même s'il n'est pas proposé aux agents (`enabled: false`, `-x mcp_<serveur>`), et sa connexion OAuth éventuelle se fait à ce moment-là, voir Serveurs MCP en OAuth ;
 - `targets` : cibles statiques. `foreach: <paramètre list>` crée une cible par élément ; un champ vide de l'élément hérite du paramètre de même nom. Les attributs `ssh_user`, `ssh_key_path`, `ssh_key_vault` et `ssh_port` d'une cible remplacent ceux du connecteur ssh ;
 - `script` : fichier Starlark, chemin relatif au YAML ;
 - `files`, `env` : fichiers et variables d'environnement que le script peut lire ; les chemins de `files` sont rendus avec les paramètres (`"{{.config_path}}"`), une entrée rendue vide est ignorée. Une entrée terminée par `/**` autorise tout le répertoire (`"{{.repo_dir}}/**"`, chemin absolu) : le chemin demandé est résolu, liens symboliques compris, et doit rester dans le répertoire ;
@@ -250,6 +251,7 @@ tool(
 | Primitive | Rôle |
 |---|---|
 | `http.request(conn, method, path, base=, query=, json=, body=, headers=, jq=, max_bytes=, tls=, proxy=)` | requête via un connecteur `http` ; renvoie `status`, `headers`, `body`, `url` et `data` (résultats de `jq`). `base` remplace `base_url`, `proxy` le proxy du connecteur, `tls` (`ca`, `cert`, `key` en PEM, `insecure`) l'autorité de certification et ajoute un certificat client, pour cet appel. `track` : chemin de l'objet créé par un POST de `levels.create`, voir Niveaux d'accès |
+| `mcp.call(conn, tool, args={})` | appel d'un outil du serveur MCP d'un connecteur `mcp` ; renvoie `text` (contenu textuel), `data` (contenu structuré décodé, `None` sinon) et `error` (vrai si le serveur signale une erreur de l'outil). Interdit au chargement du script ; tracé dans l'audit (`mcp_call`). Dans les tests, `template.instance(mcp=fn)` : `fn(call)` reçoit `server`, `tool`, `args` et renvoie un dict ou une liste (`data`) ou `struct(text=, data=, error=)` ; `mcp_calls()` liste les appels |
 | `http.stream(conn, path, argv=, label=, query=, protocols=, headers=, base=, max_bytes=, timeout=, tls=, proxy=)` | connexion WebSocket (GET avec upgrade) sur un chemin de `levels.exec.allow`, à partir du niveau `exec` ; `argv` est contrôlé par `commands` puis ajouté à la requête sous le nom `levels.exec.argv_param` ; `label` désigne la cible dans la confirmation. Renvoie `status`, `protocol`, `messages` (bytes, dans l'ordre reçu), `truncated`, `close_code`, `close_reason`, `body` (réponse sans upgrade) ; le protocole applicatif (canaux) est décodé par le script |
 | `http.snippet(text, max)` | résumé d'un corps de réponse (titre si page HTML) |
 | `ssh.list`, `ssh.read`, `ssh.tail` (`filter`), `ssh.grep`, `ssh.disk`, `ssh.stat_tail`, `ssh.recent` | commandes SSH fixes sur un hôte de l'inventaire ; `ssh.format(res)` met en forme un résultat, `ssh.allowed(path)` teste `ssh_paths` |
@@ -305,6 +307,14 @@ Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans
 
 Le secret est lu par clotr et n'est jamais transmis aux modèles ni archivé dans les preuves. Ne pas faire lire un secret par un outil MCP : sa réponse irait au modèle et dans les preuves. Le chemin peut reprendre les `vars` du client (voir Clients).
 
+
+Connexion au démarrage : avec `vault.login`, clotr vérifie le jeton (`~/.vault-token`) avant le run. S'il est absent, refusé ou valable moins de `min_ttl`, il est d'abord renouvelé (`renew-self`) ; si le renouvellement ne suffit pas, clotr fait la connexion OIDC comme `vault login -method=oidc -path=<path>` : il ouvre le navigateur, affiche l'URL sur la sortie d'erreur, attend le retour sur `http://localhost:<port>/oidc/callback` (jusqu'à 5 minutes) et écrit le nouveau jeton dans `~/.vault-token` (droits 600), où le CLI `vault` et les autres outils le retrouvent. Rien n'est demandé pendant le run. Un `VAULT_TOKEN` défini dans l'environnement n'est jamais remplacé. En cas d'échec, un avertissement est affiché et les secrets lus dans Vault échouent.
+
+```yaml
+vault:
+  addr: https://vault.example.com
+  login: {method: oidc, path: oidc}
+```
 ### Outils SSH
 
 - Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `grep -c -E -I` (comptage), `df -hP`, `du -xh`, `getent ahosts` (résolution d'un nom), `gzip -t` et `gzip -cd` (fichier `.gz`). Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
@@ -474,11 +484,27 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `files` | `roots`, `max_file_bytes` |
 | `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true ; false : activée seulement par `-t <instance>`) |
-| `vault` | `addr`, `namespace` : adresse et namespace Vault utilisés quand `VAULT_ADDR` / `VAULT_NAMESPACE` ne sont pas définis, voir Secrets Vault |
+| `vault` | `addr`, `namespace` : adresse et namespace Vault utilisés quand `VAULT_ADDR` / `VAULT_NAMESPACE` ne sont pas définis ; `login` (`method: oidc`, `path` défaut `oidc`, `role`, `port` défaut 8250, `min_ttl` défaut 4h) : connexion Vault au démarrage, voir Secrets Vault |
 | `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
 | `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
 | `report_export` | `mcp` (nom d'un serveur de `mcp`, différent de `web_search.mcp`) et `role` (rôle de travail outillé ; défaut : celui du tier le plus élevé). Voir Export du rapport en document. |
-| `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true ; false : connecté seulement par `-t mcp_<serveur>`). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. |
+| `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true ; false : connecté seulement par `-t mcp_<serveur>`), `auth` (`oauth` : connexion OAuth dans le navigateur, voir Serveurs MCP en OAuth). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. |
+
+### Serveurs MCP en OAuth
+
+Avec `auth: oauth` (transport `http`, sans en-tête `Authorization`), clotr obtient lui-même le jeton du serveur MCP, par exemple le serveur MCP natif de GitLab (`https://<gitlab>/api/v4/mcp`), qui refuse les jetons d'accès personnels classiques :
+
+- la connexion se fait uniquement au démarrage, avant le run (et pour le serveur de `report_export`, au démarrage d'un run avec `--export`). Pendant le run, le jeton est rafraîchi sans navigateur ; si le rafraîchissement est refusé, l'appel échoue avec une consigne de relance, sans rien demander ;
+- au démarrage, quand le serveur répond 401, clotr lit ses métadonnées OAuth, s'enregistre comme client public (enregistrement dynamique, redirection vers `http://127.0.0.1:<port>/callback`), ouvre le navigateur sur la page d'autorisation et affiche son URL sur la sortie d'erreur. Il attend la validation jusqu'à 5 minutes, le délai `timeout` du serveur étant suspendu pendant ce temps ;
+- le client enregistré, le jeton et son jeton de rafraîchissement sont conservés dans `$XDG_STATE_HOME/clotr/oauth/<serveur>.json` (défaut `~/.local/state/clotr/oauth`, droits 600). Aux lancements suivants, le jeton est réutilisé puis rafraîchi sans navigateur ; le navigateur ne revient que si le rafraîchissement est refusé (jeton révoqué ou expiré) ;
+- le cache est ignoré si l'`url` du serveur change ; supprimer le fichier force un nouvel enregistrement.
+
+```yaml
+mcp:
+  - name: gitlab
+    url: https://gitlab.example.com/api/v4/mcp
+    auth: oauth
+```
 
 Une section absente désactive les outils correspondants. Un outil dont l'initialisation échoue est désactivé, avec un avertissement.
 

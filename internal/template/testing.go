@@ -98,9 +98,9 @@ func (h *testHarness) predeclared() starlark.StringDict {
 func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	name := "test"
 	var params, env, files, credsD *starlark.Dict
-	var httpMock, sshMock starlark.Value
+	var httpMock, sshMock, mcpMock starlark.Value
 	var now, level, confirm string
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name?", &name, "params?", &params, "http?", &httpMock, "ssh?", &sshMock, "env?", &env, "files?", &files, "now?", &now, "creds?", &credsD, "access?", &level, "confirm?", &confirm); err != nil {
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name?", &name, "params?", &params, "http?", &httpMock, "ssh?", &sshMock, "mcp?", &mcpMock, "env?", &env, "files?", &files, "now?", &now, "creds?", &credsD, "access?", &level, "confirm?", &confirm); err != nil {
 		return nil, err
 	}
 	lvl, err := access.Parse(level)
@@ -156,6 +156,9 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 	in.sleep = func(context.Context, time.Duration) error { return nil }
 	in.transport = &mockTransport{ti: ti, mock: httpMock}
 	in.pool = &mockSSH{ti: ti, mock: sshMock}
+	in.MCP = func(_ context.Context, server string) (MCPCaller, error) {
+		return &mockMCP{ti: ti, mock: mcpMock, server: server}, nil
+	}
 	given2 := dictTuples(credsD)
 	for cn, hc := range in.https {
 		if hc.auth == nil {
@@ -238,6 +241,7 @@ type testInstance struct {
 	in        *Instance
 	mu        sync.Mutex
 	requests  []map[string]any
+	mcpCalls  []map[string]any
 	commands  []map[string]any
 	questions []string
 }
@@ -248,7 +252,7 @@ func (ti *testInstance) Freeze()               {}
 func (ti *testInstance) Truth() starlark.Bool  { return true }
 func (ti *testInstance) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable") }
 func (ti *testInstance) AttrNames() []string {
-	return []string{"call", "cleanup", "commands", "discover", "environment", "error", "fn", "questions", "requests", "tools", "tracked"}
+	return []string{"call", "cleanup", "commands", "discover", "environment", "error", "fn", "mcp_calls", "questions", "requests", "tools", "tracked"}
 }
 
 func (ti *testInstance) Attr(name string) (starlark.Value, error) {
@@ -347,6 +351,12 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 				out = append(out, map[string]any{"resource": r.Resource, "error": e})
 			}
 			return toStarlark(out)
+		}), nil
+	case "mcp_calls":
+		return starlark.NewBuiltin(name, func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			ti.mu.Lock()
+			defer ti.mu.Unlock()
+			return toStarlark(append([]map[string]any(nil), ti.mcpCalls...))
 		}), nil
 	case "requests":
 		return starlark.NewBuiltin(name, func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -637,4 +647,53 @@ func prefix(msg starlark.Value) string {
 		return ""
 	}
 	return plain(msg) + " : "
+}
+
+type mockMCP struct {
+	ti     *testInstance
+	mock   starlark.Value
+	server string
+}
+
+func (m *mockMCP) CallTool(_ context.Context, tool string, args map[string]any) (*MCPResult, error) {
+	rec := map[string]any{"server": m.server, "tool": tool, "args": args}
+	m.ti.mu.Lock()
+	m.ti.mcpCalls = append(m.ti.mcpCalls, rec)
+	m.ti.mu.Unlock()
+	fn, ok := m.mock.(starlark.Callable)
+	if !ok {
+		return nil, i18n.E("tpl.test.no_mcp_mock")
+	}
+	v, err := callMock(fn, rec)
+	if err != nil {
+		return nil, err
+	}
+	res := &MCPResult{}
+	if st, ok := v.(*starlarkstruct.Struct); ok {
+		for _, n := range st.AttrNames() {
+			a, _ := st.Attr(n)
+			switch n {
+			case "text":
+				res.Text, _ = starlark.AsString(a)
+			case "error":
+				res.IsError = bool(a.Truth())
+			case "data":
+				if res.Data, err = starlarkJSON(a); err != nil {
+					return nil, err
+				}
+			default:
+				return nil, i18n.E("tpl.test.mcp_mock")
+			}
+		}
+		return res, nil
+	}
+	switch v.(type) {
+	case *starlark.Dict, *starlark.List:
+		if res.Data, err = starlarkJSON(v); err != nil {
+			return nil, err
+		}
+		res.Text = string(res.Data)
+		return res, nil
+	}
+	return nil, i18n.E("tpl.test.mcp_mock")
 }

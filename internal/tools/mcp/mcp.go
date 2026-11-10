@@ -32,6 +32,7 @@ type Server struct {
 	cfg     config.MCPServer
 	session *sdk.ClientSession
 	exposed []tools.Tool
+	remotes map[string]bool
 	skipped []string
 }
 
@@ -62,7 +63,7 @@ func (h headerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return h.base.RoundTrip(r)
 }
 
-func transport(cfg config.MCPServer) sdk.Transport {
+func transport(cfg config.MCPServer) (sdk.Transport, error) {
 	switch cfg.Transport {
 	case "stdio":
 		args := make([]string, len(cfg.Args))
@@ -75,22 +76,35 @@ func transport(cfg config.MCPServer) sdk.Transport {
 			cmd.Env = append(cmd.Env, k+"="+os.ExpandEnv(v))
 		}
 		cmd.Stderr = io.Discard
-		return &sdk.CommandTransport{Command: cmd}
+		return &sdk.CommandTransport{Command: cmd}, nil
 	default:
 		headers := map[string]string{}
 		for k, v := range cfg.Headers {
 			headers[k] = os.ExpandEnv(v)
 		}
 		hc := &http.Client{Transport: headerTransport{base: http.DefaultTransport, headers: headers}}
+		endpoint := os.ExpandEnv(cfg.URL)
 		if cfg.Transport == "sse" {
-			return &sdk.SSEClientTransport{Endpoint: os.ExpandEnv(cfg.URL), HTTPClient: hc}
+			return &sdk.SSEClientTransport{Endpoint: endpoint, HTTPClient: hc}, nil
 		}
-		return &sdk.StreamableClientTransport{Endpoint: os.ExpandEnv(cfg.URL), HTTPClient: hc}
+		t := &sdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: hc}
+		if cfg.Auth == config.MCPAuthOAuth {
+			h, err := newOAuthHandler(cfg.Name, endpoint)
+			if err != nil {
+				return nil, i18n.E("mcp.connect", cfg.Name, err)
+			}
+			t.OAuthHandler = h
+		}
+		return t, nil
 	}
 }
 
 func Connect(ctx context.Context, cfg config.MCPServer, version string) (*Server, error) {
-	return ConnectTransport(ctx, cfg, transport(cfg), version)
+	t, err := transport(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return ConnectTransport(ctx, cfg, t, version)
 }
 
 func ConnectTransport(ctx context.Context, cfg config.MCPServer, t sdk.Transport, version string) (*Server, error) {
@@ -98,7 +112,11 @@ func ConnectTransport(ctx context.Context, cfg config.MCPServer, t sdk.Transport
 }
 
 func ConnectWriter(ctx context.Context, cfg config.MCPServer, version string) (*Server, error) {
-	return connect(ctx, cfg, transport(cfg), version, true)
+	t, err := transport(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return connect(ctx, cfg, t, version, true)
 }
 
 func ConnectWriterTransport(ctx context.Context, cfg config.MCPServer, t sdk.Transport, version string) (*Server, error) {
@@ -107,13 +125,19 @@ func ConnectWriterTransport(ctx context.Context, cfg config.MCPServer, t sdk.Tra
 
 func connect(ctx context.Context, cfg config.MCPServer, t sdk.Transport, version string, writer bool) (*Server, error) {
 	client := sdk.NewClient(&sdk.Implementation{Name: "clotr", Version: version}, nil)
-	cctx, cancel := context.WithTimeout(ctx, cfg.Timeout.Duration)
+	var cctx context.Context
+	var cancel func()
+	if cfg.Auth == config.MCPAuthOAuth {
+		cctx, cancel = withStretch(ctx, cfg.Timeout.Duration)
+	} else {
+		cctx, cancel = context.WithTimeout(ctx, cfg.Timeout.Duration)
+	}
 	defer cancel()
 	session, err := client.Connect(cctx, t, nil)
 	if err != nil {
 		return nil, i18n.E("mcp.connect", cfg.Name, err)
 	}
-	s := &Server{cfg: cfg, session: session}
+	s := &Server{cfg: cfg, session: session, remotes: map[string]bool{}}
 	allow := globs(cfg.Allow)
 	deny := globs(cfg.Deny)
 	names := map[string]bool{}
@@ -133,6 +157,7 @@ func connect(ctx context.Context, cfg config.MCPServer, t sdk.Transport, version
 			continue
 		}
 		names[nt.name] = true
+		s.remotes[t.Name] = true
 		s.exposed = append(s.exposed, nt)
 	}
 	return s, nil
@@ -307,4 +332,32 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func (s *Server) CallExposed(ctx context.Context, remote string, args map[string]any) (string, json.RawMessage, bool, error) {
+	if !s.remotes[remote] {
+		return "", nil, false, i18n.E("mcp.not_exposed", s.cfg.Name, remote)
+	}
+	cctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout.Duration)
+	defer cancel()
+	if args == nil {
+		args = map[string]any{}
+	}
+	res, err := s.session.CallTool(cctx, &sdk.CallToolParams{Name: remote, Arguments: args})
+	if err != nil {
+		return "", nil, false, err
+	}
+	var b strings.Builder
+	for _, c := range res.Content {
+		if v, ok := c.(*sdk.TextContent); ok {
+			b.WriteString(v.Text)
+		}
+	}
+	var data json.RawMessage
+	if res.StructuredContent != nil {
+		if data, err = json.Marshal(res.StructuredContent); err != nil {
+			return "", nil, false, err
+		}
+	}
+	return b.String(), data, res.IsError, nil
 }

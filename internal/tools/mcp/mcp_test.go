@@ -148,3 +148,28 @@ func TestFetch(t *testing.T) {
 		t.Fatal("file:// accepté")
 	}
 }
+
+func TestCallExposedOnlyReadTools(t *testing.T) {
+	ctx := context.Background()
+	srv := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "1"}, nil)
+	srv.AddTool(&sdk.Tool{Name: "query", InputSchema: objSchema, Annotations: &sdk.ToolAnnotations{ReadOnlyHint: true}}, handler("ok", false))
+	srv.AddTool(&sdk.Tool{Name: "add_commit", InputSchema: objSchema}, handler("written", false))
+	st, ct := sdk.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	s, err := ConnectTransport(ctx, config.MCPServer{Name: "gl", Timeout: config.Duration{Duration: 5 * time.Second}}, ct, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, _, _, err := s.CallExposed(ctx, "add_commit", map[string]any{"q": "x"}); err == nil || !strings.Contains(err.Error(), "not exposed") {
+		t.Fatalf("outil d'écriture accepté: %v", err)
+	}
+	text, _, isErr, err := s.CallExposed(ctx, "query", map[string]any{"q": "x"})
+	if err != nil || isErr || text != "ok:x" {
+		t.Fatalf("lecture: %q %v %v", text, isErr, err)
+	}
+}

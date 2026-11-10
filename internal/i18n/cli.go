@@ -76,6 +76,8 @@ var cliMsgs = map[string]msg{
 	"cli.warn.web_off":               {"%v (web search disabled)", "%v (recherche web désactivée)"},
 	"cli.err.no_tools":               {"no tool available: configure files, mcp or a template instance", "aucun outil disponible : configurer files, mcp ou une instance de template"},
 	"cli.warn.templates_off":         {"templates: %v (instances disabled)", "templates : %v (instances désactivées)"},
+	"cli.warn.vault_login":           {"Vault: %v (secrets read from Vault will fail)", "Vault : %v (les secrets lus dans Vault échoueront)"},
+	"cli.warn.template_mcp":          {"instance %s: mcp connector on server %q, absent from the mcp section of the configuration", "instance %s : connecteur mcp sur le serveur %q, absent de la section mcp de la configuration"},
 	"cli.warn.template_missing":      {"instance %s: template %q not found (instance disabled)", "instance %s : template %q introuvable (instance désactivée)"},
 	"cli.warn.instance_off":          {"%v (instance %s disabled)", "%v (instance %s désactivée)"},
 	"cli.models.error":               {"ERROR: ", "ERREUR : "},

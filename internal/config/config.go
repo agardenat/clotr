@@ -102,8 +102,17 @@ func (c *Config) ExportRole() string {
 }
 
 type VaultConf struct {
-	Addr      string `yaml:"addr"`
-	Namespace string `yaml:"namespace"`
+	Addr      string      `yaml:"addr"`
+	Namespace string      `yaml:"namespace"`
+	Login     *VaultLogin `yaml:"login"`
+}
+
+type VaultLogin struct {
+	Method string   `yaml:"method"`
+	Path   string   `yaml:"path"`
+	Role   string   `yaml:"role"`
+	Port   int      `yaml:"port"`
+	MinTTL Duration `yaml:"min_ttl"`
 }
 
 type WebSearch struct {
@@ -369,11 +378,14 @@ type MCPServer struct {
 	URL       string            `yaml:"url"`
 	Transport string            `yaml:"transport"`
 	Headers   map[string]string `yaml:"headers"`
+	Auth      string            `yaml:"auth"`
 	Allow     []string          `yaml:"allow"`
 	Deny      []string          `yaml:"deny"`
 	Timeout   Duration          `yaml:"timeout"`
 	Enabled   *bool             `yaml:"enabled"`
 }
+
+const MCPAuthOAuth = "oauth"
 
 func (m MCPServer) IsEnabled() bool {
 	return m.Enabled == nil || *m.Enabled
@@ -555,6 +567,17 @@ func (c *Config) applyDefaults() {
 		c.Sessions.Dir = filepath.Join(StateDir(), "clotr", "sessions")
 	}
 	c.Sessions.Dir = ExpandHome(c.Sessions.Dir)
+	if l := c.Vault.Login; l != nil {
+		if l.Path == "" {
+			l.Path = "oidc"
+		}
+		if l.Port == 0 {
+			l.Port = 8250
+		}
+		if l.MinTTL.Duration == 0 {
+			l.MinTTL.Duration = 4 * time.Hour
+		}
+	}
 	for i := range c.MCP {
 		m := &c.MCP[i]
 		if m.Transport == "" {
@@ -696,6 +719,20 @@ func (c *Config) validate() error {
 		if m.URL != "" && m.Transport == "stdio" {
 			fail(i18n.T("config.mcp_stdio_url", i))
 		}
+		switch m.Auth {
+		case "":
+		case MCPAuthOAuth:
+			if m.Transport != "http" {
+				fail(i18n.T("config.mcp_oauth_transport", i))
+			}
+			for k := range m.Headers {
+				if strings.EqualFold(k, "Authorization") {
+					fail(i18n.T("config.mcp_oauth_header", i))
+				}
+			}
+		default:
+			fail(i18n.T("config.mcp_auth", i, m.Auth))
+		}
 	}
 	if *c.Limits.StallSteps < 0 {
 		fail(i18n.T("config.stall_steps"))
@@ -807,6 +844,17 @@ func (c *Config) validate() error {
 	if c.Vault.Addr != "" {
 		if u, err := url.Parse(c.Vault.Addr); err != nil || u.Scheme == "" || u.Host == "" {
 			fail(i18n.T("config.vault_addr", c.Vault.Addr))
+		}
+	}
+	if l := c.Vault.Login; l != nil {
+		if l.Method != "oidc" {
+			fail(i18n.T("config.vault_login_method", l.Method))
+		}
+		if l.Port < 1 || l.Port > 65535 {
+			fail(i18n.T("config.vault_login_port", l.Port))
+		}
+		if l.MinTTL.Duration < 0 {
+			fail(i18n.T("config.vault_login_ttl"))
 		}
 	}
 	if *c.Limits.Continuations < 0 || *c.Limits.Continuations > 3 {
