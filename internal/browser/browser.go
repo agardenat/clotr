@@ -65,7 +65,13 @@ func (c *Callback) Wait(ctx context.Context, wait time.Duration, page func(url.V
 		}
 	})}
 	go func() { _ = srv.Serve(c.ln) }()
-	defer srv.Close()
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if srv.Shutdown(sctx) != nil {
+			_ = srv.Close()
+		}
+	}()
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {

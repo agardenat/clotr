@@ -4,6 +4,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement
 ### Modifié
 - Noms de session en français quand l'interface est en français (`ui_language: fr` ou `--ui-lang fr`), par exemple `fieffe-coquin`, sans accents ; en anglais sinon.
 
+### Corrigé
+- Connexion OAuth et Vault par le navigateur : la page de retour s'affiche en entier au lieu d'une connexion coupée, le serveur local attend la fin de la réponse avant de s'arrêter.
+
 ## [0.59.0] - 2026-11-10
 
 ### Ajouté
