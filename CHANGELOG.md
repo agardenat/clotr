@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Non publié]
+## [0.60.0] - 2026-11-10
 ### Modifié
 - Noms de session en français quand l'interface est en français (`ui_language: fr` ou `--ui-lang fr`), par exemple `fieffe-coquin`, sans accents ; en anglais sinon.
 
