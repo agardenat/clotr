@@ -37,7 +37,7 @@ Les profils sont évalués dans l'ordre : le premier glob qui correspond à `mod
 
 ## Sessions
 
-Chaque `run` ouvre une session au nom aléatoire (par exemple `cosmic-walrus`) dans `sessions.dir` (défaut `~/.local/state/clotr/sessions`) :
+Chaque `run` ouvre une session au nom aléatoire, dans la langue de l'interface (`ui_language`, par exemple `cosmic-walrus` ou `fieffe-coquin`) dans `sessions.dir` (défaut `~/.local/state/clotr/sessions`) :
 
 ```
 <session>/

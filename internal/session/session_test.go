@@ -4,10 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/memory"
 )
 
@@ -94,5 +96,24 @@ func TestGenerateNameUnique(t *testing.T) {
 			t.Fatalf("doublon %s", n)
 		}
 		seen[n] = true
+	}
+}
+
+func TestGenerateNameFrench(t *testing.T) {
+	i18n.SetUI("fr")
+	defer i18n.SetUI("en")
+	for _, list := range [][]string{adjectivesFR, nounsFR} {
+		seen := map[string]bool{}
+		for _, w := range list {
+			if seen[w] || !validName.MatchString(w) {
+				t.Fatalf("mot invalide ou en double : %q", w)
+			}
+			seen[w] = true
+		}
+	}
+	name := GenerateName(func(string) bool { return false })
+	adj, noun, _ := strings.Cut(name, "-")
+	if !slices.Contains(adjectivesFR, adj) || !slices.Contains(nounsFR, noun) {
+		t.Fatalf("nom %q hors des listes françaises", name)
 	}
 }
