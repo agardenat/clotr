@@ -34,6 +34,24 @@ var nouns = []string{
 	"kraken", "goblin", "yeti", "griffin", "dragon", "phoenix", "golem", "sphinx", "banshee", "troll",
 }
 
+var adjectivesFR = []string{
+	"fieffe", "sacre", "satane", "fichu", "fameux", "illustre", "vieux", "gros", "petit", "grand",
+	"pauvre", "drole", "joyeux", "fier", "affreux", "terrible", "redoutable", "incorrigible", "irresistible", "sublime",
+	"vaillant", "fringant", "pimpant", "bougon", "grincheux", "ronchon", "farfelu", "loufoque", "saugrenu", "fougueux",
+	"intrepide", "malicieux", "espiegle", "facetieux", "dodu", "joufflu", "ventru", "chafouin", "goguenard", "hirsute",
+	"ebouriffe", "debonnaire", "guilleret", "foufou", "zinzin", "maboul", "ahuri", "patibulaire", "truculent", "pompeux",
+	"mysterieux", "distingue", "ombrageux", "paresseux", "gourmand", "tonitruant", "bedonnant", "cocasse", "flamboyant", "foutraque",
+}
+
+var nounsFR = []string{
+	"coquin", "chenapan", "galopin", "garnement", "filou", "gredin", "fripon", "sacripant", "malandrin", "brigand",
+	"vaurien", "bougre", "zigoto", "olibrius", "hurluberlu", "energumene", "escogriffe", "pignouf", "lascar", "loustic",
+	"zouave", "nigaud", "dadais", "gugusse", "farfadet", "lutin", "gnome", "troll", "golem", "griffon",
+	"kraken", "yeti", "sphinx", "dragon", "cornichon", "saucisson", "camembert", "croissant", "cassoulet", "artichaut",
+	"poireau", "navet", "radis", "bigorneau", "homard", "blaireau", "herisson", "ornithorynque", "lama", "morse",
+	"poulpe", "ecureuil", "hibou", "canard", "dindon", "pingouin", "escargot", "crapaud", "ouistiti", "phacochere",
+}
+
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 type Turn struct {
@@ -61,15 +79,23 @@ type Session struct {
 	dir          string
 }
 
+func nameWords() ([]string, []string) {
+	if i18n.UI() == "fr" {
+		return adjectivesFR, nounsFR
+	}
+	return adjectives, nouns
+}
+
 func GenerateName(exists func(string) bool) string {
+	adj, noun := nameWords()
 	for range 50 {
-		name := adjectives[rand.IntN(len(adjectives))] + "-" + nouns[rand.IntN(len(nouns))]
+		name := adj[rand.IntN(len(adj))] + "-" + noun[rand.IntN(len(noun))]
 		if !exists(name) {
 			return name
 		}
 	}
 	for i := 2; ; i++ {
-		name := fmt.Sprintf("%s-%s-%d", adjectives[rand.IntN(len(adjectives))], nouns[rand.IntN(len(nouns))], i)
+		name := fmt.Sprintf("%s-%s-%d", adj[rand.IntN(len(adj))], noun[rand.IntN(len(noun))], i)
 		if !exists(name) {
 			return name
 		}
