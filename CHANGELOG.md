@@ -2,7 +2,7 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 
-## [Non publié]
+## [0.59.0] - 2026-11-10
 
 ### Ajouté
 - `auth: oauth` sur une entrée `mcp` en transport `http` : au premier lancement, clotr s'enregistre auprès du serveur d'autorisation, ouvre le navigateur pour la connexion et conserve le client et le jeton dans `$XDG_STATE_HOME/clotr/oauth/<serveur>.json` (droits 600). Les lancements suivants réutilisent et rafraîchissent le jeton sans navigateur. Permet notamment d'utiliser le serveur MCP natif de GitLab, qui n'accepte pas les jetons d'accès personnels classiques. La connexion n'est demandée qu'au démarrage : pendant le run, un rafraîchissement refusé fait échouer l'appel avec une consigne de relance.
