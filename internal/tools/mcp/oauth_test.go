@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -190,7 +191,7 @@ func TestOAuthLoginCacheRefreshRelogin(t *testing.T) {
 	}
 	path := filepath.Join(dir, "gitlab.json")
 	st, err := os.Stat(path)
-	if err != nil || st.Mode().Perm() != 0o600 {
+	if err != nil || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) {
 		t.Fatalf("cache: %v %v", st, err)
 	}
 
