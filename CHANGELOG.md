@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.63.0] - 2026-11-11
 
 ### Ajouté
 - `auth.oauth2` sur un connecteur `http` de template : jeton obtenu par le flux *client credentials* avec un identifiant et un secret client lus dans Vault (`{champ}` remplacé par un champ du secret dans `token_url`, `client_id`, `client_secret` et `scope`), envoyé en `Authorization: Bearer`. Le jeton est gardé en mémoire le temps du run, partagé entre connecteurs et renouvelé avant son expiration. Permet par exemple de se connecter à Azure avec un principal de service rangé dans Vault, sans `az login`.
