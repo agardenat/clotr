@@ -42,16 +42,16 @@ func TestNewInstanceAccess(t *testing.T) {
 	}
 	tpl, _ := set.Get("x")
 	ic := config.Instance{Name: "i", Template: "x", Commands: access.Rules{Allow: []string{"openssl version"}}}
-	in, err := newInstance(&config.Config{}, ic, tpl, access.Read)
+	in, err := newInstance(&config.Config{}, ic, tpl, access.Read, "")
 	if err != nil || strings.Join(in.ToolNames(), ",") != "i_r" {
 		t.Fatalf("read: %v %v", in.ToolNames(), err)
 	}
-	in, err = newInstance(&config.Config{}, ic, tpl, access.Exec)
+	in, err = newInstance(&config.Config{}, ic, tpl, access.Exec, "")
 	if err != nil || strings.Join(in.ToolNames(), ",") != "i_r,i_e" || in.Access() != access.Exec {
 		t.Fatalf("exec: %v %v", in.ToolNames(), err)
 	}
 	ic.Commands = access.Rules{Allow: []string{"**"}}
-	if _, err := newInstance(&config.Config{}, ic, tpl, access.Exec); err == nil {
+	if _, err := newInstance(&config.Config{}, ic, tpl, access.Exec, ""); err == nil {
 		t.Fatal("commands invalide accepté")
 	}
 }
@@ -85,7 +85,7 @@ func TestClientAccessLevel(t *testing.T) {
 		name  string
 		level access.Level
 	}{{"a", access.Exec}, {"b", access.Read}, {"c", access.Create}, {"d", access.Exec}} {
-		in, err := newInstance(cfg, config.Instance{Name: c.name, Template: "x"}, tpl, c.level)
+		in, err := newInstance(cfg, config.Instance{Name: c.name, Template: "x"}, tpl, c.level, "")
 		if err != nil {
 			t.Fatal(err)
 		}

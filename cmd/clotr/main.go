@@ -47,6 +47,7 @@ import (
 	"github.com/agardenat/clotr/internal/tools/dns"
 	"github.com/agardenat/clotr/internal/tools/files"
 	"github.com/agardenat/clotr/internal/tools/mcp"
+	"github.com/agardenat/clotr/internal/tunnel"
 	"github.com/agardenat/clotr/internal/vault"
 	"github.com/agardenat/clotr/internal/websearch"
 )
@@ -559,7 +560,22 @@ func renderVars(v any, vars map[string]any) (any, error) {
 	return v, nil
 }
 
-func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, level access.Level) (*template.Instance, error) {
+func clientVars(cl config.Client, project string) map[string]any {
+	pr, _ := cl.Project(project)
+	vars := map[string]any{}
+	for k, v := range cl.Vars {
+		vars[k] = v
+	}
+	if project != "" {
+		vars["project"] = project
+	}
+	for k, v := range pr.Vars {
+		vars[k] = v
+	}
+	return vars
+}
+
+func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, level access.Level, tunnelURL string) (*template.Instance, error) {
 	cl, _ := cfg.Client(ic.Client)
 	pr, _ := cl.Project(ic.Project)
 	params := map[string]any{}
@@ -571,15 +587,9 @@ func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, l
 		}
 	}
 	maps.Copy(params, ic.Params)
-	vars := map[string]any{}
-	for k, v := range cl.Vars {
-		vars[k] = v
-	}
-	if ic.Project != "" {
-		vars["project"] = ic.Project
-	}
-	for k, v := range pr.Vars {
-		vars[k] = v
+	vars := clientVars(cl, ic.Project)
+	if tunnelURL != "" {
+		vars["tunnel_url"] = tunnelURL
 	}
 	rendered, err := renderVars(params, vars)
 	if err != nil {
@@ -796,12 +806,24 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		warn(w)
 	}
 	rt.instanceEnv = map[string][]string{}
+	tunnels := rt.openTunnels(active, warn)
+	tunnelURL := func(ic config.Instance) string {
+		cl, _ := cfg.Client(ic.Client)
+		tc, key := cl.TunnelFor(ic.Project)
+		if tc == nil {
+			return ""
+		}
+		if tn := tunnels[key]; tn != nil {
+			return tn.URL
+		}
+		return fmt.Sprintf("socks5h://127.0.0.1:%d", tc.Port)
+	}
 	for _, ic := range filtered {
 		t, ok := set.Get(ic.Template)
 		if !ok {
 			continue
 		}
-		in, err := newInstance(cfg, ic, t, o.levelFor(cfg, ic))
+		in, err := newInstance(cfg, ic, t, o.levelFor(cfg, ic), tunnelURL(ic))
 		if err == nil {
 			err = in.Defer(ctx, cfg.Templates.CacheDir, cfg.Templates.CacheTTL.Duration, false)
 		}
@@ -818,7 +840,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 			warn(i18n.T("cli.warn.template_missing", ic.Name, ic.Template))
 			continue
 		}
-		in, err := newInstance(cfg, ic, t, o.levelFor(cfg, ic))
+		in, err := newInstance(cfg, ic, t, o.levelFor(cfg, ic), tunnelURL(ic))
 		if err == nil {
 			in.Audit = rt.audit.Log
 			in.MCP = rt.templateMCP
@@ -859,6 +881,66 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		rt.registry.AddCompanions(in.ToolPrefix(), in.Companions()...)
 		rt.instanceEnv[ic.Name] = in.EnvironmentLines()
 	}
+}
+
+func (rt *app) openTunnels(active []config.Instance, warn func(string)) map[string]*tunnel.Tunnel {
+	out := map[string]*tunnel.Tunnel{}
+	for _, ic := range active {
+		cl, ok := rt.cfg.Client(ic.Client)
+		if !ok {
+			continue
+		}
+		tc, key := cl.TunnelFor(ic.Project)
+		if tc == nil {
+			continue
+		}
+		if _, done := out[key]; done {
+			continue
+		}
+		out[key] = nil
+		project := ""
+		if pr, ok := cl.Project(ic.Project); ok && pr.Tunnel == tc {
+			project = pr.Name
+		}
+		rendered, err := renderTunnel(*tc, clientVars(cl, project))
+		if err != nil {
+			warn(i18n.T("tunnel.config", key, err))
+			continue
+		}
+		tn, err := tunnel.Open(key, rendered)
+		if err != nil {
+			warn(err.Error())
+			continue
+		}
+		if tn.Shared() {
+			warn(i18n.T("tunnel.shared", key, tc.Port))
+		}
+		tn.Warn, tn.Audit = warn, rt.audit.Log
+		out[key] = tn
+		rt.closers = append(rt.closers, tn.Close)
+	}
+	return out
+}
+
+func renderTunnel(tc config.Tunnel, vars map[string]any) (config.Tunnel, error) {
+	fields := map[string]*string{"user": &tc.User, "key_path": &tc.KeyPath, "key_vault": &tc.KeyVault, "password_vault": &tc.PasswordVault}
+	for name, f := range fields {
+		v, err := template.Render(*f, vars)
+		if err != nil {
+			return tc, fmt.Errorf("%s: %w", name, err)
+		}
+		*f = v
+	}
+	hops := make([]string, len(tc.Hops))
+	for i, h := range tc.Hops {
+		v, err := template.Render(h, vars)
+		if err != nil {
+			return tc, fmt.Errorf("hops: %w", err)
+		}
+		hops[i] = v
+	}
+	tc.Hops = hops
+	return tc, nil
 }
 
 func (rt *app) connectTemplateMCP(ctx context.Context, warn func(string)) {

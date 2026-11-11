@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -26,6 +27,7 @@ type SSHServerConfig struct {
 	Password  string
 	HostKey   gossh.Signer
 	Reply     func(cmd, stdin string) (string, int)
+	Forward   bool
 }
 
 func StartSSHServer(t testing.TB, clientKey gossh.PublicKey, hostKey gossh.Signer, reply func(cmd string) (string, int)) *SSHServer {
@@ -33,7 +35,7 @@ func StartSSHServer(t testing.TB, clientKey gossh.PublicKey, hostKey gossh.Signe
 }
 
 func StartSSHServerConfig(t testing.TB, c SSHServerConfig) *SSHServer {
-	hostKey, reply := c.HostKey, c.Reply
+	hostKey, reply, fwd := c.HostKey, c.Reply, c.Forward
 	cfg := &gossh.ServerConfig{
 		PublicKeyCallback: func(_ gossh.ConnMetadata, k gossh.PublicKey) (*gossh.Permissions, error) {
 			if c.ClientKey != nil && string(k.Marshal()) == string(c.ClientKey.Marshal()) {
@@ -70,6 +72,10 @@ func StartSSHServerConfig(t testing.TB, c SSHServerConfig) *SSHServer {
 				}
 				go gossh.DiscardRequests(reqs)
 				for nc := range chans {
+					if nc.ChannelType() == "direct-tcpip" {
+						go forward(nc, fwd)
+						continue
+					}
 					ch, creqs, err := nc.Accept()
 					if err != nil {
 						continue
@@ -104,6 +110,41 @@ func StartSSHServerConfig(t testing.TB, c SSHServerConfig) *SSHServer {
 		}
 	}()
 	return s
+}
+
+func forward(nc gossh.NewChannel, allowed bool) {
+	var req struct {
+		Host       string
+		Port       uint32
+		OriginHost string
+		OriginPort uint32
+	}
+	if !allowed || gossh.Unmarshal(nc.ExtraData(), &req) != nil {
+		nc.Reject(gossh.Prohibited, "forwarding disabled")
+		return
+	}
+	up, err := net.Dial("tcp", net.JoinHostPort(req.Host, strconv.Itoa(int(req.Port))))
+	if err != nil {
+		nc.Reject(gossh.ConnectionFailed, err.Error())
+		return
+	}
+	ch, reqs, err := nc.Accept()
+	if err != nil {
+		up.Close()
+		return
+	}
+	go gossh.DiscardRequests(reqs)
+	done := make(chan struct{})
+	go func() {
+		io.Copy(ch, up)
+		ch.CloseWrite()
+		close(done)
+	}()
+	io.Copy(up, ch)
+	up.(*net.TCPConn).CloseWrite()
+	<-done
+	ch.Close()
+	up.Close()
 }
 
 func NewSSHKey(t testing.TB) (gossh.Signer, []byte) {
