@@ -159,6 +159,7 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 	in.MCP = func(_ context.Context, server string) (MCPCaller, error) {
 		return &mockMCP{ti: ti, mock: mcpMock, server: server}, nil
 	}
+	in.oauth.fixed = "test-token"
 	given2 := dictTuples(credsD)
 	for cn, hc := range in.https {
 		if hc.auth == nil {

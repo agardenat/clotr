@@ -133,6 +133,7 @@ type Instance struct {
 	files     []string
 	dirs      []string
 	creds     map[string]creds.Pair
+	oauth     oauthState
 	pending   *activation
 
 	access   access.Level
@@ -319,6 +320,12 @@ func (in *Instance) buildTargets() ([]*Target, error) {
 func (in *Instance) Prepare(ctx context.Context) error {
 	for _, cn := range sortedKeys(in.https) {
 		hc := in.https[cn]
+		if hc.oauth != nil {
+			if _, err := in.oauthToken(ctx, hc); err != nil {
+				return err
+			}
+			continue
+		}
 		if hc.auth == nil {
 			continue
 		}
