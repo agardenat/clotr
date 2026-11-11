@@ -483,6 +483,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `compliance` | types de plateforme, par nom (ex. `regulated: {confidential: true}`, `audited: {}`) : `confidential` rend confidentiel tout run qui cite un client de ce type (voir Sessions) |
 | `files` | `roots`, `max_file_bytes` |
 | `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
+| `params` | valeurs par défaut des paramètres de toutes les instances, propres au poste (par exemple `kubeconfig: ~/.kube/all-clusters`) : appliquées seulement aux paramètres que le template de l'instance déclare ; les `params` du client, du projet puis de l'instance l'emportent. Les fichiers `clients/` partagés n'ont ainsi pas à contenir de chemin propre à un poste |
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true ; false : activée seulement par `-t <instance>`) |
 | `vault` | `addr`, `namespace` : adresse et namespace Vault utilisés quand `VAULT_ADDR` / `VAULT_NAMESPACE` ne sont pas définis ; `login` (`method: oidc`, `path` défaut `oidc`, `role`, `port` défaut 8250, `min_ttl` défaut 4h) : connexion Vault au démarrage, voir Secrets Vault |
 | `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
@@ -558,7 +559,7 @@ projects:
 | `vars` | références du client (codes client…), clés `[a-z][a-z0-9_]*` : `{{.<clé>}}` est remplacé dans les valeurs des `params` du client, de ses projets et de ses instances (une clé inconnue désactive l'instance, avec un avertissement), et les références sont transmises aux agents avec le `context`, pour les outils qui les attendent (serveurs MCP de tickets ou d'inventaire) |
 | `access` | niveau d'accès de ses instances quand `--access` n'est pas donné : `read` (défaut), `exec` ou `create`, voir Niveaux d'accès |
 | `compliance` | type de plateforme du client, défini dans la section `compliance` de la configuration ; absent : aucun |
-| `params` | valeurs par défaut des paramètres de ses instances (proxy, compte et clé SSH…) : appliquées seulement aux paramètres que le template de l'instance déclare, la valeur de l'instance l'emporte |
+| `params` | valeurs par défaut des paramètres de ses instances (proxy, compte et clé SSH…) : appliquées seulement aux paramètres que le template de l'instance déclare ; elles remplacent les `params` du fichier principal, la valeur de l'instance l'emporte |
 | `tunnel` | rebonds SSH vers le réseau du client, ouverts par clotr, voir Tunnel ci-dessous |
 | `projects` | projets du client, chacun avec ses instances (hôtes, clusters, dépôts…), voir ci-dessous |
 | `instances` | instances du client hors projet, même format que `instances` du fichier principal ; les noms restent uniques sur toute la configuration |
