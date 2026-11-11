@@ -579,7 +579,7 @@ func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, l
 	cl, _ := cfg.Client(ic.Client)
 	pr, _ := cl.Project(ic.Project)
 	params := map[string]any{}
-	for _, defaults := range []map[string]any{cl.Params, pr.Params} {
+	for _, defaults := range []map[string]any{cfg.Params, cl.Params, pr.Params} {
 		for k, v := range defaults {
 			if _, declared := t.Params[k]; declared {
 				params[k] = v

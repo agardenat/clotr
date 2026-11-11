@@ -63,6 +63,7 @@ type Config struct {
 	Files      *Files                `yaml:"files"`
 	MCP        []MCPServer           `yaml:"mcp"`
 	Templates  TemplatesConf         `yaml:"templates"`
+	Params     map[string]any        `yaml:"params"`
 	Instances  []Instance            `yaml:"instances"`
 	Clients    []Client              `yaml:"-"`
 	Routing    Routing               `yaml:"routing"`

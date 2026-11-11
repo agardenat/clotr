@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- `params` dans le fichier principal : valeurs par défaut des paramètres de toutes les instances, propres au poste (par exemple le chemin du kubeconfig). Les `params` du client, du projet puis de l'instance l'emportent, et les fichiers `clients/` partagés n'ont plus à contenir de chemin propre à un poste.
+
 ## [0.61.0] - 2026-11-11
 
 ### Ajouté
