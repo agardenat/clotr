@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -197,8 +199,19 @@ type Client struct {
 	Access     string            `yaml:"access"`
 	Compliance string            `yaml:"compliance"`
 	Params     map[string]any    `yaml:"params"`
+	Tunnel     *Tunnel           `yaml:"tunnel"`
 	Instances  []Instance        `yaml:"instances"`
 	Projects   []Project         `yaml:"projects"`
+}
+
+type Tunnel struct {
+	Hops          []string `yaml:"hops"`
+	Port          int      `yaml:"port"`
+	User          string   `yaml:"user"`
+	KeyPath       string   `yaml:"key_path"`
+	KeyVault      string   `yaml:"key_vault"`
+	PasswordVault string   `yaml:"password_vault"`
+	HostKey       string   `yaml:"host_key"`
 }
 
 type Project struct {
@@ -207,6 +220,7 @@ type Project struct {
 	Context   string            `yaml:"context"`
 	Vars      map[string]string `yaml:"vars"`
 	Params    map[string]any    `yaml:"params"`
+	Tunnel    *Tunnel           `yaml:"tunnel"`
 	Instances []Instance        `yaml:"instances"`
 }
 
@@ -231,6 +245,63 @@ func (cl Client) Project(name string) (Project, bool) {
 		}
 	}
 	return Project{}, false
+}
+
+func (cl Client) TunnelFor(project string) (*Tunnel, string) {
+	if pr, ok := cl.Project(project); ok && pr.Tunnel != nil {
+		return pr.Tunnel, cl.Name + "/" + pr.Name
+	}
+	if cl.Tunnel != nil {
+		return cl.Tunnel, cl.Name
+	}
+	return nil, ""
+}
+
+func (t *Tunnel) check(where string, ports map[int]string) []string {
+	var out []string
+	if len(t.Hops) == 0 {
+		out = append(out, i18n.T("config.tunnel_hops", where))
+	}
+	for _, h := range t.Hops {
+		if _, _, err := SplitHop(h); err != nil {
+			out = append(out, i18n.T("config.tunnel_hop", where, h, err))
+		}
+	}
+	if t.Port < 0 || t.Port > 65535 {
+		out = append(out, i18n.T("config.tunnel_port", where, t.Port))
+	} else if t.Port > 0 {
+		if other, dup := ports[t.Port]; dup {
+			out = append(out, i18n.T("config.tunnel_port_dup", where, t.Port, other))
+		}
+		ports[t.Port] = where
+	}
+	if !slices.Contains([]string{"", "accept-new", "strict", "insecure"}, t.HostKey) {
+		out = append(out, i18n.T("config.tunnel_host_key", where, t.HostKey))
+	}
+	return out
+}
+
+func SplitHop(h string) (string, int, error) {
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return "", 0, errors.New("empty")
+	}
+	host, port := h, 22
+	if strings.Contains(h, "]") || strings.Count(h, ":") == 1 {
+		hh, p, err := net.SplitHostPort(h)
+		if err != nil {
+			return "", 0, err
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			return "", 0, fmt.Errorf("port %q", p)
+		}
+		host, port = hh, n
+	}
+	if host == "" {
+		return "", 0, errors.New("empty host")
+	}
+	return host, port, nil
 }
 
 func (i Instance) IsEnabled() bool {
@@ -783,6 +854,7 @@ func (c *Config) validate() error {
 		}
 	}
 	terms := map[string]string{}
+	tunnelPorts := map[int]string{}
 	for _, cl := range c.Clients {
 		if !instanceName.MatchString(cl.Name) {
 			fail(i18n.T("config.client_name", cl.Name))
@@ -807,6 +879,11 @@ func (c *Config) validate() error {
 		if _, ok := c.Compliance[cl.Compliance]; cl.Compliance != "" && !ok {
 			fail(i18n.T("config.client_compliance", cl.Name, cl.Compliance))
 		}
+		if cl.Tunnel != nil {
+			for _, m := range cl.Tunnel.check(cl.Name, tunnelPorts) {
+				fail(m)
+			}
+		}
 		for k, v := range cl.Vars {
 			if !varName.MatchString(k) {
 				fail(i18n.T("config.client_var", cl.Name, k))
@@ -830,6 +907,11 @@ func (c *Config) validate() error {
 					fail(i18n.T("config.project_alias_dup", cl.Name, p.Name, t, other))
 				}
 				terms[key] = cl.Name + "/" + p.Name
+			}
+			if p.Tunnel != nil {
+				for _, m := range p.Tunnel.check(cl.Name+"/"+p.Name, tunnelPorts) {
+					fail(m)
+				}
 			}
 			for k, v := range p.Vars {
 				if !varName.MatchString(k) {

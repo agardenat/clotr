@@ -241,12 +241,17 @@ func (p *Pool) connect(ctx context.Context, e Endpoint, hk gossh.HostKeyCallback
 	if dl, ok := dctx.Deadline(); ok {
 		_ = conn.SetDeadline(dl)
 	}
+	stop := context.AfterFunc(dctx, func() { conn.Close() })
 	cc, chans, reqs, err := gossh.NewClientConn(conn, addr, &gossh.ClientConfig{
 		User:            e.User,
 		Auth:            auth,
 		HostKeyCallback: hk,
 		Timeout:         p.opts.Timeout,
 	})
+	if !stop() && err == nil {
+		cc.Close()
+		err = dctx.Err()
+	}
 	if err != nil {
 		conn.Close()
 		if strings.Contains(err.Error(), "unable to authenticate") {

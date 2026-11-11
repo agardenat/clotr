@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- `tunnel` sur un client ou un projet : clotr ouvre lui-même le tunnel vers le réseau du client au lieu d'un proxy SOCKS lancé à la main avant le run. Les rebonds SSH (`hops`) sont joints l'un à travers l'autre, avec un compte et un mot de passe lus dans Vault (`password_vault`, `username` du même secret) ou une clé (`key_path`, `key_vault`). Le proxy SOCKS5 local écoute sur `127.0.0.1` (`port` fixe pour les outils lancés hors de clotr, comme le `proxy-url` d'un kubeconfig, sinon libre) et `{{.tunnel_url}}` le désigne dans les `params` des instances. Les connexions SSH s'ouvrent à la première utilisation et se rouvrent après une coupure. Si le port fixe est déjà ouvert, clotr l'utilise tel quel.
+
 ## [0.60.0] - 2026-11-10
 ### Modifié
 - Noms de session en français quand l'interface est en français (`ui_language: fr` ou `--ui-lang fr`), par exemple `fieffe-coquin`, sans accents ; en anglais sinon.

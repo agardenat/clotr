@@ -559,6 +559,7 @@ projects:
 | `access` | niveau d'accès de ses instances quand `--access` n'est pas donné : `read` (défaut), `exec` ou `create`, voir Niveaux d'accès |
 | `compliance` | type de plateforme du client, défini dans la section `compliance` de la configuration ; absent : aucun |
 | `params` | valeurs par défaut des paramètres de ses instances (proxy, compte et clé SSH…) : appliquées seulement aux paramètres que le template de l'instance déclare, la valeur de l'instance l'emporte |
+| `tunnel` | rebonds SSH vers le réseau du client, ouverts par clotr, voir Tunnel ci-dessous |
 | `projects` | projets du client, chacun avec ses instances (hôtes, clusters, dépôts…), voir ci-dessous |
 | `instances` | instances du client hors projet, même format que `instances` du fichier principal ; les noms restent uniques sur toute la configuration |
 
@@ -571,7 +572,33 @@ Un projet regroupe les instances d'un même périmètre du client :
 | `context` | description du projet, transmise aux agents avec ses instances |
 | `vars` | références du projet, mêmes règles que celles du client ; dans un projet, `{{.project}}` vaut le nom du projet, sauf si ses `vars` le redéfinissent, et les `vars` du projet l'emportent sur celles du client |
 | `params` | valeurs par défaut des paramètres des instances du projet, mêmes règles que celles du client, qu'elles remplacent ; la valeur de l'instance l'emporte |
+| `tunnel` | tunnel propre au projet, qui remplace celui du client pour ses instances |
 | `instances` | instances du projet, même format que `instances` du fichier principal |
+
+#### Tunnel
+
+Au lieu d'ouvrir soi-même un tunnel SOCKS avant un run, le client ou le projet décrit les rebonds SSH et clotr ouvre le tunnel :
+
+```yaml
+projects:
+  - name: PRJ-0000
+    tunnel:
+      hops: [10.10.0.4, 10.20.0.5]
+      password_vault: "kv/{{.cmp}}/{{.project}}/adm-acme"
+    params:
+      proxy_url: "{{.tunnel_url}}"
+```
+
+| Clé | Rôle |
+|---|---|
+| `hops` | rebonds dans l'ordre, `hôte` ou `hôte:port` (22 par défaut) : chaque rebond est joint à travers le précédent, le dernier ouvre les connexions vers les ressources, noms résolus de son côté |
+| `port` | port du proxy SOCKS5 local sur `127.0.0.1` ; 0 ou absent : port libre choisi au démarrage. Un port fixe sert aux outils lancés hors de clotr pendant le run, par exemple le `proxy-url` d'un kubeconfig. Unique sur toute la configuration |
+| `user` | compte SSH, le même sur tous les rebonds ; absent : champ `username` du secret (`password_vault`, sinon `key_vault`), sinon saisi sur le terminal |
+| `password_vault` | secret Vault du mot de passe, `chemin[#champ]` (champ `password` par défaut) ; illisible : saisi sur le terminal |
+| `key_path`, `key_vault` | clé privée (fichier, ou secret Vault `chemin[#champ]`, champ `private_key` par défaut), essayée avant le mot de passe |
+| `host_key` | vérification des clés d'hôte des rebonds : `accept-new` (défaut, enregistrées dans `$XDG_STATE_HOME/clotr/known_hosts`), `strict` ou `insecure` |
+
+`{{.tunnel_url}}` vaut `socks5h://127.0.0.1:<port>` dans les `params` des instances du client ou du projet. Les champs du tunnel acceptent les `vars` ; dans un projet, `{{.project}}` vaut son nom. Le proxy local écoute dès qu'une instance du client ou du projet est activée par les filtres du run. Les connexions SSH ne s'ouvrent qu'à la première connexion qui passe par le tunnel et se rouvrent après une coupure. Le tunnel se ferme à la fin de clotr. Rebonds injoignables ou identifiants refusés : avertissement, et les connexions par le tunnel échouent. Port fixe déjà ouvert (un tunnel lancé à la main, ou un autre clotr) : clotr l'utilise tel quel, avec un avertissement.
 
 Nommer le client ou l'un de ses alias dans une demande propose toutes ses instances (voir Activation d'une instance). Nommer un projet ou l'un de ses alias propose les instances de ce projet et celles du client hors projet, pas celles de ses autres projets. `-t <client>` et `-x <client>` valent pour toutes ses instances activées, `-t <projet>` et `-x <projet>` pour celles du projet ; une instance `enabled: false` ne se force que par son nom. Les instances du fichier principal n'ont pas de client et se comportent comme avant.
 
@@ -806,7 +833,8 @@ internal/tools/         registre et outils files, mcp
 internal/template/      moteur de templates : chargement, paramètres, hôte Starlark, primitives, outils génériques, tests
 internal/access/        niveaux d'accès (read, exec, create) et motifs de commandes
 internal/cve/           mode CVE : fiches, statuts des actifs, tableau du rapport
-internal/driver/ssh/    SSH : commandes fixes en lecture seule, argv quoté au niveau exec, chemins autorisés, known_hosts
+internal/driver/ssh/    SSH : commandes fixes en lecture seule, argv quoté au niveau exec, chemins autorisés, known_hosts, chaîne de rebonds
+internal/tunnel/        tunnel d'un client : rebonds SSH et proxy SOCKS5 local
 internal/creds/         identifiants : variables d'environnement, Vault ou saisie
 internal/vault/         lecture d'un secret Vault (KV v1/v2) avec la configuration du poste
 internal/audit/         journal JSONL

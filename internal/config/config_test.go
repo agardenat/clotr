@@ -265,3 +265,49 @@ func TestVaultLogin(t *testing.T) {
 		}
 	}
 }
+
+func TestClientTunnel(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "clients"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("providers:\n  - name: a\n    base_url: http://x/v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write := func(body string) {
+		if err := os.WriteFile(filepath.Join(dir, "clients", "acme.yaml"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("name: acme\ntunnel: {hops: [10.0.0.1, \"jump.example:2222\"], port: 3128, password_vault: kv/acme}\nprojects:\n  - name: PRJ-0000\n    instances: [{name: acme-lake, template: x}]\n  - name: PRJ-0001\n    tunnel: {hops: [10.1.0.1], port: 3129}\n    instances: [{name: acme-pra, template: x}]\n")
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl, _ := c.Client("acme")
+	if tc, key := cl.TunnelFor("PRJ-0000"); tc == nil || key != "acme" || tc.Port != 3128 {
+		t.Fatalf("tunnel du client: %+v %s", tc, key)
+	}
+	if tc, key := cl.TunnelFor("PRJ-0001"); tc == nil || key != "acme/PRJ-0001" || tc.Hops[0] != "10.1.0.1" {
+		t.Fatalf("tunnel du projet: %+v %s", tc, key)
+	}
+	if h, p, err := SplitHop("jump.example:2222"); err != nil || h != "jump.example" || p != 2222 {
+		t.Fatalf("SplitHop: %s %d %v", h, p, err)
+	}
+	if h, p, err := SplitHop("fd00::1"); err != nil || h != "fd00::1" || p != 22 {
+		t.Fatalf("SplitHop IPv6: %s %d %v", h, p, err)
+	}
+	for body, want := range map[string]string{
+		"name: acme\ntunnel: {port: 3128}\n":                                                                         "at least one hop",
+		"name: acme\ntunnel: {hops: [\"x:0\"]}\n":                                                                    "x:0",
+		"name: acme\ntunnel: {hops: [x], port: 70000}\n":                                                             "70000",
+		"name: acme\ntunnel: {hops: [x], host_key: maybe}\n":                                                         "maybe",
+		"name: acme\ntunnel: {hops: [x], port: 3128}\nprojects:\n  - name: P\n    tunnel: {hops: [y], port: 3128}\n": "already used by acme",
+	} {
+		write(body)
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q : erreur contenant %q attendue, obtenu %v", body, want, err)
+		}
+	}
+}
