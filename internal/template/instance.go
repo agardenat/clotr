@@ -103,6 +103,8 @@ type Instance struct {
 	ProjectTerms []string
 
 	vaultUsers sync.Map
+	vaultCache sync.Map
+	readVault  func(ctx context.Context, ref string) (string, error)
 
 	mu        sync.Mutex
 	inv       *Inventory

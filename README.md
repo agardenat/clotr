@@ -258,7 +258,8 @@ tool(
 | `ssh.exec(host, argv, target=, prefix=)` | commande `argv` sur un hôte de l'inventaire, à partir du niveau `exec`, contrôlée par `commands` ; `prefix` : enveloppe fixe du template placée devant `argv` (ex. `["kubectl", "exec", "-n", ns, pod, "--"]`), hors de l'analyse et de la confirmation, qui portent sur `argv` seul et montrent l'enveloppe ; renvoie `stdout`, `stderr`, `exit`, `truncated` |
 | `jq(expr, data)` | filtre JSON exécuté en Go ; renvoie la liste des résultats |
 | `json`, `yaml`, `time`, `math`, `re`, `url`, `base64` | encodage (`yaml.decode`, `yaml.encode`), dates et durées, calcul, expressions régulières, URL |
-| `crypto.sign(key, msg)`, `crypto.key_type(key)` | signature ed25519 (graine base64 ou PKCS#8) ou RSA SHA-256 |
+| `crypto.sign(key, msg)`, `crypto.key_type(key)` | signature ed25519 (graine base64 ou PKCS#8) ou RSA SHA-256 ; `key` : texte ou secret de `vault.secret` |
+| `vault.secret("chemin#champ")`, `vault.read("chemin#champ")` | champ d'un secret Vault, lu avec la configuration du poste (voir Secrets Vault), une fois par instance, interdit au chargement et à la découverte hors ligne. `vault.secret` renvoie une valeur opaque : `str()` et les sorties d'outils n'affichent que `<secret chemin#champ>`, seuls `crypto.sign` et `crypto.key_type` s'en servent. `vault.read` renvoie le texte, pour un identifiant qui n'est pas secret (identifiant de clé d'accès, compte) |
 | `file.read`, `file.exists`, `file.list(path, depth=1, max=5000)`, `env` | fichiers et variables déclarés dans `files` et `env` ; `file.list` parcourt un répertoire déclaré avec `/**` et renvoie `entries` (`path`, `type` : `file`, `dir` ou `link`, `size`, `target`), sans suivre les liens, et `truncated` |
 | `parallel(fn, items, limit=4)` | exécution concurrente ; `value` ou `error` par élément |
 | `catch(fn, *args)` | appel protégé ; `value` ou `error` |
@@ -277,7 +278,7 @@ tool(
 ### Tests
 
 `clotr templates test <nom> [--dir <répertoire>]` exécute les fonctions `test_*` de `<script>_test.star`, sans réseau :
-- `template.instance(params=, http=, ssh=, env=, files=, creds=, now=, access=, confirm=)` crée une instance avec un faux serveur HTTP (dict `"MÉTHODE /chemin"` → réponse, ou fonction ; une réponse avec `messages` répond à `http.stream`) et un faux SSH (fonction `(hôte, commande)`) ; `access` fixe le niveau d'accès (défaut `read`), `confirm` la réponse aux confirmations de commandes (`yes`, `always`, défaut : refus) ; `sleep` n'attend pas ;
+- `template.instance(params=, http=, ssh=, env=, files=, creds=, vault=, now=, access=, confirm=)` crée une instance avec un faux serveur HTTP (dict `"MÉTHODE /chemin"` → réponse, ou fonction ; une réponse avec `messages` répond à `http.stream`) et un faux SSH (fonction `(hôte, commande)`) ; `access` fixe le niveau d'accès (défaut `read`), `confirm` la réponse aux confirmations de commandes (`yes`, `always`, défaut : refus), `vault` les secrets lus par `vault.secret` et `vault.read` (dict `"chemin#champ"` → valeur) ; `sleep` n'attend pas ;
 - `inst.discover()`, `inst.call(outil, args)`, `inst.error(outil, args)`, `inst.environment()`, `inst.tools()`, `inst.requests()` (requêtes reçues, avec `proxy` et `tls` passés à l'appel), `inst.commands()`, `inst.questions()` (confirmations demandées), `inst.tracked()` (objets suivis), `inst.cleanup()`, `inst.fn(nom, *args)` ;
 - `assert.eq`, `assert.true`, `assert.contains`, `assert.not_contains`, `assert.fails`.
 

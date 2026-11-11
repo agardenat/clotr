@@ -106,9 +106,12 @@ var cryptoModule = &starlarkstruct.Module{
 }
 
 func builtinSign(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var key string
-	var msg starlark.Value
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "key", &key, "msg", &msg); err != nil {
+	var keyV, msg starlark.Value
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "key", &keyV, "msg", &msg); err != nil {
+		return nil, err
+	}
+	key, err := keyText(b.Name(), keyV)
+	if err != nil {
 		return nil, err
 	}
 	data, ok := asText(msg)
@@ -123,8 +126,12 @@ func builtinSign(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 }
 
 func builtinKeyType(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var key string
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "key", &key); err != nil {
+	var keyV starlark.Value
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "key", &keyV); err != nil {
+		return nil, err
+	}
+	key, err := keyText(b.Name(), keyV)
+	if err != nil {
 		return nil, err
 	}
 	method, _, err := sign(key, nil)

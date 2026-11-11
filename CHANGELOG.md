@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- Primitives de script `vault.secret("chemin#champ")` et `vault.read("chemin#champ")` : un template lit un champ de secret Vault avec la configuration du poste. `vault.secret` renvoie une valeur opaque, utilisable par `crypto.sign` et `crypto.key_type` mais jamais affichée (`<secret …>` dans `str()` et les sorties d'outils) ; `vault.read` est réservé aux identifiants non secrets. Lecture une fois par instance, refusée à la découverte hors ligne. Permet par exemple de signer les appels à une API avec une clé d'accès rangée dans Vault au lieu d'un fichier du poste. `template.instance(vault=…)` dans les tests de templates.
+
 ## [0.63.0] - 2026-11-11
 
 ### Ajouté
