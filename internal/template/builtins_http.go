@@ -48,6 +48,7 @@ type httpConn struct {
 	maxBytes int
 	timeout  time.Duration
 	auth     *httpAuth
+	oauth    *httpOAuth
 	deny     []*regexp.Regexp
 	ownDeny  bool
 	opts     options
@@ -100,6 +101,9 @@ func checkHTTPOptions(o options) error {
 		}
 	}
 	a := o.sub("auth")
+	if _, ok := a["oauth2"]; ok {
+		return checkOAuthOptions(a)
+	}
 	for k := range a {
 		if !slices.Contains([]string{"user_env", "password_env", "password_vault", "label", "header", "scheme"}, k) {
 			return i18n.E("tpl.http.auth_key", k)
@@ -154,7 +158,9 @@ func newHTTPConn(name string, o options) (*httpConn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("timeout: %w", err)
 	}
-	if a := o.sub("auth"); len(a) > 0 {
+	if a := o.sub("auth"); len(a) > 0 && a["oauth2"] != nil {
+		hc.oauth = newHTTPOAuth(a.sub("oauth2"))
+	} else if len(a) > 0 {
 		hc.auth = &httpAuth{userEnv: a.str("user_env"), passEnv: a.str("password_env"), passVault: a.str("password_vault"), label: defaultStr(a.str("label"), name), header: a.str("header"), scheme: a.str("scheme")}
 	}
 	if hc.levels, err = newConnLevels(o); err != nil {
@@ -568,7 +574,7 @@ func (in *Instance) newRequest(ctx context.Context, c *httpCall) (*http.Request,
 	if err != nil {
 		return nil, nil, err
 	}
-	h, err := in.requestHeaders(c)
+	h, err := in.requestHeaders(ctx, c)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -576,7 +582,7 @@ func (in *Instance) newRequest(ctx context.Context, c *httpCall) (*http.Request,
 	return req, &u, nil
 }
 
-func (in *Instance) requestHeaders(c *httpCall) (http.Header, error) {
+func (in *Instance) requestHeaders(ctx context.Context, c *httpCall) (http.Header, error) {
 	h := http.Header{}
 	h.Set("User-Agent", httpx.UserAgent)
 	h.Set("Accept", "application/json")
@@ -588,6 +594,13 @@ func (in *Instance) requestHeaders(c *httpCall) (http.Header, error) {
 	}
 	for k, v := range c.headers {
 		h.Set(k, v)
+	}
+	if c.hc.oauth != nil {
+		tok, err := in.oauthToken(ctx, c.hc)
+		if err != nil {
+			return nil, err
+		}
+		h.Set("Authorization", "Bearer "+tok)
 	}
 	if c.hc.auth != nil {
 		cr, ok := in.creds[c.hc.name]

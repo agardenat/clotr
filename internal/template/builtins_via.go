@@ -30,7 +30,7 @@ func (in *Instance) sendVia(ctx context.Context, c *httpCall) (*httpReply, error
 	if len(c.query) > 0 {
 		target += "?" + c.query.Encode()
 	}
-	hdr, err := in.requestHeaders(c)
+	hdr, err := in.requestHeaders(ctx, c)
 	if err != nil {
 		return nil, err
 	}
