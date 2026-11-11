@@ -97,10 +97,10 @@ func (h *testHarness) predeclared() starlark.StringDict {
 
 func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	name := "test"
-	var params, env, files, credsD *starlark.Dict
+	var params, env, files, credsD, vaultD *starlark.Dict
 	var httpMock, sshMock, mcpMock starlark.Value
 	var now, level, confirm string
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name?", &name, "params?", &params, "http?", &httpMock, "ssh?", &sshMock, "mcp?", &mcpMock, "env?", &env, "files?", &files, "now?", &now, "creds?", &credsD, "access?", &level, "confirm?", &confirm); err != nil {
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name?", &name, "params?", &params, "http?", &httpMock, "ssh?", &sshMock, "mcp?", &mcpMock, "env?", &env, "files?", &files, "now?", &now, "creds?", &credsD, "access?", &level, "confirm?", &confirm, "vault?", &vaultD); err != nil {
 		return nil, err
 	}
 	lvl, err := access.Parse(level)
@@ -130,6 +130,13 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 	in.Print = func(msg string) { fmt.Println("  " + msg) }
 	envMap := dictStrings(env)
 	in.getenv = func(k string) string { return envMap[k] }
+	vaultMap := dictStrings(vaultD)
+	in.readVault = func(_ context.Context, ref string) (string, error) {
+		if v, ok := vaultMap[ref]; ok {
+			return v, nil
+		}
+		return "", i18n.E("tpl.test.vault_absent", ref)
+	}
 	fileMap := map[string]string{}
 	for k, v := range dictStrings(files) {
 		fileMap[config.ExpandHome(k)] = v

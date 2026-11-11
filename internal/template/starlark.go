@@ -58,7 +58,7 @@ const (
 	localLoading  = "clotr.loading"
 )
 
-var scriptPredeclared = []string{"http", "mcp", "ssh", "jq", "json", "time", "math", "crypto", "base64", "file", "env", "parallel", "catch", "sprintf", "logstats", "redact", "instance", "tool", "struct", "re", "url", "compact_json", "yaml", "sleep"}
+var scriptPredeclared = []string{"http", "mcp", "ssh", "jq", "json", "time", "math", "crypto", "vault", "base64", "file", "env", "parallel", "catch", "sprintf", "logstats", "redact", "instance", "tool", "struct", "re", "url", "compact_json", "yaml", "sleep"}
 
 func checkScript(t *Template) error {
 	_, _, err := starlark.SourceProgramOptions(fileOptions, t.ScriptPath, t.ScriptSrc, func(name string) bool {
@@ -82,6 +82,7 @@ func (in *Instance) predeclared() starlark.StringDict {
 		"time":         startime.Module,
 		"math":         starmath.Module,
 		"crypto":       cryptoModule,
+		"vault":        in.vaultModule(),
 		"base64":       base64Module,
 		"file":         in.fileModule(),
 		"env":          starlark.NewBuiltin("env", in.builtinEnv),
