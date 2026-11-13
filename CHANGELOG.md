@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.66.0] - 2026-11-13
 
 ### Ajouté
 - `host_key: accept-changed` (connecteur `ssh` des templates et `tunnel`) : une clé d'hôte changée, par exemple après la recréation d'une VM par une mise à jour d'image, remplace l'ancienne dans le `known_hosts` de clotr au lieu de bloquer la connexion. Avertissement affiché et événement d'audit `host_key_replaced` avec les deux empreintes. Le remplacement n'a lieu que si l'authentification se fait par clé seule ; si un mot de passe peut être envoyé, la clé changée reste refusée.
