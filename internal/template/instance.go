@@ -420,6 +420,11 @@ func (in *Instance) warnInventory() {
 	}
 }
 
+func (in *Instance) hostKeyReplaced(host, old, new string) {
+	in.warn(i18n.T("ssh.host_replaced", in.Name, host, old, new))
+	in.audit("host_key_replaced", map[string]any{"instance": in.Name, "host": host, "old": old, "new": new})
+}
+
 func (in *Instance) warn(msg string) {
 	if in.Warn != nil {
 		in.Warn(msg)
@@ -670,7 +675,7 @@ func (in *Instance) sshPool() (sshExecutor, error) {
 	if kh == "" {
 		kh = filepath.Join(config.StateDir(), "clotr", "known_hosts")
 	}
-	p, err := ssh.NewPool(ssh.Options{Proxy: px, KnownHosts: config.ExpandHome(kh), HostKey: ssh.HostKeyPolicy(o.str("host_key")), MaxConns: maxConns, ReadVault: func(ctx context.Context, ref string) (string, error) { return creds.ReadVault(ctx, ref) }})
+	p, err := ssh.NewPool(ssh.Options{Proxy: px, KnownHosts: config.ExpandHome(kh), HostKey: ssh.HostKeyPolicy(o.str("host_key")), MaxConns: maxConns, ReadVault: func(ctx context.Context, ref string) (string, error) { return creds.ReadVault(ctx, ref) }, OnReplace: in.hostKeyReplaced})
 	if err != nil {
 		return nil, err
 	}

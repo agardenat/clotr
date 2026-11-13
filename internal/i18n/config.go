@@ -63,7 +63,7 @@ var configMsgs = map[string]msg{
 	"config.tunnel_hop":              {"client %s: tunnel.hops: %q is invalid (host or host:port): %v", "client %s : tunnel.hops : %q invalide (hôte ou hôte:port) : %v"},
 	"config.tunnel_port":             {"client %s: tunnel.port %d is invalid (0-65535)", "client %s : tunnel.port %d invalide (0-65535)"},
 	"config.tunnel_port_dup":         {"client %s: tunnel.port %d is already used by %s", "client %s : tunnel.port %d déjà utilisé par %s"},
-	"config.tunnel_host_key":         {"client %s: tunnel.host_key %q is invalid (accept-new|strict|insecure)", "client %s : tunnel.host_key %q invalide (accept-new|strict|insecure)"},
+	"config.tunnel_host_key":         {"client %s: tunnel.host_key %q is invalid (accept-new|accept-changed|strict|insecure)", "client %s : tunnel.host_key %q invalide (accept-new|accept-changed|strict|insecure)"},
 	"config.project_name":            {"client %s: invalid project name %q (empty or surrounded by spaces)", "client %s : nom de projet %q invalide (vide ou entouré d'espaces)"},
 	"config.project_alias":           {"client %s, project %s: empty alias", "client %s, projet %s : alias vide"},
 	"config.project_alias_dup":       {"client %s, project %s: %q is already used by %s", "client %s, projet %s : %q déjà utilisé par %s"},
