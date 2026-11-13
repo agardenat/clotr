@@ -199,6 +199,7 @@ type Client struct {
 	Vars       map[string]string `yaml:"vars"`
 	Access     string            `yaml:"access"`
 	Compliance string            `yaml:"compliance"`
+	WebSearch  string            `yaml:"web_search"`
 	Params     map[string]any    `yaml:"params"`
 	Tunnel     *Tunnel           `yaml:"tunnel"`
 	Instances  []Instance        `yaml:"instances"`
@@ -879,6 +880,9 @@ func (c *Config) validate() error {
 		}
 		if _, ok := c.Compliance[cl.Compliance]; cl.Compliance != "" && !ok {
 			fail(i18n.T("config.client_compliance", cl.Name, cl.Compliance))
+		}
+		if cl.WebSearch != "" && !ValidWebPolicy(cl.WebSearch) {
+			fail(i18n.T("config.client_web", cl.Name, cl.WebSearch))
 		}
 		if cl.Tunnel != nil {
 			for _, m := range cl.Tunnel.check(cl.Name, tunnelPorts) {

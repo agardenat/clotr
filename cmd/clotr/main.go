@@ -413,7 +413,7 @@ func webTarget(cfg *config.Config, exclude []string) (kind, name string) {
 	return "", ""
 }
 
-func resolveWeb(cfg *config.Config, o *options, confidential bool) (bool, string, error) {
+func resolveWeb(cfg *config.Config, o *options, confidential bool, cited []config.Client) (bool, string, error) {
 	if cfg.WebSearch.MCP == "" && cfg.WebSearch.Model == "" {
 		return false, "", nil
 	}
@@ -422,13 +422,13 @@ func resolveWeb(cfg *config.Config, o *options, confidential bool) (bool, string
 	default:
 		return false, "", i18n.E("cli.err.web", o.web)
 	}
-	if confidential {
+	kind, target := webTarget(cfg, o.exclude)
+	if confidential && !webConfidentialAllowed(cfg, cited, kind, target) {
 		if o.web == "yes" {
 			return false, "", i18n.E("cli.err.web_confidential")
 		}
 		return false, i18n.T("web.confidential"), nil
 	}
-	_, target := webTarget(cfg, o.exclude)
 	if target == "" {
 		if !matchGroup(o.exclude, "mcp_"+cfg.WebSearch.MCP) {
 			return false, "", nil
@@ -438,14 +438,17 @@ func resolveWeb(cfg *config.Config, o *options, confidential bool) (bool, string
 		}
 		return false, i18n.T("web.exclude"), nil
 	}
+	policy, client := webPolicy(cfg, cited)
 	switch {
 	case o.web == "yes":
 		return true, target, nil
 	case o.web == "no":
 		return false, i18n.T("web.flag"), nil
-	case cfg.WebSearch.Policy == "allow":
+	case policy == "allow":
 		return true, target, nil
-	case cfg.WebSearch.Policy == "deny":
+	case policy == "deny" && client != "":
+		return false, i18n.T("web.client_policy", client), nil
+	case policy == "deny":
 		return false, i18n.T("web.policy"), nil
 	}
 	ok, err := creds.Confirm(i18n.T("web.ask", target))
@@ -458,8 +461,65 @@ func resolveWeb(cfg *config.Config, o *options, confidential bool) (bool, string
 	return true, target, nil
 }
 
-func (o *options) decideWeb(cfg *config.Config, confidential bool) error {
-	allowed, why, err := resolveWeb(cfg, o, confidential)
+func webPolicy(cfg *config.Config, cited []config.Client) (policy, client string) {
+	rank := map[string]int{"allow": 0, "ask": 1, "deny": 2}
+	policy = cfg.WebSearch.Policy
+	first := true
+	for _, cl := range cited {
+		p, who := cl.WebSearch, cl.Name
+		if p == "" {
+			p, who = cfg.WebSearch.Policy, ""
+		}
+		if first || rank[p] > rank[policy] {
+			policy, client, first = p, who, false
+		}
+	}
+	return policy, client
+}
+
+func webConfidentialAllowed(cfg *config.Config, cited []config.Client, kind, target string) bool {
+	n := 0
+	for _, cl := range cited {
+		if !cfg.Compliance[cl.Compliance].Confidential {
+			continue
+		}
+		if cl.WebSearch != "allow" && cl.WebSearch != "ask" {
+			return false
+		}
+		n++
+	}
+	if n == 0 {
+		return false
+	}
+	if kind == "model" {
+		prov, _, _ := strings.Cut(target, "/")
+		p, ok := cfg.Provider(prov)
+		return ok && p.Sovereign
+	}
+	return true
+}
+
+func citedClients(cfg *config.Config, forced []string, text string) []config.Client {
+	var out []config.Client
+	for _, cl := range cfg.Clients {
+		if clientCited(cfg, cl, forced, text) {
+			out = append(out, cl)
+		}
+	}
+	return out
+}
+
+func sessionScope(sess *session.Session, tools []string, request string) ([]string, string) {
+	forced := slices.Clone(tools)
+	for _, t := range sess.Turns {
+		request += "\n" + t.Request
+		forced = append(forced, t.Tools...)
+	}
+	return forced, request
+}
+
+func (o *options) decideWeb(cfg *config.Config, confidential bool, forced []string, text string) error {
+	allowed, why, err := resolveWeb(cfg, o, confidential, citedClients(cfg, forced, text))
 	if err != nil {
 		return err
 	}
@@ -1348,7 +1408,7 @@ func cmdPlan(ctx context.Context, o *options, args []string, w io.Writer) error 
 	if err := o.applyCompliance(cfg, o.tools, request, false); err != nil {
 		return err
 	}
-	if err := o.decideWeb(cfg, o.confidential || o.sovereign == "require"); err != nil {
+	if err := o.decideWeb(cfg, o.confidential || o.sovereign == "require", o.tools, request); err != nil {
 		return err
 	}
 	rt, err := setup(ctx, o, true)
@@ -1407,7 +1467,8 @@ func openRun(ctx context.Context, o *options, request string) (*session.Session,
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := o.decideWeb(cfg, sess.Confidential); err != nil {
+	forced, text := sessionScope(sess, o.tools, request)
+	if err := o.decideWeb(cfg, sess.Confidential, forced, text); err != nil {
 		return nil, nil, err
 	}
 	next := len(sess.Turns) + 1
@@ -1828,12 +1889,8 @@ func openSession(cfg *config.Config, o *options, request string) (*session.Sessi
 	if err != nil {
 		return nil, err
 	}
-	forced := slices.Clone(o.tools)
-	for _, t := range sess.Turns {
-		request += "\n" + t.Request
-		forced = append(forced, t.Tools...)
-	}
-	if err := o.applyCompliance(cfg, forced, request, sess.Confidential); err != nil {
+	forced, text := sessionScope(sess, o.tools, request)
+	if err := o.applyCompliance(cfg, forced, text, sess.Confidential); err != nil {
 		return nil, err
 	}
 	confidential := o.confidential || o.sovereign == "require"
@@ -1861,7 +1918,7 @@ func (o *options) applyCompliance(cfg *config.Config, forced []string, text stri
 		return nil
 	}
 	for _, cl := range cfg.Clients {
-		if !cfg.Confidential(cl.Name) || !compliantCited(cfg, cl, forced, text) {
+		if !cfg.Confidential(cl.Name) || !clientCited(cfg, cl, forced, text) {
 			continue
 		}
 		if o.sovereign != "" {
@@ -1874,7 +1931,7 @@ func (o *options) applyCompliance(cfg *config.Config, forced []string, text stri
 	return nil
 }
 
-func compliantCited(cfg *config.Config, cl config.Client, forced []string, text string) bool {
+func clientCited(cfg *config.Config, cl config.Client, forced []string, text string) bool {
 	terms := append([]string{cl.Name}, cl.Aliases...)
 	groups := []string{cl.Name}
 	for _, p := range cl.Projects {

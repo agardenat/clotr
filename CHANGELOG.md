@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- `web_search` par client (`ask`, `allow`, `deny`) : remplace `web_search.policy` pour les runs qui citent le client, la plus stricte l'emportant entre plusieurs clients cités. Sur un client de type confidentiel, `allow` ou `ask` autorise la recherche web en session confidentielle, si chaque client confidentiel cité l'autorise ; un modèle de recherche n'y sert que si son fournisseur est souverain.
+
 ## [0.64.0] - 2026-11-11
 
 ### Ajouté

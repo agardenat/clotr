@@ -54,8 +54,63 @@ func TestResolveWeb(t *testing.T) {
 		if c.excluded {
 			exclude = []string{"mcp_search"}
 		}
-		got, why, err := resolveWeb(cfg, &options{web: c.flag, exclude: exclude}, c.confidential)
+		got, why, err := resolveWeb(cfg, &options{web: c.flag, exclude: exclude}, c.confidential, nil)
 		if got != c.want || (err != nil) != c.err || (got && why != c.target) {
+			t.Errorf("%s: %v %q %v", c.name, got, why, err)
+		}
+	}
+}
+
+func TestResolveWebClients(t *testing.T) {
+	creds.OpenTTY = func() (*creds.Console, error) { return nil, errors.New("pas de terminal") }
+	base := func() *config.Config {
+		return &config.Config{
+			WebSearch:  config.WebSearch{Policy: "allow", MCP: "search"},
+			MCP:        []config.MCPServer{{Name: "search"}},
+			Providers:  []config.Provider{{Name: "souv", Sovereign: true}, {Name: "ext"}},
+			Compliance: map[string]config.Compliance{"regulated": {Confidential: true}},
+		}
+	}
+	reg := func(name, web string) config.Client {
+		return config.Client{Name: name, Compliance: "regulated", WebSearch: web}
+	}
+	plain := func(name, web string) config.Client { return config.Client{Name: name, WebSearch: web} }
+	cases := []struct {
+		name         string
+		flag         string
+		model        bool
+		provider     string
+		confidential bool
+		clients      []config.Client
+		want         bool
+		err          bool
+	}{
+		{"confidentielle sans client", "", false, "", true, nil, false, false},
+		{"confidentielle client sans réglage", "", false, "", true, []config.Client{reg("a", "")}, false, false},
+		{"confidentielle client allow", "", false, "", true, []config.Client{reg("a", "allow")}, true, false},
+		{"confidentielle client allow + yes", "yes", false, "", true, []config.Client{reg("a", "allow")}, true, false},
+		{"confidentielle client ask sans terminal", "", false, "", true, []config.Client{reg("a", "ask")}, false, false},
+		{"confidentielle client deny + yes", "yes", false, "", true, []config.Client{reg("a", "deny")}, false, true},
+		{"confidentielle un client sans réglage", "", false, "", true, []config.Client{reg("a", "allow"), reg("b", "")}, false, false},
+		{"confidentielle client non réglementé seul", "", false, "", true, []config.Client{plain("a", "allow")}, false, false},
+		{"confidentielle modèle souverain", "", true, "souv", true, []config.Client{reg("a", "allow")}, true, false},
+		{"confidentielle modèle non souverain", "", true, "ext", true, []config.Client{reg("a", "allow")}, false, false},
+		{"client deny", "", false, "", false, []config.Client{plain("a", "deny")}, false, false},
+		{"client deny + yes", "yes", false, "", false, []config.Client{plain("a", "deny")}, true, false},
+		{"client ask sans terminal", "", false, "", false, []config.Client{plain("a", "ask"), plain("b", "allow")}, false, false},
+		{"client allow, politique deny", "", false, "", false, []config.Client{plain("a", "allow")}, true, false},
+	}
+	for _, c := range cases {
+		cfg := base()
+		if c.name == "client allow, politique deny" {
+			cfg.WebSearch.Policy = "deny"
+		}
+		if c.model {
+			cfg.WebSearch = config.WebSearch{Policy: "allow", Model: c.provider + "/m", API: "messages"}
+			cfg.MCP = nil
+		}
+		got, why, err := resolveWeb(cfg, &options{web: c.flag}, c.confidential, c.clients)
+		if got != c.want || (err != nil) != c.err {
 			t.Errorf("%s: %v %q %v", c.name, got, why, err)
 		}
 	}
