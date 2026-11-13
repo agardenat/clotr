@@ -27,7 +27,26 @@ var (
 	mu        sync.Mutex
 	cache     = map[string]Pair{}
 	skipVault = map[string]bool{}
+	refusals  = map[string]string{}
+	lastUser  = map[string]string{}
+	described = map[string]bool{}
 )
+
+type detailKey struct{}
+
+func WithDetail(ctx context.Context, detail string) context.Context {
+	return context.WithValue(ctx, detailKey{}, detail)
+}
+
+func Refused(label, user, reason string) {
+	Forget(label, user)
+	mu.Lock()
+	defer mu.Unlock()
+	refusals[label] = reason
+	if user != "" {
+		lastUser[label] = user
+	}
+}
 
 var ReadVault = vault.Secret
 
@@ -145,15 +164,31 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 	defer promptMu.Unlock()
 	defer suspend()()
 	var notice string
+	if r := refusals[label]; r != "" {
+		notice = i18n.T("prompt.refused", r)
+		delete(refusals, label)
+	}
+	if d, _ := ctx.Value(detailKey{}).(string); d != "" && (notice != "" || !described[label]) {
+		notice += d + "\n"
+		described[label] = true
+	}
 	if vaultErr != nil {
-		notice = i18n.T("prompt.vault_failed", label, passVault, vaultErr)
+		notice += i18n.T("prompt.vault_failed", label, passVault, vaultErr)
 	}
 	if p.User == "" && !secretOnly {
-		line, err := prompt(ctx, tty, notice+i18n.T("prompt.user", label), false)
+		question := i18n.T("prompt.user", label)
+		prev := lastUser[label]
+		if prev != "" {
+			question = i18n.T("prompt.user_default", label, prev)
+		}
+		line, err := prompt(ctx, tty, notice+question, false)
 		if err != nil {
 			return Pair{}, err
 		}
 		p.User, notice = strings.TrimSpace(line), ""
+		if p.User == "" {
+			p.User = prev
+		}
 	}
 	if p.Pass == "" {
 		question := i18n.T("prompt.password", label, p.User)
@@ -172,6 +207,7 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 	cache[key] = p
 	if !secretOnly {
 		cache[userKey(label, p.User)] = p
+		lastUser[label] = p.User
 	}
 	return p, nil
 }

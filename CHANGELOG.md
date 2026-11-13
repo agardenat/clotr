@@ -1,5 +1,11 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- Saisie des identifiants SSH et shell plus explicite : la première question indique l'hôte, l'instance, le chemin de connexion (commande et rebonds), le partage des identifiants pendant le run, le compte attendu et où le configurer. Après un mot de passe refusé, la question suivante donne la raison (compte, hôte, réponse de l'hôte) et propose le compte précédent par défaut.
+- `auth.hint` sur les connecteurs `ssh` et `shell` (et `shell.auth` d'une instance) : compte attendu, affiché à la saisie.
+
 ## [0.66.0] - 2026-11-13
 
 ### Ajouté

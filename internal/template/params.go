@@ -229,7 +229,7 @@ func (in *Instance) UseShell(s *config.Shell) error {
 		}
 	}
 	if a := s.Auth; a != nil {
-		o["auth"] = map[string]any{"user": a.User, "user_env": a.UserEnv, "password_env": a.PasswordEnv, "password_vault": a.PasswordVault, "label": a.Label}
+		o["auth"] = map[string]any{"user": a.User, "user_env": a.UserEnv, "password_env": a.PasswordEnv, "password_vault": a.PasswordVault, "label": a.Label, "hint": a.Hint}
 	}
 	if s.OpenTimeout > 0 {
 		o["open_timeout"] = s.OpenTimeout

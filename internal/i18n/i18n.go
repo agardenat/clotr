@@ -140,6 +140,8 @@ var msgs = map[string]msg{
 	"yesno.yes":            {"yes", "oui"},
 	"yesno.no":             {"no", "non"},
 	"prompt.user":          {"%s — user: ", "%s — utilisateur : "},
+	"prompt.user_default":  {"%s — user [%s, Enter to keep]: ", "%s — utilisateur [%s, Entrée pour le garder] : "},
+	"prompt.refused":       {"⚠ previous attempt refused: %s\n", "⚠ tentative précédente refusée : %s\n"},
 	"prompt.password":      {"%s — password for %s: ", "%s — mot de passe de %s : "},
 	"prompt.secret":        {"%s — token: ", "%s — jeton : "},
 	"prompt.vault_failed":  {"%s — Vault %s: %v\n", "%s — Vault %s : %v\n"},

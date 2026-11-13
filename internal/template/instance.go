@@ -706,7 +706,19 @@ func newShellPool(name string, o options) (*ssh.Shell, error) {
 			label = name + " (SSH)"
 		}
 		so.User = a.str("user")
-		so.Login = func(ctx context.Context) (string, string, error) {
+		route := func(host string) string {
+			short, _, _ := strings.Cut(host, ".")
+			r := strings.NewReplacer("%h", host, "%s", short, "%u", i18n.T("creds.account"))
+			steps := []string{r.Replace(strings.Join(so.Command, " "))}
+			for _, t := range so.Then {
+				if t = strings.TrimSpace(r.Replace(t)); t != "" {
+					steps = append(steps, t)
+				}
+			}
+			return strings.Join(steps, " ; ")
+		}
+		so.Login = func(ctx context.Context, host string) (string, string, error) {
+			ctx = creds.WithDetail(ctx, loginDetail(i18n.T("creds.detail_shell", host, name, route(host)), label, a.str("hint")))
 			var p creds.Pair
 			var err error
 			if so.User != "" {
@@ -716,29 +728,52 @@ func newShellPool(name string, o options) (*ssh.Shell, error) {
 			}
 			return p.User, p.Pass, err
 		}
-		so.Forget = func(user string) { creds.Forget(label, user) }
+		so.Forget = func(user, host, reason string) {
+			creds.Refused(label, user, i18n.T("creds.refused_shell", user, host, defaultStr(reason, "?")))
+		}
 	}
 	return ssh.NewShell(so)
+}
+
+func hostLabel(name, addr string) string {
+	if name == "" || name == addr {
+		return addr
+	}
+	return name + " (" + addr + ")"
+}
+
+func loginDetail(what, label, hint string) string {
+	d := what + "\n" + i18n.T("creds.detail_shared", label)
+	if hint != "" {
+		d += "\n" + i18n.T("creds.detail_hint", hint)
+	}
+	return d + "\n" + i18n.T("creds.detail_config")
 }
 
 type sshLogin struct {
 	in        *Instance
 	label     string
 	user      string
+	host      string
+	hint      string
 	passEnv   string
 	passVault string
+}
+
+func (l *sshLogin) detail(ctx context.Context) context.Context {
+	return creds.WithDetail(ctx, loginDetail(i18n.T("creds.detail_ssh", l.host, l.in.Name), l.label, l.hint))
 }
 
 func (l *sshLogin) password(ctx context.Context) (string, error) {
 	if p, ok := l.in.creds[l.in.sshName]; ok {
 		return p.Pass, nil
 	}
-	p, err := creds.ResolveUser(ctx, l.user, l.passEnv, l.passVault, l.label)
+	p, err := creds.ResolveUser(l.detail(ctx), l.user, l.passEnv, l.passVault, l.label)
 	return p.Pass, err
 }
 
 func (l *sshLogin) forget() {
-	creds.Forget(l.label, l.user)
+	creds.Refused(l.label, l.user, i18n.T("creds.refused_ssh", l.user, l.host))
 }
 
 func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.Endpoint, *sshLogin, error) {
@@ -771,11 +806,11 @@ func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.En
 	if len(a) == 0 {
 		return ep, nil, nil
 	}
-	l := &sshLogin{in: in, label: in.Name + " (" + defaultStr(a.str("label"), "SSH") + ")", user: ep.User, passEnv: a.str("password_env"), passVault: a.str("password_vault")}
+	l := &sshLogin{in: in, label: in.Name + " (" + defaultStr(a.str("label"), "SSH") + ")", user: ep.User, host: hostLabel(h.Name, host), hint: a.str("hint"), passEnv: a.str("password_env"), passVault: a.str("password_vault")}
 	if l.user == "" {
 		p, ok := in.creds[in.sshName]
 		if !ok {
-			if p, err = creds.Resolve(ctx, a.str("user_env"), l.passEnv, l.passVault, l.label); err != nil {
+			if p, err = creds.Resolve(l.detail(ctx), a.str("user_env"), l.passEnv, l.passVault, l.label); err != nil {
 				return ssh.Endpoint{}, nil, err
 			}
 		}
