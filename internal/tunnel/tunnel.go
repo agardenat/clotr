@@ -52,7 +52,7 @@ func Open(name string, c config.Tunnel) (*Tunnel, error) {
 		t.hops = append(t.hops, ssh.Endpoint{Host: host, Port: port})
 	}
 	kh := filepath.Join(config.StateDir(), "clotr", "known_hosts")
-	t.opts = ssh.Options{KnownHosts: kh, HostKey: ssh.HostKeyPolicy(c.HostKey), ReadVault: func(ctx context.Context, ref string) (string, error) { return creds.ReadVault(ctx, ref) }}
+	t.opts = ssh.Options{KnownHosts: kh, HostKey: ssh.HostKeyPolicy(c.HostKey), ReadVault: func(ctx context.Context, ref string) (string, error) { return creds.ReadVault(ctx, ref) }, OnReplace: t.hostKeyReplaced}
 	l, err := listen(c.Port)
 	if err != nil {
 		if c.Port > 0 && listening(c.Port) {
@@ -88,7 +88,7 @@ func (t *Tunnel) dial(ctx context.Context, network, addr string) (net.Conn, erro
 	ch, err := t.connect(ctx)
 	if err == nil {
 		var conn net.Conn
-		if conn, err = ch.DialContext(ctx, network, addr); err == nil || errors.Is(err, netx.ErrRefused) {
+		if conn, err = ch.DialContext(ctx, network, addr); err == nil || errors.Is(err, netx.ErrRefused) || ctx.Err() != nil {
 			return conn, err
 		}
 	}
@@ -165,6 +165,15 @@ func (t *Tunnel) connect(ctx context.Context) (*ssh.Chain, error) {
 		t.Audit("tunnel_open", map[string]any{"tunnel": t.Name, "hops": t.cfg.Hops, "user": user, "url": t.URL})
 	}
 	return ch, nil
+}
+
+func (t *Tunnel) hostKeyReplaced(host, old, new string) {
+	if t.Warn != nil {
+		t.Warn(i18n.T("ssh.host_replaced", "tunnel "+t.Name, host, old, new))
+	}
+	if t.Audit != nil {
+		t.Audit("host_key_replaced", map[string]any{"tunnel": t.Name, "host": host, "old": old, "new": new})
+	}
 }
 
 func (t *Tunnel) Close() {
