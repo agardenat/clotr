@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,9 +26,10 @@ import (
 type HostKeyPolicy string
 
 const (
-	AcceptNew HostKeyPolicy = "accept-new"
-	Strict    HostKeyPolicy = "strict"
-	Insecure  HostKeyPolicy = "insecure"
+	AcceptNew     HostKeyPolicy = "accept-new"
+	AcceptChanged HostKeyPolicy = "accept-changed"
+	Strict        HostKeyPolicy = "strict"
+	Insecure      HostKeyPolicy = "insecure"
 )
 
 type Endpoint struct {
@@ -52,6 +54,7 @@ type Options struct {
 	MaxConns   int
 	Timeout    time.Duration
 	ReadVault  func(ctx context.Context, ref string) (string, error)
+	OnReplace  func(host, old, new string)
 }
 
 type Pool struct {
@@ -78,7 +81,7 @@ func NewPool(o Options) (*Pool, error) {
 	switch o.HostKey {
 	case "":
 		o.HostKey = AcceptNew
-	case AcceptNew, Strict, Insecure:
+	case AcceptNew, AcceptChanged, Strict, Insecure:
 	default:
 		return nil, i18n.E("ssh.host_key", o.HostKey)
 	}
@@ -136,7 +139,7 @@ func (p *Pool) signer(ctx context.Context, e Endpoint) (gossh.Signer, error) {
 	return s, nil
 }
 
-func (p *Pool) hostKeyCallback() (gossh.HostKeyCallback, error) {
+func (p *Pool) hostKeyCallback(e Endpoint) (gossh.HostKeyCallback, error) {
 	if p.opts.HostKey == Insecure {
 		return gossh.InsecureIgnoreHostKey(), nil
 	}
@@ -149,6 +152,7 @@ func (p *Pool) hostKeyCallback() (gossh.HostKeyCallback, error) {
 		return nil, err
 	}
 	f.Close()
+	replace := p.opts.HostKey == AcceptChanged && e.Password == nil
 	return func(hostname string, remote net.Addr, key gossh.PublicKey) error {
 		p.khMu.Lock()
 		defer p.khMu.Unlock()
@@ -158,21 +162,58 @@ func (p *Pool) hostKeyCallback() (gossh.HostKeyCallback, error) {
 		}
 		err = cb(hostname, remote, key)
 		var ke *knownhosts.KeyError
-		if errors.As(err, &ke) && len(ke.Want) == 0 && p.opts.HostKey == AcceptNew {
-			line := knownhosts.Line([]string{knownhosts.Normalize(hostname)}, key)
-			af, ferr := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
-			if ferr != nil {
-				return ferr
-			}
-			defer af.Close()
-			_, ferr = fmt.Fprintln(af, line)
-			return ferr
+		if !errors.As(err, &ke) {
+			return err
 		}
-		if errors.As(err, &ke) && len(ke.Want) > 0 {
+		host := knownhosts.Normalize(hostname)
+		switch {
+		case len(ke.Want) == 0 && (p.opts.HostKey == AcceptNew || p.opts.HostKey == AcceptChanged):
+			return appendKnownHost(path, host, key)
+		case len(ke.Want) > 0 && replace:
+			if err := replaceKnownHost(path, host, key); err != nil {
+				return err
+			}
+			if p.opts.OnReplace != nil {
+				p.opts.OnReplace(host, gossh.FingerprintSHA256(ke.Want[0].Key), gossh.FingerprintSHA256(key))
+			}
+			return nil
+		case len(ke.Want) > 0:
 			return i18n.E("ssh.host_changed", hostname, path)
 		}
 		return err
 	}, nil
+}
+
+func appendKnownHost(path, host string, key gossh.PublicKey) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintln(f, knownhosts.Line([]string{host}, key))
+	return err
+}
+
+func replaceKnownHost(path, host string, key gossh.PublicKey) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var out []string
+	for _, l := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if f := strings.Fields(l); len(f) > 0 && !strings.HasPrefix(f[0], "#") && slices.Contains(strings.Split(f[0], ","), host) {
+			continue
+		}
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	out = append(out, knownhosts.Line([]string{host}, key))
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(out, "\n")+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (p *Pool) client(ctx context.Context, e Endpoint) (*gossh.Client, error) {
@@ -183,7 +224,7 @@ func (p *Pool) client(ctx context.Context, e Endpoint) (*gossh.Client, error) {
 	if ok {
 		return c, nil
 	}
-	hk, err := p.hostKeyCallback()
+	hk, err := p.hostKeyCallback(e)
 	if err != nil {
 		return nil, err
 	}

@@ -348,7 +348,7 @@ vault:
 - authentification : la clé d'abord (`key_vault`, sinon le fichier `key`), puis le mot de passe si la clé est absente ou refusée et que `auth` est déclaré (méthodes `password` et `keyboard-interactive`). Le mot de passe vient de `password_env`, sinon du secret `password_vault`, sinon il est saisi sur le terminal, une fois par utilisateur ; sans `user`, l'utilisateur est lu dans le champ `username` du secret (`key_vault`, sinon `password_vault`), sinon demandé. Une clé lue dans Vault reste en mémoire, sans fichier ni passphrase ;
 - les valeurs de type `password=…`, `token: …` et `<name>…password…</name><value>…</value>` sont masquées dans les sorties ;
 - connexions via le proxy SOCKS5 de l'instance, clé privée sans passphrase, `max_conns` sessions simultanées par instance. Aucun fichier `ssh_config` n'est lu. Un hôte qui déclare une IP est joint par son IP (le nom ne sert qu'à l'affichage et à la désignation) ; sinon par son nom, résolu par le proxy SOCKS ;
-- `known_hosts` propre à clotr (`~/.local/state/clotr/known_hosts`) : `accept-new` (défaut) enregistre une clé inconnue et refuse une clé changée, `strict` refuse les hôtes inconnus, `insecure` ne vérifie pas ;
+- `known_hosts` propre à clotr (`~/.local/state/clotr/known_hosts`) : `accept-new` (défaut) enregistre une clé inconnue et refuse une clé changée, `accept-changed` enregistre aussi une clé changée à la place de l'ancienne (VM recréée à chaque mise à jour d'image) avec un avertissement et un événement d'audit `host_key_replaced` (ancienne et nouvelle empreintes), `strict` refuse les hôtes inconnus, `insecure` ne vérifie pas. `accept-changed` ne remplace une clé que si l'authentification se fait par clé seule : si un mot de passe peut être envoyé, une clé changée reste refusée ;
 - chaque commande est tracée dans l'audit (`remote_exec` : hôte, utilisateur, commande, durée, exit, taille).
 
 `<instance>_log_stats` lit la fin d'un log (4 Mio par défaut, 16 Mio au plus) et calcule localement :
@@ -621,7 +621,7 @@ projects:
 | `user` | compte SSH, le même sur tous les rebonds ; absent : champ `username` du secret (`password_vault`, sinon `key_vault`), sinon saisi sur le terminal |
 | `password_vault` | secret Vault du mot de passe, `chemin[#champ]` (champ `password` par défaut) ; illisible : saisi sur le terminal |
 | `key_path`, `key_vault` | clé privée (fichier, ou secret Vault `chemin[#champ]`, champ `private_key` par défaut), essayée avant le mot de passe |
-| `host_key` | vérification des clés d'hôte des rebonds : `accept-new` (défaut, enregistrées dans `$XDG_STATE_HOME/clotr/known_hosts`), `strict` ou `insecure` |
+| `host_key` | vérification des clés d'hôte des rebonds : `accept-new` (défaut, enregistrées dans `$XDG_STATE_HOME/clotr/known_hosts`), `accept-changed`, `strict` ou `insecure` (voir Outils SSH) |
 
 `{{.tunnel_url}}` vaut `socks5h://127.0.0.1:<port>` dans les `params` des instances du client ou du projet. Les champs du tunnel acceptent les `vars` ; dans un projet, `{{.project}}` vaut son nom. Le proxy local écoute dès qu'une instance du client ou du projet est activée par les filtres du run. Les connexions SSH ne s'ouvrent qu'à la première connexion qui passe par le tunnel et se rouvrent après une coupure. Le tunnel se ferme à la fin de clotr. Rebonds injoignables ou identifiants refusés : avertissement, et les connexions par le tunnel échouent. Port fixe déjà ouvert (un tunnel lancé à la main, ou un autre clotr) : clotr l'utilise tel quel, avec un avertissement.
 

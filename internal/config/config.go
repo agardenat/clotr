@@ -277,7 +277,7 @@ func (t *Tunnel) check(where string, ports map[int]string) []string {
 		}
 		ports[t.Port] = where
 	}
-	if !slices.Contains([]string{"", "accept-new", "strict", "insecure"}, t.HostKey) {
+	if !slices.Contains([]string{"", "accept-new", "accept-changed", "strict", "insecure"}, t.HostKey) {
 		out = append(out, i18n.T("config.tunnel_host_key", where, t.HostKey))
 	}
 	return out

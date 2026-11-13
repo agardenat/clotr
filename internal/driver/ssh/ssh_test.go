@@ -183,6 +183,32 @@ func TestPoolExecAndKnownHosts(t *testing.T) {
 	if _, err := pool2.Exec(context.Background(), Endpoint{Host: h, Port: port2, User: "admin", KeyPath: keyPath}, "true", 10); err == nil || !strings.Contains(err.Error(), "differs from the one recorded") {
 		t.Fatalf("clé d'hôte changée acceptée: %v", err)
 	}
+	ep2 := Endpoint{Host: h, Port: port2, User: "admin", KeyPath: keyPath}
+	withPassword := ep2
+	withPassword.Password = func(context.Context) (string, error) { return "x", nil }
+	other := "[other.example]:22 " + strings.Fields(string(data))[1] + " " + strings.Fields(string(data))[2] + "\n"
+	os.WriteFile(kh, []byte(other+strings.Replace(string(data), "]:"+p, "]:"+p2, 1)), 0o600)
+	pw, _ := NewPool(Options{KnownHosts: kh, HostKey: AcceptChanged})
+	defer pw.Close()
+	if _, err := pw.Exec(context.Background(), withPassword, "true", 10); err == nil || !strings.Contains(err.Error(), "differs from the one recorded") {
+		t.Fatalf("clé changée acceptée avec un mot de passe possible: %v", err)
+	}
+	var replaced []string
+	changed, _ := NewPool(Options{KnownHosts: kh, HostKey: AcceptChanged, OnReplace: func(host, old, new string) { replaced = append(replaced, host, old, new) }})
+	defer changed.Close()
+	if _, err := changed.Exec(context.Background(), ep2, "true", 10); err != nil {
+		t.Fatalf("clé changée refusée en accept-changed: %v", err)
+	}
+	after, _ := os.ReadFile(kh)
+	lines := strings.Split(strings.TrimSpace(string(after)), "\n")
+	if len(replaced) != 3 || replaced[1] != gossh.FingerprintSHA256(host1.PublicKey()) || replaced[2] != gossh.FingerprintSHA256(host2.PublicKey()) || len(lines) != 2 || lines[0] != strings.TrimSpace(other) || !strings.Contains(lines[1], "]:"+p2) {
+		t.Fatalf("remplacement: %v\n%s", replaced, after)
+	}
+	again, _ := NewPool(Options{KnownHosts: kh, HostKey: AcceptNew})
+	defer again.Close()
+	if _, err := again.Exec(context.Background(), ep2, "true", 10); err != nil {
+		t.Fatalf("nouvelle clé non retenue: %v", err)
+	}
 	strict, _ := NewPool(Options{KnownHosts: filepath.Join(dir, "empty"), HostKey: Strict})
 	defer strict.Close()
 	if _, err := strict.Exec(context.Background(), ep, "true", 10); err == nil {
