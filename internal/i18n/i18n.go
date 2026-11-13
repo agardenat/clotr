@@ -110,6 +110,7 @@ var msgs = map[string]msg{
 	"web.flag":             {"--web no", "--web no"},
 	"web.exclude":          {"excluded by -x", "exclu par -x"},
 	"web.policy":           {"web_search.policy: deny", "web_search.policy : deny"},
+	"web.client_policy":    {"client %s: web_search: deny", "client %s : web_search : deny"},
 	"fallback.round":       {"all models failed temporarily (%s), new round in %s", "tous les modèles en échec temporaire (%s), nouveau tour dans %s"},
 	"retry":                {"attempt %d on %s failed (%s), retrying in %s", "tentative %d sur %s en échec (%s), nouvel essai dans %s"},
 	"raw.output":           {"unstructured output", "sortie non structurée"},
