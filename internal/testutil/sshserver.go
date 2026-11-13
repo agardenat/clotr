@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -28,6 +29,7 @@ type SSHServerConfig struct {
 	HostKey   gossh.Signer
 	Reply     func(cmd, stdin string) (string, int)
 	Forward   bool
+	Hang      []string
 }
 
 func StartSSHServer(t testing.TB, clientKey gossh.PublicKey, hostKey gossh.Signer, reply func(cmd string) (string, int)) *SSHServer {
@@ -35,7 +37,7 @@ func StartSSHServer(t testing.TB, clientKey gossh.PublicKey, hostKey gossh.Signe
 }
 
 func StartSSHServerConfig(t testing.TB, c SSHServerConfig) *SSHServer {
-	hostKey, reply, fwd := c.HostKey, c.Reply, c.Forward
+	hostKey, reply, fwd, hang := c.HostKey, c.Reply, c.Forward, c.Hang
 	cfg := &gossh.ServerConfig{
 		PublicKeyCallback: func(_ gossh.ConnMetadata, k gossh.PublicKey) (*gossh.Permissions, error) {
 			if c.ClientKey != nil && string(k.Marshal()) == string(c.ClientKey.Marshal()) {
@@ -73,7 +75,7 @@ func StartSSHServerConfig(t testing.TB, c SSHServerConfig) *SSHServer {
 				go gossh.DiscardRequests(reqs)
 				for nc := range chans {
 					if nc.ChannelType() == "direct-tcpip" {
-						go forward(nc, fwd)
+						go forward(nc, fwd, hang)
 						continue
 					}
 					ch, creqs, err := nc.Accept()
@@ -112,7 +114,7 @@ func StartSSHServerConfig(t testing.TB, c SSHServerConfig) *SSHServer {
 	return s
 }
 
-func forward(nc gossh.NewChannel, allowed bool) {
+func forward(nc gossh.NewChannel, allowed bool, hang []string) {
 	var req struct {
 		Host       string
 		Port       uint32
@@ -123,7 +125,11 @@ func forward(nc gossh.NewChannel, allowed bool) {
 		nc.Reject(gossh.Prohibited, "forwarding disabled")
 		return
 	}
-	up, err := net.Dial("tcp", net.JoinHostPort(req.Host, strconv.Itoa(int(req.Port))))
+	addr := net.JoinHostPort(req.Host, strconv.Itoa(int(req.Port)))
+	if slices.Contains(hang, addr) {
+		return
+	}
+	up, err := net.Dial("tcp", addr)
 	if err != nil {
 		nc.Reject(gossh.ConnectionFailed, err.Error())
 		return

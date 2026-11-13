@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
@@ -128,5 +129,46 @@ func TestTunnelSharedPort(t *testing.T) {
 	defer tn.Close()
 	if !tn.Shared() || tn.URL != "socks5h://127.0.0.1:"+strconv.Itoa(port) {
 		t.Fatalf("port déjà ouvert : %v %s", tn.Shared(), tn.URL)
+	}
+}
+
+func TestTunnelTargetTimeoutKeepsChain(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	fakeVault(t, map[string]string{"kv/x": "s3cret", "kv/x#username": "ops"})
+	reply := func(string, string) (string, int) { return "", 0 }
+	k, _ := testutil.NewSSHKey(t)
+	hop := testutil.StartSSHServerConfig(t, testutil.SSHServerConfig{Password: "s3cret", HostKey: k, Reply: reply, Forward: true, Hang: []string{"192.0.2.1:22"}})
+	tn, err := Open("acme", config.Tunnel{Hops: []string{hop.Addr}, PasswordVault: "kv/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tn.Close()
+	var warnings []string
+	tn.Warn = func(m string) { warnings = append(warnings, m) }
+	opens := 0
+	tn.Audit = func(kind string, _ map[string]any) {
+		if kind == "tunnel_open" {
+			opens++
+		}
+	}
+	echo := echoServer(t)
+	live, err := tn.dial(context.Background(), "tcp", echo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	_, err = tn.dial(ctx, "tcp", "192.0.2.1:22")
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cible sans réponse : %v", err)
+	}
+	live.Write([]byte("ping"))
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(live, buf); err != nil || string(buf) != "ping" {
+		t.Fatalf("connexion en cours coupée : %q %v", buf, err)
+	}
+	if opens != 1 || len(warnings) > 0 {
+		t.Fatalf("ouvertures %d, avertissements %v", opens, warnings)
 	}
 }
