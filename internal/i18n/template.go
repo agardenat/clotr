@@ -147,7 +147,7 @@ var templateMsgs = map[string]msg{
 	"tpl.http.via_stream":        {"connector %s: http.stream is not available through via", "connecteur %s : http.stream indisponible à travers via"},
 	"tpl.http.via_exit":          {"%s %s via %s: exit %d: %s", "%s %s via %s : code %d : %s"},
 	"tpl.http.via_response":      {"%s %s via %s: no HTTP response in the command output (curl -i expected): %s", "%s %s via %s : pas de réponse HTTP dans la sortie de la commande (curl -i attendu) : %s"},
-	"tpl.http.auth":              {"unknown auth.%s (user_env, password_env, password_vault, label)", "auth.%s inconnue (user_env, password_env, password_vault, label)"},
+	"tpl.http.auth":              {"unknown auth.%s (user_env, password_env, password_vault, label, hint)", "auth.%s inconnue (user_env, password_env, password_vault, label, hint)"},
 	"tpl.http.auth_key":          {"unknown auth.%s (user_env, password_env, password_vault, label, header, scheme)", "auth.%s inconnue (user_env, password_env, password_vault, label, header, scheme)"},
 	"tpl.vault.ref":              {"%s: %q: expected path#field", "%s : %q : chemin#champ attendu"},
 	"tpl.vault.read":             {"Vault secret %s: %w", "secret Vault %s : %w"},

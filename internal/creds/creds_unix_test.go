@@ -119,3 +119,50 @@ func TestPendingQuestionLeavesCredentialsFree(t *testing.T) {
 		t.Fatal("identifiant en cache bloqué par une question en attente")
 	}
 }
+
+func TestResolveDetailAndRefusal(t *testing.T) {
+	ptm, tty, err := pty.Open()
+	if err != nil {
+		t.Skip(err)
+	}
+	defer ptm.Close()
+	OpenTTY = func() (*Console, error) {
+		f, err := os.OpenFile(tty.Name(), os.O_RDWR, 0)
+		return &Console{In: f, Out: f}, err
+	}
+	var questions []string
+	user := "alice\n"
+	Prompter = func(_ context.Context, _ *os.File, q string, secret bool) (string, error) {
+		questions = append(questions, q)
+		if secret {
+			return "pw", nil
+		}
+		return user, nil
+	}
+	t.Cleanup(func() { OpenTTY, Prompter = openConsole, nil; tty.Close() })
+	label := "detail-test"
+	ctx := WithDetail(context.Background(), "Connexion à vm1")
+	if p, err := Resolve(ctx, "", "", "", label); err != nil || p.User != "alice" {
+		t.Fatalf("%+v %v", p, err)
+	}
+	if !strings.Contains(questions[0], "Connexion à vm1") || strings.Contains(questions[0], "⚠") {
+		t.Fatalf("première question sans contexte : %q", questions[0])
+	}
+	Refused(label, "alice", "mot de passe de alice refusé par vm2 (Permission denied)")
+	questions, user = nil, "\n"
+	p, err := Resolve(WithDetail(context.Background(), "Connexion à vm2"), "", "", "", label)
+	if err != nil || p.User != "alice" {
+		t.Fatalf("compte précédent par défaut : %+v %v", p, err)
+	}
+	if !strings.Contains(questions[0], "refusé par vm2 (Permission denied)") || !strings.Contains(questions[0], "Connexion à vm2") || !strings.Contains(questions[0], "alice") {
+		t.Fatalf("question après refus : %q", questions[0])
+	}
+	Forget(label, "alice")
+	questions = nil
+	if _, err := Resolve(WithDetail(context.Background(), "Connexion à vm3"), "", "", "", label); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(questions[0], "Connexion à vm3") || strings.Contains(questions[0], "⚠") {
+		t.Fatalf("contexte répété sans refus : %q", questions[0])
+	}
+}

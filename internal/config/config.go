@@ -185,6 +185,7 @@ type ShellAuth struct {
 	PasswordEnv   string `yaml:"password_env"`
 	PasswordVault string `yaml:"password_vault"`
 	Label         string `yaml:"label"`
+	Hint          string `yaml:"hint"`
 }
 
 type PathRules struct {

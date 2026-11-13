@@ -120,7 +120,7 @@ func checkHTTPOptions(o options) error {
 
 func checkAuthOptions(o options) error {
 	for k := range o.sub("auth") {
-		if !slices.Contains([]string{"user_env", "password_env", "password_vault", "label"}, k) {
+		if !slices.Contains([]string{"user_env", "password_env", "password_vault", "label", "hint"}, k) {
 			return i18n.E("tpl.http.auth", k)
 		}
 	}

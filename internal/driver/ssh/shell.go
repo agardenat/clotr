@@ -168,7 +168,7 @@ func (s *Shell) start(ctx context.Context, host string) (*shellSession, error) {
 	short, _, _ := strings.Cut(host, ".")
 	user := s.opts.User
 	if user == "" && s.opts.Login != nil && strings.Contains(strings.Join(s.opts.Then, "\n"), "%u") {
-		u, _, err := s.opts.Login(ctx)
+		u, _, err := s.opts.Login(ctx, host)
 		if err != nil {
 			return nil, err
 		}
@@ -327,9 +327,9 @@ func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label str
 	total, asked := 0, -1
 	login := hop && o.Login != nil
 	user, sent := "", false
-	forget := func() {
+	forget := func(exited bool) {
 		if sent && o.Forget != nil {
-			o.Forget(user)
+			o.Forget(user, ss.host, refusalReason(seen, exited))
 		}
 	}
 	for {
@@ -341,7 +341,7 @@ func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label str
 		case b, ok := <-ss.chunks:
 			if !ok {
 				ss.markDead()
-				forget()
+				forget(true)
 				return i18n.E("ssh.shell_exited", ss.host, lastLines(seen))
 			}
 			seen = append(seen, b...)
@@ -366,7 +366,7 @@ func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label str
 			continue
 		}
 		if sent {
-			forget()
+			forget(false)
 			return i18n.E("ssh.shell_auth", ss.host, label, lastLines(seen))
 		}
 		asked = total
@@ -374,7 +374,7 @@ func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label str
 		var answer string
 		var err error
 		if login {
-			user, answer, err = o.Login(ctx)
+			user, answer, err = o.Login(ctx, ss.host)
 			sent = err == nil
 		} else {
 			answer, err = o.Ask(ctx, i18n.T("ssh.shell_prompt", ss.host, strings.TrimSpace(line)))
@@ -466,6 +466,20 @@ func lastLine(b []byte) string {
 		s = s[i+1:]
 	}
 	return s
+}
+
+func refusalReason(b []byte, exited bool) string {
+	s := strings.ReplaceAll(shellEscapes.ReplaceAllString(string(b), ""), "\r", "")
+	lines := strings.Split(strings.TrimRight(s, "\n "), "\n")
+	if !exited && len(lines) > 0 {
+		lines = lines[:len(lines)-1]
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return Redact(l)
+		}
+	}
+	return ""
 }
 
 func lastLines(b []byte) string {

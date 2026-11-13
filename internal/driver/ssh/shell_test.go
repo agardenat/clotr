@@ -146,6 +146,8 @@ func TestShellThenFailure(t *testing.T) {
 func TestShellThenLogin(t *testing.T) {
 	hop := `exec sh -c 'while :; do printf "%u@%h password: "; stty -echo; read p; stty echo; echo; [ "$p" = deux ] && break; echo "Permission denied, please try again."; done; HOP=%u@%s PS1="[u@vm ~]$ " exec sh -i'`
 	pass, logins, forgot := "deux", 0, ""
+	var hosts []string
+	var forgotHost, reason string
 	s, err := NewShell(ShellOptions{
 		Command:     []string{"sh", "-c", "PS1='[u@jump ~]$ ' exec sh -i"},
 		Then:        []string{hop},
@@ -154,11 +156,12 @@ func TestShellThenLogin(t *testing.T) {
 			t.Error("question relayée au lieu des identifiants")
 			return "", nil
 		},
-		Login: func(context.Context) (string, string, error) {
+		Login: func(_ context.Context, host string) (string, string, error) {
+			hosts = append(hosts, host)
 			logins++
 			return "ops", pass, nil
 		},
-		Forget: func(user string) { forgot = user },
+		Forget: func(user, host, r string) { forgot, forgotHost, reason = user, host, r },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -170,8 +173,11 @@ func TestShellThenLogin(t *testing.T) {
 	}
 	pass = "faux"
 	_, err = s.ExecInput(context.Background(), Endpoint{Host: "vm2"}, "true", "", 1024)
-	if err == nil || !strings.Contains(err.Error(), "Permission denied") || forgot != "ops" {
-		t.Fatalf("%v %q", err, forgot)
+	if err == nil || !strings.Contains(err.Error(), "Permission denied") || forgot != "ops" || forgotHost != "vm2" || reason != "Permission denied, please try again." {
+		t.Fatalf("%v %q %q %q", err, forgot, forgotHost, reason)
+	}
+	if len(hosts) == 0 || hosts[0] != "vm1.example.test" || hosts[len(hosts)-1] != "vm2" {
+		t.Fatalf("hôtes transmis à Login : %v", hosts)
 	}
 	if logins != 4 {
 		t.Fatalf("appels Login : %d", logins)
