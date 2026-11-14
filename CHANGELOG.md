@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.70.0] - 2026-11-14
 
 ### Ajouté
 - Mode demande de changement : `run --change` (alias `--demande`) établit l'état actuel de ce que la demande modifie et sa source IaC, sans tri d'incident, et produit un rapport des modifications à réaliser (extraits IaC avant/après), impacts, prérequis, risques, retour arrière et plan de mise en œuvre (modèle `change`).
