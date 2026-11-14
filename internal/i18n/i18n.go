@@ -96,6 +96,7 @@ var msgs = map[string]msg{
 	"header.failed":        {" (%d failed)", " (%d en échec)"},
 	"step.n":               {"step %d", "étape %d"},
 	"thinking":             {"thinking…", "réflexion…"},
+	"thinking.after_tools": {"%d tool call(s) done, waiting for the model…", "%d appel(s) d'outil terminé(s), attente du modèle…"},
 	"tool":                 {"tool %s", "outil %s"},
 	"waiting":              {"waiting for %s", "attend %s"},
 	"rows.hidden":          {"… not shown (screen height): %s", "… non affichées (hauteur de l'écran) : %s"},
