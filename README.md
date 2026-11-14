@@ -130,17 +130,22 @@ Les agents doivent rester factuels : chaque affirmation repose sur une preuve `[
 
 ## Export du rapport en document
 
-`--export docx|pdf` (`run`, `session`, `session --synthesize`) produit aussi le rapport en document Word ou PDF par le serveur MCP désigné par `report_export.mcp`. `-o rapport.docx` ou `-o rapport.pdf` vaut `--export` avec ce fichier pour destination ; sinon le document est écrit dans le tour de la session (`turns/NNN/report.docx`). Le rapport d'une session existante s'exporte sans relancer d'analyse :
+`--export docx|pdf` (`run`, `session`, `session --synthesize`) produit aussi le rapport en document Word ou PDF avec le template de document désigné par `report_export.template` (voir Templates de document). `-o rapport.docx` ou `-o rapport.pdf` vaut `--export` avec ce fichier pour destination ; sinon le document est écrit dans le tour de la session (`turns/NNN/report.docx`). Le rapport d'une session existante s'exporte sans relancer d'analyse :
 
 ```sh
 clotr session last -o rapport.pdf
 ```
 
-- Un agent dédié (rôle `report_export.role`, par défaut le rôle de travail outillé du tier le plus élevé) reçoit le rapport Markdown et ne voit que les outils de ce serveur. Il recopie le texte sans résumé ni reformulation, avec la mise en forme du serveur.
-- Le serveur n'est pas soumis au filtre de lecture seule (`readOnlyHint` / `allow`) : créer un document est une écriture. Seul `deny` s'applique. Il est réservé à l'export et n'est jamais proposé aux agents d'analyse, même avec `-t` ou `enabled: true`.
-- clotr récupère le fichier à partir des URL renvoyées par les outils (https, ou l'adresse du serveur lui-même, la seule à recevoir ses `headers`), puis compare son texte au rapport : passages absents ou modifiés, passages hors de leur place, titres rendus comme texte ordinaire (`.docx`), syntaxe Markdown restée littérale. En cas d'écart, la liste revient à l'agent, qui corrige ; après deux corrections, le document est conservé avec les écarts affichés. Le rapport Markdown fait foi.
-- Le texte d'un PDF n'est lisible que s'il utilise des polices simples (WinAnsi) ; sinon le contrôle est impossible et un avertissement le signale.
-- Le rapport est transmis au serveur, qui peut stocker le document chez un tiers : l'export est refusé en session confidentielle, et `-x mcp_<serveur>` l'interdit.
+```yaml
+report_export:
+  template: rapport-doc
+  params: {team: "Équipe plateforme"}
+```
+
+- Le document est construit sur le poste, sans modèle ni service tiers : rien ne sort du poste, l'export est donc permis en session confidentielle.
+- Le template reçoit le rapport Markdown et ses métadonnées (titre, mode, langue, demande, ticket, date, session) et rend un `.docx`.
+- Le PDF est converti depuis ce `.docx` par LibreOffice (`soffice`, cherché dans le `PATH`, puis aux emplacements d'installation habituels sous Windows et macOS), avec un profil temporaire ; les index (table des matières) et les champs (renvois de page) sont mis à jour avant la conversion. Sans LibreOffice, ou si la conversion échoue, le `.docx` est enregistré à la place (même nom, extension `.docx`) et l'erreur le signale.
+- clotr compare ensuite le texte du `.docx` au rapport : passages absents ou modifiés, passages hors de leur place, titres rendus comme texte ordinaire, syntaxe Markdown restée littérale. Les numéros placés en tête de titre (`1.`, `2.3`) sont ignorés, le document pouvant numéroter ses titres lui-même. Le rapport Markdown fait foi.
 
 ## Passage souverain → non souverain
 
@@ -344,6 +349,21 @@ tickets:
 ```
 
 Ses paramètres reçoivent, comme une instance, les `params` globaux puis ceux du client quand les instances du run appartiennent à un seul client (filtre client des recherches sans ticket, par exemple), puis ceux de `tickets.params`. Dans les tests (`clotr templates test`), `inst.ticket_get(id)` et `inst.ticket_search(query=…, kind=…, state=…, since_days=…, limit=…, customer=…, all_customers=…)` appellent les fonctions et normalisent leur résultat comme clotr.
+
+### Templates de document
+
+Un template `kind: document` met en forme le rapport pour `--export`. Il n'a ni `tools`, ni `targets`, ni `connectors`, ni `companions`, ni `files`, ni `env`, et son script définit `render(doc)`, qui renvoie le contenu du `.docx` (`bytes`). Il est désigné par `report_export.template` ; `report_export.params` renseigne ses `params`.
+
+`doc` porte `markdown`, `title`, `mode` (`default`, `incident`, `change`, `cve`), `language` (`--lang` de l'export, sinon langue de la session, c'est-à-dire celle du run ; `auto` est résolu d'après le texte du rapport, hors blocs de code), `request`, `ticket`, `date` (`AAAA-MM-JJ`), `session` et `params`.
+
+Le script n'a pas accès au réseau ni aux fichiers du poste. Il dispose des modules sans effet de bord (`json`, `yaml`, `re`, `time`, `math`, `base64`, `struct`, `sprintf`, `catch`, `jq`, `compact_json`) et de :
+
+- `asset(nom)` : contenu (`bytes`) d'un fichier placé à côté du template, par exemple un `.docx` de référence (100 Mio au plus) ;
+- `zip.read(data)` : dict `{nom: bytes}` des fichiers d'une archive, dans l'ordre de l'archive ; `zip.write(fichiers)` : archive (`bytes`) des fichiers d'un dict, dans l'ordre du dict ;
+- `xml.parse(data)` : élément racine d'un document XML ; `xml.fragment(texte)` : liste des éléments d'un fragment (les préfixes d'espace de noms n'ont pas à être déclarés) ; `xml.element(tag, attrs, text)` ; `xml.encode(élément, declaration=True)` : `bytes` ; `xml.escape(texte)`. Un élément expose `tag`, `text`, `parent`, `children`, `get`, `set`, `unset`, `attrs`, `set_text`, `text_content`, `find` et `findall` (chemins etree : `w:body/w:p`, `.//w:t`, `w:p[@w:val='x']`), `append`, `prepend`, `insert`, `add_next`, `add_prev` (un élément ou une liste), `remove`, `index`, `copy` et `encode` ;
+- `markdown.blocks(texte)` (Markdown GFM : tableaux, listes de tâches, liens automatiques ; pas de barré, `~` étant courant dans les numéros de version) : liste de blocs `heading` (`level`), `para`, `quote` (`level` : profondeur), `bullet` et `numbered` (`level`, `marker`, `checked`), `table` (`header`, `rows`, `align` ; chaque cellule a `text` et `runs`), `code` (`text`, `lang`), `rule`, `image` (`src`, `alt`, `title`) et `html`. Les blocs de texte ont `text` (texte brut) et `runs` : `{text, bold, italic, code, strike, url, br}`. `markdown.inline(texte)` rend les `runs` d'un texte.
+
+Dans les tests (`clotr templates test`), `inst.render(markdown=…, title=…, mode=…, language=…, request=…, ticket=…, date=…, session=…)` appelle `render` ; `zip`, `xml` et `markdown` sont disponibles pour examiner le résultat.
 
 ### Jeton OAuth2 lu dans Vault
 
@@ -559,7 +579,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `vault` | `addr`, `namespace` : adresse et namespace Vault utilisés quand `VAULT_ADDR` / `VAULT_NAMESPACE` ne sont pas définis ; `login` (`method: oidc`, `path` défaut `oidc`, `role`, `port` défaut 8250, `min_ttl` défaut 4h) : connexion Vault au démarrage, voir Secrets Vault |
 | `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
 | `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
-| `report_export` | `mcp` (nom d'un serveur de `mcp`, différent de `web_search.mcp`) et `role` (rôle de travail outillé ; défaut : celui du tier le plus élevé). Voir Export du rapport en document. |
+| `report_export` | `template` (template `kind: document`) et `params`. Voir Export du rapport en document. |
 | `report_models` | modèle de rapport par mode (`default`, `cve`, `incident`, `change`) : chemin d'un fichier Markdown qui remplace le modèle embarqué. Voir Modèles de rapport. |
 | `tickets` | `template` (template `kind: tickets`), `params`, `enabled` (défaut true) : outil de tickets des modes incident et demande de changement. Voir Templates de tickets et Tickets. |
 | `cve` | `sources` : distributions interrogées en mode CVE (`redhat`, `ubuntu`, `debian` ; défaut : les trois). Voir Mode CVE. |
@@ -569,7 +589,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 
 Avec `auth: oauth` (transport `http`, sans en-tête `Authorization`), clotr obtient lui-même le jeton du serveur MCP, par exemple le serveur MCP natif de GitLab (`https://<gitlab>/api/v4/mcp`), qui refuse les jetons d'accès personnels classiques :
 
-- la connexion se fait uniquement au démarrage, avant le run (et pour le serveur de `report_export`, au démarrage d'un run avec `--export`). Pendant le run, le jeton est rafraîchi sans navigateur ; si le rafraîchissement est refusé, l'appel échoue avec une consigne de relance, sans rien demander ;
+- la connexion se fait uniquement au démarrage, avant le run. Pendant le run, le jeton est rafraîchi sans navigateur ; si le rafraîchissement est refusé, l'appel échoue avec une consigne de relance, sans rien demander ;
 - au démarrage, quand le serveur répond 401, clotr lit ses métadonnées OAuth, s'enregistre comme client public (enregistrement dynamique, redirection vers `http://127.0.0.1:<port>/callback`), ouvre le navigateur sur la page d'autorisation et affiche son URL sur la sortie d'erreur. Il attend la validation jusqu'à 5 minutes, le délai `timeout` du serveur étant suspendu pendant ce temps ;
 - le client enregistré, le jeton et son jeton de rafraîchissement sont conservés dans `$XDG_STATE_HOME/clotr/oauth/<serveur>.json` (défaut `~/.local/state/clotr/oauth`, droits 600). Aux lancements suivants, le jeton est réutilisé puis rafraîchi sans navigateur ; le navigateur ne revient que si le rafraîchissement est refusé (jeton révoqué ou expiré) ;
 - le cache est ignoré si l'`url` du serveur change ; supprimer le fichier force un nouvel enregistrement.
@@ -737,7 +757,7 @@ clotr run --access exec "version de PHP dans les pods du namespace web" -t prod
 | `--chat` (`run`) | mode conversation, voir Conversation |
 | `--raw` (`run`, `session`) | rapport en Markdown brut, sans mise en forme pour le terminal |
 | `--with-evidence` (`run`, `session`) | annexe la sortie complète de chaque preuve citée, voir Preuves |
-| `--export docx\|pdf` (`run`, `session`) | produit aussi le rapport en document via `report_export.mcp`, voir Export du rapport en document |
+| `--export docx\|pdf` (`run`, `session`) | produit aussi le rapport en document avec `report_export.template`, voir Export du rapport en document |
 | `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |
 | `--panic` (`run`) | mode incident avec journal en direct des preuves, constats et lacunes, voir Mode panique |
 | `--cve[="<sujet>"]` (`run`) | mode CVE : fiches des CVE et GHSA de la demande, ou du sujet nommé (compromission sans CVE), statut de chaque actif en direct, élévation sur autorisation, voir Mode CVE |

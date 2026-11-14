@@ -491,9 +491,11 @@ func Compare(md string, d Doc) Report {
 			r.Artifacts = append(r.Artifacts, a)
 		}
 	}
-	var texts []string
+	texts := codeLines(md)
 	for _, s := range segs {
-		texts = append(texts, s.Text)
+		if !s.Code {
+			texts = append(texts, s.Text)
+		}
 	}
 	for _, m := range lineMarkers {
 		if lineStarts(strings.Split(d.Text, "\n"), m) > lineStarts(texts, m) {
@@ -560,9 +562,30 @@ func clip(s string, n int) string {
 	return s
 }
 
+var headingNumber = regexp.MustCompile(`^(?:\d+(?:\.\d+)+[.)]?|\d+[.)])\s+`)
+
 type Segment struct {
 	Text    string
 	Heading bool
+	Code    bool
+}
+
+func codeLines(md string) []string {
+	src := []byte(md)
+	doc := goldmark.New(goldmark.WithExtensions(extension.Table, extension.Strikethrough)).Parser().Parse(text.NewReader(src))
+	var out []string
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering && (n.Kind() == ast.KindFencedCodeBlock || n.Kind() == ast.KindCodeBlock) {
+			lines := n.Lines()
+			for i := 0; i < lines.Len(); i++ {
+				seg := lines.At(i)
+				out = append(out, strings.TrimRight(string(seg.Value(src)), "\n"))
+			}
+			return ast.WalkSkipChildren, nil
+		}
+		return ast.WalkContinue, nil
+	})
+	return out
 }
 
 func Segments(md string) []Segment {
@@ -570,7 +593,13 @@ func Segments(md string) []Segment {
 	doc := goldmark.New(goldmark.WithExtensions(extension.Table, extension.Strikethrough)).Parser().Parse(text.NewReader(src))
 	var out []Segment
 	add := func(s string, heading bool) {
-		if s = strings.TrimSpace(s); len(norm(s)) >= minSegment || (heading && norm(s) != "") {
+		s = strings.TrimSpace(s)
+		if heading {
+			if t := headingNumber.ReplaceAllString(s, ""); strings.TrimSpace(t) != "" {
+				s = t
+			}
+		}
+		if len(norm(s)) >= minSegment || (heading && norm(s) != "") {
 			out = append(out, Segment{Text: s, Heading: heading})
 		}
 	}
@@ -586,7 +615,9 @@ func Segments(md string) []Segment {
 			lines := n.Lines()
 			for i := 0; i < lines.Len(); i++ {
 				seg := lines.At(i)
-				add(string(seg.Value(src)), false)
+				if t := strings.TrimSpace(string(seg.Value(src))); len(norm(t)) >= minSegment {
+					out = append(out, Segment{Text: t, Code: true})
+				}
 			}
 			return ast.WalkSkipChildren, nil
 		}

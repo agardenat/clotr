@@ -4,16 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/zlib"
-	"context"
 	"encoding/ascii85"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"html"
 	"strings"
 	"testing"
-
-	"github.com/agardenat/clotr/internal/tools"
 )
 
 const report = `# Rapport de test
@@ -193,108 +188,10 @@ func TestNotFormat(t *testing.T) {
 	}
 }
 
-func TestURLs(t *testing.T) {
-	got := urls(`{"success": true, "data": {"download_url": "https://store.example/a/report.docx?X-Sig=1&b=2", "file_id": "x", "help": "see https://example.com/doc"}}`)
-	if len(got) != 2 || got[0] != "https://store.example/a/report.docx?X-Sig=1&b=2" {
-		t.Fatalf("json: %q", got)
-	}
-	got = urls("Document prêt : https://store.example/r.pdf.")
-	if len(got) != 1 || got[0] != "https://store.example/r.pdf" {
-		t.Fatalf("text: %q", got)
-	}
-}
-
-type fakeTool struct {
-	name string
-	out  func(args json.RawMessage) (string, error)
-}
-
-func (f fakeTool) Name() string            { return f.name }
-func (f fakeTool) Description() string     { return f.name }
-func (f fakeTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
-func (f fakeTool) Call(_ context.Context, args json.RawMessage) (string, error) {
-	return f.out(args)
-}
-
-type fakeServer struct {
-	files   map[string][]byte
-	tools   []tools.Tool
-	fetched []string
-}
-
-func (s *fakeServer) Name() string        { return "docs" }
-func (s *fakeServer) Tools() []tools.Tool { return s.tools }
-func (s *fakeServer) Fetch(_ context.Context, u string, _ int64) ([]byte, error) {
-	s.fetched = append(s.fetched, u)
-	if d, ok := s.files[u]; ok {
-		return d, nil
-	}
-	return nil, errors.New("404")
-}
-
-func newServer(t *testing.T) *fakeServer {
-	s := &fakeServer{files: map[string][]byte{}}
-	n := 0
-	s.tools = []tools.Tool{
-		fakeTool{name: "mcp_docs_capabilities", out: func(json.RawMessage) (string, error) {
-			return `{"help": "https://example.com/guide"}`, nil
-		}},
-		fakeTool{name: "mcp_docs_create", out: func(args json.RawMessage) (string, error) {
-			var a struct{ Paragraphs []string }
-			if err := json.Unmarshal(args, &a); err != nil {
-				return "", err
-			}
-			n++
-			u := fmt.Sprintf("https://store.example/%d/report.docx?sig=%d", n, n)
-			s.files[u] = docx(t, a.Paragraphs...)
-			return fmt.Sprintf(`{"download_url": %q}`, u), nil
-		}},
-	}
-	return s
-}
-
-func TestJob(t *testing.T) {
-	ctx := context.Background()
-	srv := newServer(t)
-	j := &Job{Server: srv, Format: "docx", Markdown: report, Title: "Rapport de test"}
-	reg := j.Registry(10000)
-	spec := j.Spec(ctx, "analyst", nil, reg)
-	if !strings.Contains(spec.System, "docx") || !strings.Contains(spec.System, "MCP docs") || spec.User != report {
-		t.Fatalf("spec: %+v", spec)
-	}
-	if p := spec.Check("fait"); !strings.Contains(p, "Aucun document docx") {
-		t.Fatalf("no call yet: %q", p)
-	}
-	if _, err := reg.Call(ctx, spec.Tools, "mcp_docs_capabilities", `{}`); err != nil {
-		t.Fatal(err)
-	}
-	partial, _ := json.Marshal(map[string]any{"paragraphs": full[:5]})
-	if _, err := reg.Call(ctx, spec.Tools, "mcp_docs_create", string(partial)); err != nil {
-		t.Fatal(err)
-	}
-	p := spec.Check("fait")
-	if !strings.Contains(p, "Passages absents ou modifiés (à reprendre mot pour mot), 5 :") || !strings.Contains(p, "CrashLoopBackOff") {
-		t.Fatalf("partial: %q", p)
-	}
-	complete, _ := json.Marshal(map[string]any{"paragraphs": full})
-	if _, err := reg.Call(ctx, spec.Tools, "mcp_docs_create", string(complete)); err != nil {
-		t.Fatal(err)
-	}
-	if p := spec.Check("fait"); p != "" {
-		t.Fatalf("complete: %q", p)
-	}
-	res, err := j.Result(ctx)
-	if err != nil || !res.Checked || res.Issues() > 0 || !bytes.HasPrefix(res.Data, []byte("PK")) {
-		t.Fatalf("result: %+v %v", res, err)
-	}
-	if len(srv.fetched) != 2 || strings.Contains(strings.Join(srv.fetched, " "), "example.com/guide") {
-		t.Fatalf("fetched: %q", srv.fetched)
-	}
-}
-
-func TestJobNoFile(t *testing.T) {
-	j := &Job{Server: newServer(t), Format: "pdf", Markdown: report}
-	if _, err := j.Result(context.Background()); err == nil {
-		t.Fatal("expected an error without any document")
+func TestShortCodeLines(t *testing.T) {
+	md := "# Rapport de test\n\n## Preuves\n\n```\n# E001\ntâche: t1\nsortie complète de la commande\n```\n"
+	r := Compare(md, read(t, "docx", docx(t, "# Rapport de test", "# Preuves", "Preuve :\n# E001\ntâche: t1\nsortie complète de la commande")))
+	if !r.Checked || r.Issues() > 0 {
+		t.Fatalf("%+v", r)
 	}
 }

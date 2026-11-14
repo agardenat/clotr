@@ -213,8 +213,15 @@ func (t *Template) validate() error {
 		} else if _, err := regexp.Compile(t.IDPattern); err != nil {
 			fail(i18n.T("tpl.spec.tickets_pattern_bad", err))
 		}
+	case KindDocument:
+		if t.Script == "" {
+			fail(i18n.T("tpl.spec.document_script"))
+		}
+		if len(t.Tools) > 0 || len(t.Targets) > 0 || len(t.Connectors) > 0 || len(t.Companions) > 0 || len(t.Files) > 0 || len(t.Env) > 0 {
+			fail(i18n.T("tpl.spec.document_only"))
+		}
 	default:
-		fail(i18n.T("tpl.spec.kind", t.Kind, KindStartup+", "+KindTickets))
+		fail(i18n.T("tpl.spec.kind", t.Kind, KindStartup+", "+KindTickets+", "+KindDocument))
 	}
 	if t.Kind != KindTickets && t.IDPattern != "" {
 		fail(i18n.T("tpl.spec.id_pattern_kind"))
@@ -284,7 +291,7 @@ func (t *Template) Tickets() bool {
 }
 
 func (t *Template) Special() bool {
-	return t.Startup() || t.Tickets()
+	return t.Startup() || t.Tickets() || t.Document()
 }
 
 func (t *Template) sshConnector() (string, Connector, bool) {

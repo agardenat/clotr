@@ -47,27 +47,24 @@ func TestDefaults(t *testing.T) {
 func TestValidationErrors(t *testing.T) {
 	cases := map[string]string{
 		"providers: []\n": "at least one provider",
-		"providers:\n  - name: a\n    base_url: http://x\nprofiles:\n  - {match: m, reasoning_effort: {absent: max}}\n":                        "unknown role",
-		"providers:\n  - name: a\n    base_url: http://x\nprofiles:\n  - {match: m, reasoning_effort: {planner: \"\"}}\n":                      "value required",
-		"providers:\n  - name: a\n    base_url: nope\n":                                                                                        "invalid URL",
-		"providers:\n  - name: a\n    base_url: http://x\nroles:\n  planner: {tier: huge}\n":                                                   "tier",
-		"providers:\n  - name: a\n    base_url: http://x\nunknown: 1\n":                                                                        "unknown",
-		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - name: m\n":                                                                 "command or url",
-		"providers:\n  - name: a\n    base_url: http://x\nlimits:\n  agent_timeout: 5 minutes\n":                                               "invalid duration",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {policy: maybe}\n":                                                       "web_search.policy",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {mcp: absent}\n":                                                         "web_search.mcp",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: b/m, api: messages}\n":                                           "web_search.model",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/, api: messages}\n":                                            "web_search.model",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/m}\n":                                                          "web_search.api",
-		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {api: responses}\n":                                                      "web_search.api",
-		"providers:\n  - name: a\n    base_url: http://x\ninstances:\n  - {name: web, template: t}\n":                                          "is reserved",
-		"providers:\n  - name: a\n    base_url: http://x\nreport_export: {mcp: absent}\n":                                                      "report_export.mcp",
-		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m}\nweb_search: {mcp: m}\nreport_export: {mcp: m}\n": "already the web_search",
-		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m}\nreport_export: {mcp: m, role: planner}\n":        "report_export.role",
-		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m, auth: basic}\n":                                   "invalid (oauth)",
-		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m, transport: sse, auth: oauth}\n":                   "oauth requires",
-		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, command: /bin/m, auth: oauth}\n":                                 "oauth requires",
-		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m, auth: oauth, headers: {authorization: x}}\n":      "Authorization header",
+		"providers:\n  - name: a\n    base_url: http://x\nprofiles:\n  - {match: m, reasoning_effort: {absent: max}}\n":                   "unknown role",
+		"providers:\n  - name: a\n    base_url: http://x\nprofiles:\n  - {match: m, reasoning_effort: {planner: \"\"}}\n":                 "value required",
+		"providers:\n  - name: a\n    base_url: nope\n":                                                                                   "invalid URL",
+		"providers:\n  - name: a\n    base_url: http://x\nroles:\n  planner: {tier: huge}\n":                                              "tier",
+		"providers:\n  - name: a\n    base_url: http://x\nunknown: 1\n":                                                                   "unknown",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - name: m\n":                                                            "command or url",
+		"providers:\n  - name: a\n    base_url: http://x\nlimits:\n  agent_timeout: 5 minutes\n":                                          "invalid duration",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {policy: maybe}\n":                                                  "web_search.policy",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {mcp: absent}\n":                                                    "web_search.mcp",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: b/m, api: messages}\n":                                      "web_search.model",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/, api: messages}\n":                                       "web_search.model",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {model: a/m}\n":                                                     "web_search.api",
+		"providers:\n  - name: a\n    base_url: http://x\nweb_search: {api: responses}\n":                                                 "web_search.api",
+		"providers:\n  - name: a\n    base_url: http://x\ninstances:\n  - {name: web, template: t}\n":                                     "is reserved",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m, auth: basic}\n":                              "invalid (oauth)",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m, transport: sse, auth: oauth}\n":              "oauth requires",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, command: /bin/m, auth: oauth}\n":                            "oauth requires",
+		"providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: m, url: http://m, auth: oauth, headers: {authorization: x}}\n": "Authorization header",
 	}
 	for in, want := range cases {
 		_, err := Parse([]byte(in))
@@ -233,17 +230,13 @@ func TestVaultConf(t *testing.T) {
 	}
 }
 
-func TestExportRole(t *testing.T) {
-	c, err := Parse([]byte("providers:\n  - name: a\n    base_url: http://x\nmcp:\n  - {name: docs, url: http://d}\nreport_export: {mcp: docs}\n"))
+func TestReportExport(t *testing.T) {
+	c, err := Parse([]byte("providers:\n  - name: a\n    base_url: http://x\nreport_export: {template: doc-std, params: {banner: x}, mcp: docs, role: analyst}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := c.ExportRole(); got != "analyst" {
-		t.Fatalf("rôle par défaut: %q", got)
-	}
-	c.Export.Role = "collector"
-	if got := c.ExportRole(); got != "collector" {
-		t.Fatalf("rôle configuré: %q", got)
+	if c.Export.Template != "doc-std" || c.Export.Params["banner"] != "x" {
+		t.Fatalf("%+v", c.Export)
 	}
 }
 
