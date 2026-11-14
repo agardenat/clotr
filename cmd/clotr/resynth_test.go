@@ -24,6 +24,13 @@ func TestToolFilterFromAudit(t *testing.T) {
 	if got := toolFilterFromAudit(path); !slices.Equal(got, []string{"prod", "mcp_tracker", "k8s"}) {
 		t.Fatalf("filtre: %v", got)
 	}
+	scoped := filepath.Join(t.TempDir(), "audit.jsonl")
+	if err := os.WriteFile(scoped, []byte(data+`{"kind":"instances_scope","offered":["prod"],"hidden":["k8s","other"]}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := toolFilterFromAudit(scoped); !slices.Equal(got, []string{"prod", "mcp_tracker"}) {
+		t.Fatalf("instances hors portée gardées: %v", got)
+	}
 }
 
 func TestCVEFromAudit(t *testing.T) {
@@ -41,7 +48,8 @@ func TestCVEFromAudit(t *testing.T) {
 	if len(s.Missing()) != 0 || len(s.Findings()) != 2 {
 		t.Fatalf("fiches manquantes %v, statuts %v", s.Missing(), s.Findings())
 	}
-	sec := s.Section()
+	blocks, _ := s.Blocks()
+	sec := blocks[cve.BlockKey("CVE-2026-0010", cve.BlockPositives)] + blocks[cve.BlockKey("CVE-2026-0010", cve.BlockUnknown)]
 	if !strings.Contains(sec, "php 8.1.2") || strings.Contains(sec, "pas d'inventaire") {
 		t.Fatalf("dernier statut non retenu :\n%s", sec)
 	}

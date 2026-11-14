@@ -1,5 +1,27 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- Modèles de rapport par mode (`internal/report`) : squelette Markdown avec consignes de section et blocs `{{…}}` que clotr remplit après la rédaction par des données établies ; un bloc omis par le modèle de langage est ajouté en fin de rapport (audit `report_block_missing`). Modèles embarqués `default` (format inchangé) et `cve` ; `report_models` en remplace un par un fichier.
+- Mode CVE, procédure fixe de récupération des fiches : clotr interroge lui-même CVE.org, NVD, CISA KEV, EPSS, GitHub, Red Hat, Ubuntu et Debian (via OSV), chaque réponse étant une preuve (`cve_source`) ; scores, sévérités, exploitation connue, versions corrigées par distribution et textes des éditeurs sont extraits par le code, et les commandes de détection des paquets (`rpm`, `dpkg-query` sur le paquet source, `cat /etc/os-release`) sont générées. Le modèle de langage ne rédige que le récit, sans recherche web ; un sujet inconnu des sources garde la recherche web.
+- Cache des fiches (`~/.local/state/clotr/cve/`) : fiche reprise mot pour mot, sans appel au modèle de langage, tant que les sources n'ont pas changé ; sinon fiche précédente et liste des changements transmises pour une mise à jour minimale.
+- `cve.sources` (configuration) et `cve_sources` (client) : distributions interrogées.
+- Rapport CVE : verdict, fiche (indicateurs expliqués, en quoi consiste la faille, analyses des éditeurs, versions par distribution limitées aux releases rencontrées, détection, mitigation temporaire, correctif), actifs positifs avec test déterminant, version corrigée pour leur distribution et exposition mesurée, actifs indéterminés, actifs négatifs regroupés par type d'élément avec les tests lancés, plan d'action par actif, limites.
+- Indicateurs calculés et expliqués : CVSS par source avec niveau et vecteur en clair, sévérité des éditeurs, CISA KEV, SSVC, EPSS formaté (« 99,5 % … (99,9e percentile) », jamais arrondi à 100 %), encadré « Lire les indicateurs ».
+
+### Modifié
+- `cve_advisory` : `summary`, `mitigation` et `remediation` (obligatoires pour une faille ; `remediation` toujours) ; `score` et `commands` facultatifs quand les sources officielles fournissent scores et commandes ; `iocs` accepte aussi les traces d'exploitation d'une faille.
+- `cve_report` : `asset_type` obligatoire (`host`, `workload`, `image`, `service`), `os` (distribution lue), et pour un actif vulnérable ou compromis `exposure` (`exposed`, `limited`, `unmeasured`) et `conditions`.
+- Consigne de style dans tous les prompts qui produisent du texte (agents, réponse directe, synthèse de tous les modes, fiche CVE) : factuel et neutre, actions formulées par ce qu'il faut faire (« mettre à jour X sur Y ») et jamais par qui doit le faire ou à qui s'adresser, explications concises mais claires.
+- Démarrage : une ligne d'état par template de démarrage à chaque lancement, une seule fois par lancement, « à jour » compris (`configuration (acme-sync) : à jour — ~/.config/clotr (1a2b3c4), …`), ou le résultat de la dernière vérification et son ancienneté quand `every` n'est pas écoulé ; un échec ou un dépôt laissé tel quel reste signalé jusqu'à la vérification suivante. `--quiet` masque les lignes « à jour ».
+- Recherche web en session confidentielle : un client confidentiel sans `web_search` suit `web_search.policy` ; avec `policy: allow`, la recherche est active pour tous les clients, sauf ceux qui déclarent `web_search: deny`. Avant, chaque client confidentiel devait déclarer `allow` ou `ask` lui-même.
+- Rapport CVE : actifs positifs et indéterminés présentés en fiches par actif (version trouvée, version corrigée pour la distribution, exposition, test déterminant, autres vérifications avec leur preuve), précédées d'un récapitulatif court s'il y a plusieurs positifs, au lieu d'un tableau large illisible dans un terminal ; outils sans commande (`ssh_list`, `ssh_grep`) affichés par leurs arguments.
+- Langue `auto` : les textes fixes de clotr (blocs du rapport, annexe des preuves) suivent la langue de la demande, comme la rédaction ; ponctuation selon la langue.
+- Noms de clients en majuscules dans l'affichage et dans l'environnement décrit aux agents (`run confidentiel : client ACME (REGULATED)`) ; inchangés dans les identifiants (`-t`), la validation de la configuration et l'audit.
+- `session --synthesize` : connecteurs du tour limités à ceux du run d'origine (instances hors portée écartées), message réduit à leur nombre.
+- Mode CVE : si toutes les fiches sont reprises du cache, la tâche de tri ne fait pas appel au modèle de langage ; l'avertissement « sans recherche web » ne concerne plus que les sujets inconnus des sources officielles.
+
 ## [0.68.1] - 2026-11-14
 
 ### Modifié

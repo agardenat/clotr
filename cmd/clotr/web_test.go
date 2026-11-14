@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/agardenat/clotr/internal/config"
@@ -86,12 +87,15 @@ func TestResolveWebClients(t *testing.T) {
 		err          bool
 	}{
 		{"confidentielle sans client", "", false, "", true, nil, false, false},
-		{"confidentielle client sans réglage", "", false, "", true, []config.Client{reg("a", "")}, false, false},
+		{"confidentielle client sans réglage, politique allow", "", false, "", true, []config.Client{reg("a", "")}, true, false},
+		{"confidentielle client sans réglage, politique deny", "", false, "", true, []config.Client{reg("a", "")}, false, false},
+		{"confidentielle client deny, politique allow", "", false, "", true, []config.Client{reg("a", "deny")}, false, false},
 		{"confidentielle client allow", "", false, "", true, []config.Client{reg("a", "allow")}, true, false},
 		{"confidentielle client allow + yes", "yes", false, "", true, []config.Client{reg("a", "allow")}, true, false},
 		{"confidentielle client ask sans terminal", "", false, "", true, []config.Client{reg("a", "ask")}, false, false},
 		{"confidentielle client deny + yes", "yes", false, "", true, []config.Client{reg("a", "deny")}, false, true},
-		{"confidentielle un client sans réglage", "", false, "", true, []config.Client{reg("a", "allow"), reg("b", "")}, false, false},
+		{"confidentielle un client sans réglage", "", false, "", true, []config.Client{reg("a", "allow"), reg("b", "")}, true, false},
+		{"confidentielle un client deny", "", false, "", true, []config.Client{reg("a", "allow"), reg("b", "deny")}, false, false},
 		{"confidentielle client non réglementé seul", "", false, "", true, []config.Client{plain("a", "allow")}, false, false},
 		{"confidentielle modèle souverain", "", true, "souv", true, []config.Client{reg("a", "allow")}, true, false},
 		{"confidentielle modèle non souverain", "", true, "ext", true, []config.Client{reg("a", "allow")}, false, false},
@@ -102,7 +106,7 @@ func TestResolveWebClients(t *testing.T) {
 	}
 	for _, c := range cases {
 		cfg := base()
-		if c.name == "client allow, politique deny" {
+		if strings.HasSuffix(c.name, "politique deny") {
 			cfg.WebSearch.Policy = "deny"
 		}
 		if c.model {
