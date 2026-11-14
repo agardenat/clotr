@@ -296,6 +296,14 @@ func (s *Server) Fetch(ctx context.Context, raw string, maxBytes int64) ([]byte,
 }
 
 func ConnectAll(ctx context.Context, cfgs []config.MCPServer, version string) ([]*Server, []string) {
+	return connectAll(ctx, cfgs, version, true)
+}
+
+func ConnectForTemplates(ctx context.Context, cfgs []config.MCPServer, version string) ([]*Server, []string) {
+	return connectAll(ctx, cfgs, version, false)
+}
+
+func connectAll(ctx context.Context, cfgs []config.MCPServer, version string, exposed bool) ([]*Server, []string) {
 	servers := make([]*Server, len(cfgs))
 	errs := make([]error, len(cfgs))
 	var wg sync.WaitGroup
@@ -314,7 +322,7 @@ func ConnectAll(ctx context.Context, cfgs []config.MCPServer, version string) ([
 			warnings = append(warnings, errs[i].Error())
 			continue
 		}
-		if n := len(s.skipped); n > 0 {
+		if n := len(s.skipped); n > 0 && exposed {
 			shown := s.skipped
 			more := ""
 			if n > 5 {

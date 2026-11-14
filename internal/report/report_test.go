@@ -22,7 +22,13 @@ func TestModel(t *testing.T) {
 			t.Fatalf("bloc %s absent du modèle CVE", block)
 		}
 	}
-	if _, err := Model("incident", nil); err == nil {
+	for _, mode := range []string{ModeIncident, ModeChange} {
+		m, err := Model(mode, nil)
+		if err != nil || !strings.Contains(m, "{{ticket}}") || !strings.Contains(m, "{{tickets.related}}") {
+			t.Fatalf("modèle %s: %v", mode, err)
+		}
+	}
+	if _, err := Model("panne", nil); err == nil {
 		t.Fatal("mode inconnu accepté")
 	}
 	path := filepath.Join(t.TempDir(), "cve.md")

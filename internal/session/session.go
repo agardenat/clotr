@@ -62,6 +62,8 @@ type Turn struct {
 	Exclude []string  `json:"exclude,omitempty"`
 	Access  string    `json:"access,omitempty"`
 	CVE     []string  `json:"cve,omitempty"`
+	Mode    string    `json:"mode,omitempty"`
+	Ticket  string    `json:"ticket,omitempty"`
 	Status  string    `json:"status"`
 	Error   string    `json:"error,omitempty"`
 	Models  []string  `json:"models,omitempty"`

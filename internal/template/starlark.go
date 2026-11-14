@@ -161,6 +161,13 @@ func (in *Instance) loadScript() error {
 			return i18n.E("tpl.star.startup", in.T.Script)
 		}
 	}
+	if in.T.Tickets() {
+		_, get := globals["get"].(starlark.Callable)
+		_, search := globals["search"].(starlark.Callable)
+		if !get || !search {
+			return i18n.E("tpl.star.tickets", in.T.Script)
+		}
+	}
 	return nil
 }
 

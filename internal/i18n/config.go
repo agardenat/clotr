@@ -60,6 +60,7 @@ var configMsgs = map[string]msg{
 	"config.startup_name":            {"startup[%d].name: %q is invalid ([a-z][a-z0-9-]*)", "startup[%d].name : %q invalide ([a-z][a-z0-9-]*)"},
 	"config.startup_dup":             {"startup[%d].name: %q is duplicated", "startup[%d].name : %q dupliqué"},
 	"config.startup_template":        {"startup[%d].template: required", "startup[%d].template : requis"},
+	"config.tickets_template":        {"tickets.template: required", "tickets.template : requis"},
 	"config.startup_every":           {"startup[%d].every: must not be negative", "startup[%d].every : ne doit pas être négatif"},
 	"config.client_name":             {"client %q: invalid name ([a-z][a-z0-9-]*)", "client %q : nom invalide ([a-z][a-z0-9-]*)"},
 	"config.client_taken":            {"client %q: name already used by an instance or reserved", "client %q : nom déjà pris par une instance ou réservé"},

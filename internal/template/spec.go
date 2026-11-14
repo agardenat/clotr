@@ -34,6 +34,7 @@ type Template struct {
 	SSHPaths    ssh.PathRules        `yaml:"ssh_paths"`
 	Commands    access.Rules         `yaml:"commands"`
 	Hints       string               `yaml:"hints"`
+	IDPattern   string               `yaml:"id_pattern"`
 
 	Source     string `yaml:"-"`
 	Raw        []byte `yaml:"-"`
@@ -195,8 +196,28 @@ func (t *Template) validate() error {
 		if len(t.Tools) > 0 || len(t.Targets) > 0 || len(t.Connectors) > 0 || len(t.Companions) > 0 {
 			fail(i18n.T("tpl.spec.startup_only"))
 		}
+	case KindTickets:
+		if t.Script == "" {
+			fail(i18n.T("tpl.spec.tickets_script"))
+		}
+		if len(t.Tools) > 0 || len(t.Targets) > 0 || len(t.Companions) > 0 {
+			fail(i18n.T("tpl.spec.tickets_only"))
+		}
+		for _, c := range t.Connectors {
+			if c.Driver != "mcp" && c.Driver != "http" {
+				fail(i18n.T("tpl.spec.tickets_driver", c.Driver))
+			}
+		}
+		if t.IDPattern == "" {
+			fail(i18n.T("tpl.spec.tickets_pattern"))
+		} else if _, err := regexp.Compile(t.IDPattern); err != nil {
+			fail(i18n.T("tpl.spec.tickets_pattern_bad", err))
+		}
 	default:
-		fail(i18n.T("tpl.spec.kind", t.Kind, KindStartup))
+		fail(i18n.T("tpl.spec.kind", t.Kind, KindStartup+", "+KindTickets))
+	}
+	if t.Kind != KindTickets && t.IDPattern != "" {
+		fail(i18n.T("tpl.spec.id_pattern_kind"))
 	}
 	if len(t.Targets) == 0 && t.Script == "" {
 		fail(i18n.T("tpl.spec.targets_script"))
@@ -249,10 +270,21 @@ func (t *Template) validate() error {
 	return nil
 }
 
-const KindStartup = "startup"
+const (
+	KindStartup = "startup"
+	KindTickets = "tickets"
+)
 
 func (t *Template) Startup() bool {
 	return t.Kind == KindStartup
+}
+
+func (t *Template) Tickets() bool {
+	return t.Kind == KindTickets
+}
+
+func (t *Template) Special() bool {
+	return t.Startup() || t.Tickets()
 }
 
 func (t *Template) sshConnector() (string, Connector, bool) {

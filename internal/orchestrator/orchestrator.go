@@ -24,6 +24,7 @@ import (
 	"github.com/agardenat/clotr/internal/memory"
 	"github.com/agardenat/clotr/internal/progress"
 	"github.com/agardenat/clotr/internal/report"
+	"github.com/agardenat/clotr/internal/ticket"
 	"github.com/agardenat/clotr/internal/tools"
 	"github.com/agardenat/clotr/internal/tools/dns"
 	"github.com/agardenat/clotr/internal/websearch"
@@ -98,6 +99,8 @@ type Orchestrator struct {
 	Language        string
 	OnAnswer        func(text string)
 	Incident        bool
+	Change          bool
+	Tickets         *ticket.Store
 	CVE             *cve.Store
 	Journal         bool
 	OnResult        func(Result)
@@ -158,6 +161,34 @@ func (o *Orchestrator) triage(ctx context.Context, request string) Result {
 	return o.runTask(ctx, request, t, nil, reached)
 }
 
+func (o *Orchestrator) ticketStep(ctx context.Context, request string) Result {
+	goal := o.ticketGoal()
+	role, err := o.DirectRole("")
+	if err != nil {
+		return Result{TaskID: ticket.TaskID, Goal: goal, Status: "failed", Error: err.Error()}
+	}
+	allowed := append(append(ticket.ToolNames(), evidence.ToolName, evidence.SearchName), memory.ToolNames()...)
+	names := slices.DeleteFunc(o.Tools.Names(), func(n string) bool { return !slices.Contains(allowed, n) })
+	t := Task{ID: ticket.TaskID, Role: role, Goal: goal, Tools: names, label: i18n.T("ticket.step")}
+	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: t.ID, Role: t.Role, Goal: t.label}}})
+	o.Audit.Log("tickets_step", map[string]any{"role": role, "ticket": o.Tickets.Main() != nil})
+	return o.runTask(ctx, request, t, nil, nil)
+}
+
+func (o *Orchestrator) ticketGoal() string {
+	what, open := "incidents", ""
+	if o.Change {
+		what = "demandes de changement"
+	}
+	source := "de la demande"
+	if m := o.Tickets.Main(); m != nil {
+		source = "de la demande et du ticket " + m.ID
+	} else if o.Incident {
+		open = " Commence par chercher un ticket ouvert récent (state open, since_days 7) qui porte sur ce même incident : s'il en existe un, enregistre-le avec " + ticket.RelatedTool + " en relation current ; s'il n'y en a pas, dis-le dans tes constats."
+	}
+	return "Recherche des tickets liés, avant toute investigation de l'infrastructure." + open + " Avec " + ticket.SearchTool + " (requêtes courtes tirées " + source + " : composant, message d'erreur sans identifiant variable, nom de ressource), cherche les " + what + " passés semblables, en commençant chez le même client, puis tous clients confondus (all_customers) sur le composant ou le message d'erreur si rien de pertinent ne ressort. Lis avec " + ticket.GetTool + " ceux qui paraissent pertinents et enregistre chaque ticket réellement lié avec " + ticket.RelatedTool + " (relation similar), avec la résolution appliquée telle que le ticket la décrit. Tes seuls outils sont ceux des tickets : n'investigue pas l'infrastructure, les tâches suivantes le feront à partir de ton résultat. Arrête dès que les recherches n'apportent plus de ticket pertinent. findings : un constat par ticket lié (identifiant, point commun, résolution) avec sa preuve ; gaps : ce qui n'a pas pu être cherché."
+}
+
 const (
 	cveGoal = "Fiches, avant toute planification, pour chacun des sujets %s : enregistre la fiche de chaque sujet avec cve_advisory. Procédure fixe : clotr a déjà interrogé les sources officielles (CVE.org, NVD, CISA KEV, EPSS, GitHub, distributions) et en a extrait les faits, ci-dessous ; il joint lui-même à la fiche les scores, l'exploitation connue, les versions par distribution et les commandes de détection des paquets. Rédige le reste (summary, product, affected, fixed, exposure, detection, mitigation, remediation, iocs, et commands seulement pour ce que les commandes générées ne couvrent pas) à partir de ces seules preuves : lis le détail d'une source avec evidence_read au besoin, sans recherche web, et cite dans evidence les preuves utilisées. " + writingStyle + " Ne reformule pas ce qu'une source dit déjà clairement : deux runs sur les mêmes sources doivent donner la même fiche. mitigation : traduis fidèlement les contournements publiés par les éditeurs, ou « aucun contournement publié ». remediation : la version ou le paquet corrigé à déployer, par distribution ou écosystème, en renvoyant au tableau des distributions pour le détail. host_component : true si le composant est fourni par l'hôte et partagé avec ses conteneurs, comme le noyau. Ne vérifie aucun actif : la vérification est confiée aux tâches planifiées ensuite.%s"
 	cveDone = "Toutes les fiches CVE sont enregistrées : l'objectif est atteint. Conclus maintenant, au format demandé, sans appeler d'outil : résumé de chaque fiche avec ses preuves ; indique dans gaps ce qui reste incertain (versions, conditions d'exposition)."
@@ -196,6 +227,13 @@ func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error)
 	var results []Result
 	if o.CVE != nil {
 		o.CVE.Prepare(ctx)
+		if ctx.Err() != nil {
+			return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
+		}
+	}
+	if o.Tickets != nil && o.CVE == nil {
+		o.Tickets.Record()
+		results = append(results, o.ticketStep(ctx, request))
 		if ctx.Err() != nil {
 			return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
 		}
@@ -530,6 +568,14 @@ func (o *Orchestrator) limitToTriage(p *Plan) {
 
 func (o *Orchestrator) planInput(request string) string {
 	user := o.withHistory(request)
+	if o.Tickets != nil {
+		if brief := o.Tickets.Brief(); brief != "" {
+			user += "\n\n" + brief
+		}
+	}
+	if o.Change {
+		user += "\n\n" + changePlan
+	}
 	if o.triaged == nil {
 		return user
 	}
@@ -545,6 +591,8 @@ func (o *Orchestrator) planInput(request string) string {
 	}
 	return user + "\n\nRésultat du tri d'incident (tâche " + triageID + ", déjà exécutée ; son résultat est transmis à chaque tâche, qui n'a pas à relocaliser le composant):" + synthInput([]Result{*o.triaged}) + "\nNe replanifie pas ce que le tri a établi. Si la cause est établie par une preuve, ne planifie que la vérification de cette cause et la recherche du correctif durable; sinon, découpe l'investigation à partir de ce qu'il a trouvé. L'id " + triageID + " est réservé: ne l'utilise pas."
 }
+
+const changePlan = "Demande de changement : rien n'est modifié par ce run. Planifie l'établissement de l'état actuel de ce que la demande modifie (configuration en place, versions, ressources, valeurs) sur chaque périmètre concerné, et de sa source IaC (dépôt, fichier et ligne qui le décrivent) avec les instances IaC disponibles, ainsi que des dépendances et impacts de la modification (services redémarrés, flux, certificats, droits). L'id " + ticket.TaskID + " est réservé: ne l'utilise pas."
 
 func (o *Orchestrator) Validate(p *Plan) error {
 	if len(p.Tasks) == 0 {
@@ -879,13 +927,24 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 			leads = append(leads, e)
 		}
 	}
-	if o.CVE != nil {
-		blocks, order := o.CVE.Blocks()
+	if blocks, order, ok := o.reportBlocks(); ok {
 		var b strings.Builder
 		for _, key := range order {
 			fmt.Fprintf(&b, "\n\n### {{%s}}\n%s", key, blocks[key])
 		}
-		user += "\n\nBlocs que clotr insérera dans le rapport à la place des lignes {{…}} du modèle (données établies : ne les recopie pas, appuie-toi dessus pour le verdict, l'arbitrage, les paragraphes des négatifs et le plan d'action) :" + b.String()
+		switch {
+		case o.CVE != nil:
+			user += "\n\nBlocs que clotr insérera dans le rapport à la place des lignes {{…}} du modèle (données établies : ne les recopie pas, appuie-toi dessus pour le verdict, l'arbitrage, les paragraphes des négatifs et le plan d'action) :" + b.String()
+		case b.Len() > 0:
+			user += "\n\nBlocs que clotr insérera dans le rapport à la place des lignes {{…}} du modèle (données établies : ne les recopie pas, appuie-toi dessus) :" + b.String()
+		default:
+			user += "\n\nAucun ticket : clotr retire les lignes {{…}} du modèle ; recopie-les quand même telles quelles."
+		}
+		if o.Tickets != nil {
+			if brief := o.Tickets.Brief(); brief != "" {
+				user += "\n\n" + brief
+			}
+		}
 	}
 	if len(leads) > 0 {
 		user += "\n\nCauses et pistes signalées par les agents en cours de run (à confirmer par les preuves citées et les constats ; une piste non établie se présente comme telle):\n" + memory.Format(leads)
@@ -908,11 +967,65 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 	return o.finalize(o.fillReport(out.Content)), out.Model, nil
 }
 
+func (o *Orchestrator) reportBlocks() (map[string]string, []string, bool) {
+	switch {
+	case o.CVE != nil:
+		blocks, order := o.CVE.Blocks()
+		return blocks, order, true
+	case o.Incident || o.Change:
+		if o.Tickets == nil {
+			return map[string]string{}, nil, true
+		}
+		blocks, order := o.Tickets.Blocks()
+		return blocks, order, true
+	}
+	return nil, nil, false
+}
+
+const commentPrompt = `Tu rédiges le commentaire interne d'un ticket à partir du rapport d'analyse fourni, pour l'équipe qui traite le ticket. Texte brut, sans titre ni tableau, 15 lignes au plus, des tirets pour les listes :
+- d'abord l'état en une ou deux phrases : composant en cause et ce qui ne va pas (incident), ou ce qui est demandé et sa faisabilité (demande de changement) ;
+- puis « À faire : » et les actions dans l'ordre, chacune concrète (élément, valeur, dépôt ou fichier IaC) ;
+- puis « Tickets similaires : » avec leur identifiant et la résolution appliquée, s'il y en a ;
+- enfin les points non vérifiés qui changent la décision, s'il y en a.
+Reprends seulement ce que le rapport établit, sans identifiant de preuve [Exxx] ni de tâche ; une hypothèse reste une hypothèse.
+` + writingStyle
+
+func (o *Orchestrator) Comment(ctx context.Context, reportMD string) (string, error) {
+	if !o.Incident && !o.Change {
+		return "", nil
+	}
+	cands, err := o.Router.Candidates(config.RoleSynthesizer)
+	if err != nil {
+		return "", err
+	}
+	user := "Rapport :\n" + reportMD
+	if o.Tickets != nil {
+		if m := o.Tickets.Main(); m != nil {
+			user = "Ticket : " + m.ID + " — " + m.Title + "\n\n" + user
+		}
+	}
+	model, effort := o.Runner.First(cands, config.RoleSynthesizer)
+	o.Events.Emit(progress.Event{Task: "comment", Kind: "start", Model: model, Effort: effort})
+	out, err := o.Runner.Run(ctx, agent.Spec{
+		TaskID:     "comment",
+		Role:       config.RoleSynthesizer,
+		System:     commentPrompt + "\n" + o.langDirective(),
+		User:       user,
+		Candidates: cands,
+	})
+	if err != nil {
+		return "", err
+	}
+	o.Events.Emit(progress.Event{Task: "comment", Kind: "done", Model: out.Model, Effort: out.Effort})
+	o.Audit.Log("ticket_comment", map[string]any{"model": out.Model})
+	return strings.TrimSpace(thinkBlock.ReplaceAllString(out.Content, "")), nil
+}
+
 func (o *Orchestrator) fillReport(md string) string {
-	if o.CVE == nil {
+	blocks, order, ok := o.reportBlocks()
+	if !ok {
 		return md
 	}
-	blocks, order := o.CVE.Blocks()
 	md, missing := report.Fill(md, blocks, order, i18n.R("report.missing_blocks"))
 	if len(missing) > 0 {
 		o.Audit.Log("report_block_missing", map[string]any{"blocks": missing})
@@ -1192,7 +1305,7 @@ Environnement:
 Quand tu as terminé, réponds UNIQUEMENT avec un objet JSON:
 {"findings":["[CRITIQUE|MAJEUR|MINEUR|INFO] constat [E012]"],"evidence":["[E012] outil + paramètres essentiels : extrait factuel"],"gaps":["ce qui n'a pas pu être vérifié et pourquoi"]}
 Chaque sortie d'outil commence par son identifiant de preuve [Exxx] (archivée en entier) : cite-le au début de chaque evidence et à la fin de chaque finding qu'il établit.
-%s`, role, r.Description, o.webRule(), o.incidentRule(), o.accessRule(), o.Environment, o.langDirective())
+%s`, role, r.Description, o.webRule(), o.modeRule(), o.accessRule(), o.Environment, o.langDirective())
 }
 
 func (o *Orchestrator) accessRule() string {
@@ -1204,6 +1317,19 @@ func (o *Orchestrator) accessRule() string {
 		via = ", et aussi avec <instance>_ssh_resolve depuis un hôte du réseau concerné (vue DNS interne, à travers le proxy : un nom inconnu du poste peut exister dans le DNS interne)"
 	}
 	return "\nIncident d'accès à une URL ou à un nom (inaccessible, erreur TLS ou de certificat, page ou authentification inattendue) : vérifie d'abord la chaîne d'accès de bout en bout, avant les logs applicatifs : résous le nom avec " + dns.ToolName + via + ", et compare l'IP obtenue au point d'entrée attendu (adresse du load balancer de l'ingress ou du proxy, IP de la VM). Une IP inattendue est une cause en soi : signale-la telle quelle."
+}
+
+func (o *Orchestrator) modeRule() string {
+	rule := o.incidentRule()
+	if o.Change {
+		rule += "\nMode demande de changement : tu ne modifies rien, tu établis ce qu'il faudra modifier. Établis l'état actuel de ce que la demande modifie (configuration en place, versions, ressources, valeurs) avec ses preuves, puis où se fait la modification : l'IaC d'abord (dépôt, fichier, ligne et syntaxe lus), une ressource gérée par IaC se modifiant dans l'IaC, jamais à la main ; signale tout écart entre l'IaC et l'état réel. Relève les impacts de la modification (redémarrage, interruption, dépendances, flux, certificats, droits) et comment revenir en arrière. Dans tes constats, une modification à réaliser se formule avec la valeur actuelle prouvée et la valeur cible."
+	}
+	if o.Tickets != nil {
+		if brief := o.Tickets.Brief(); brief != "" {
+			rule += "\n" + brief
+		}
+	}
+	return rule
 }
 
 func (o *Orchestrator) incidentRule() string {
@@ -1256,8 +1382,13 @@ func (o *Orchestrator) displayPath(p string) string {
 }
 
 func (o *Orchestrator) reportMode() string {
-	if o.CVE != nil {
+	switch {
+	case o.CVE != nil:
 		return report.ModeCVE
+	case o.Change:
+		return report.ModeChange
+	case o.Incident:
+		return report.ModeIncident
 	}
 	return report.ModeDefault
 }

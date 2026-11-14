@@ -29,6 +29,7 @@ var (
 	stFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	stWarn    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	stLead    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+	stTicket  = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 	stAlert   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
 	stAdvice  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	stActive  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
@@ -40,6 +41,10 @@ var (
 func Session(name string) string { return stSession.Render(name) }
 
 func Command(s string) string { return stCommand.Render(s) }
+
+func Comment(title, body string) string {
+	return stCommand.Render(title) + "\n" + stWarn.Render(body)
+}
 
 const (
 	statusPending = "pending"
@@ -122,6 +127,8 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.Kind {
 		case "lead":
 			return b, b.println(stLead.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
+		case "ticket":
+			return b, b.println(stTicket.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
 		case "cve":
 			if m.Card != nil {
 				return b, b.println(m.Card.render(max(b.width-1, 20)) + "\n")

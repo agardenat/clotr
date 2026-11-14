@@ -328,6 +328,23 @@ Si un dépôt a changé, la configuration et les templates sont rechargés ; si 
 
 `every` est mémorisé par entrée dans `~/.cache/clotr/startup/`, avec le résultat de la dernière vérification. Chaque lancement affiche une ligne par entrée : `configuration (acme-sync) : à jour — ~/.config/clotr (1a2b3c4), …` quand la vérification vient d'avoir lieu, sinon le résultat de la précédente (`configuration (acme-sync) : à jour, dernière vérification il y a 12 min`) ; une dernière vérification en échec ou un dépôt laissé tel quel (modification locale) s'affichent en avertissement à chaque lancement jusqu'à la suivante. `--quiet` masque les lignes « à jour », pas les avertissements. `clotr sync` exécute les templates de démarrage sans attendre `every` et affiche l'état de chaque dépôt (code de sortie non nul en cas d'échec ou de retour arrière). `--no-startup` ou `CLOTR_NO_STARTUP=1` désactivent l'étape (poste de développement de templates, par exemple). Dans les tests (`clotr templates test`), `template.instance(git=…)` remplace `git.sync` (dict `url` → statut ou résultat, ou fonction `(url, chemin, ref)`), `inst.startup()` exécute `startup()` et `inst.git_calls()` liste les appels ; les chemins y sont relatifs à `/config`.
 
+### Templates de tickets
+
+Un template `kind: tickets` n'est pas une cible non plus : il relie clotr à un outil de tickets (ITSM) pour les modes incident et demande de changement. Il n'a ni `tools`, ni `targets`, ni `companions` ; ses connecteurs sont de driver `mcp` ou `http`. Il déclare `id_pattern`, l'expression régulière des identifiants de ticket (reconnus sans tenir compte de la casse, en mot entier), et son script définit deux fonctions :
+
+- `get(id)` : le ticket, ou `None` s'il n'existe pas ;
+- `search(q)` : liste de tickets ; `q` est un dict `{query, kind, state, since_days, limit, customer, all_customers, exclude}` (`kind` : `incident`, `change` ou vide ; `state` : `open`, `closed` ou vide ; `customer` : client du ticket de la demande, vide sinon ; `all_customers` : tous clients confondus).
+
+Un ticket est un dict `{id, kind, category, title, status, customer, scope, opened, closed, url, description, resolution, comments: [{time, author, body}]}` ; `kind` vaut `incident`, `change` ou `other` (valeur inconnue : `other`) ; `scope` liste les identifiants ou noms du client et du projet du ticket dans l'outil de tickets. Il est déclaré dans le fichier principal, sous `tickets` :
+
+```yaml
+tickets:
+  template: tracker
+  params: {url_format: "https://tickets.example.com/%s"}
+```
+
+Ses paramètres reçoivent, comme une instance, les `params` globaux puis ceux du client quand les instances du run appartiennent à un seul client (filtre client des recherches sans ticket, par exemple), puis ceux de `tickets.params`. Dans les tests (`clotr templates test`), `inst.ticket_get(id)` et `inst.ticket_search(query=…, kind=…, state=…, since_days=…, limit=…, customer=…, all_customers=…)` appellent les fonctions et normalisent leur résultat comme clotr.
+
 ### Jeton OAuth2 lu dans Vault
 
 `auth.oauth2` sur un connecteur `http` obtient un jeton par le flux *client credentials* (RFC 6749, § 4.4), par exemple un principal de service Microsoft Entra, et l'envoie en `Authorization: Bearer` :
@@ -543,7 +560,8 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
 | `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
 | `report_export` | `mcp` (nom d'un serveur de `mcp`, différent de `web_search.mcp`) et `role` (rôle de travail outillé ; défaut : celui du tier le plus élevé). Voir Export du rapport en document. |
-| `report_models` | modèle de rapport par mode (`default`, `cve`) : chemin d'un fichier Markdown qui remplace le modèle embarqué. Voir Modèles de rapport. |
+| `report_models` | modèle de rapport par mode (`default`, `cve`, `incident`, `change`) : chemin d'un fichier Markdown qui remplace le modèle embarqué. Voir Modèles de rapport. |
+| `tickets` | `template` (template `kind: tickets`), `params`, `enabled` (défaut true) : outil de tickets des modes incident et demande de changement. Voir Templates de tickets et Tickets. |
 | `cve` | `sources` : distributions interrogées en mode CVE (`redhat`, `ubuntu`, `debian` ; défaut : les trois). Voir Mode CVE. |
 | `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true ; false : connecté seulement par `-t mcp_<serveur>`), `auth` (`oauth` : connexion OAuth dans le navigateur, voir Serveurs MCP en OAuth). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. |
 
@@ -754,6 +772,8 @@ Si stdout est un terminal, `run` et `session` affichent le rapport mis en forme 
 - **Tri d'abord** : avant le plan, une tâche `t0` (rôle outillé le plus léger) localise le composant en échec et lit son message d'erreur exact et sa configuration. Le tri se termine dès qu'il signale une cause établie : il conclut à l'étape suivante (audit `goal_reached`), et l'explication des codes d'erreur et la recherche du correctif passent aux tâches planifiées. Le planner part de son résultat : il ne replanifie pas ce qu'elle a établi et, si la cause est prouvée, ne prévoit que sa vérification et la recherche du correctif. Une cause établie limite aussi le plan aux instances utilisées par le tri : leurs outils seuls restent aux tâches, une tâche prévue uniquement sur d'autres instances est écartée (audit `plan_limited`, message au-dessus du tableau). Si le tri n'a utilisé aucune instance, le plan n'est pas limité. Chaque tâche reçoit le résultat de `t0` en entrée et n'a pas à relocaliser le composant.
 - **Causes en direct** : les agents disposent de l'outil `cause_report` (résumé, preuves `[Exxx]` existantes obligatoires, statut `established` ou `probable`). Une cause signalée s'affiche aussitôt au-dessus du tableau de progression, est enregistrée en mémoire de session (`kind: lead`) et dans l'audit (`lead`), et est transmise aux autres tâches en cours à leur étape suivante (audit `inbox`), qui ne refont pas la collecte. Une cause issue d'un modèle souverain n'est pas transmise à une tâche non souveraine. Une cause déjà signalée n'est pas réaffichée. Chaque cause porte un numéro (`#N`, affiché et transmis) ; une cause qui en corrige ou en infirme une autre la désigne par `replaces` : l'ancienne est marquée remplacée (tag `superseded`, contenu préfixé « [remplacée par #M] »), la nouvelle s'affiche avec « corrige #N, retirée », et seule la correction est transmise aux autres tâches. Une cause négative (« ce n'est pas X ») n'est à signaler `established` que si sa preuve couvre toute la période, événements récents compris. Le synthesizer reçoit les causes signalées, à confirmer par les preuves ; la sortie `--json` les donne dans `leads`.
 - **Constats en direct** : à la fin de chaque tâche, ses constats s'affichent au-dessus du tableau de progression, et son résultat est écrit dans `turns/NNN/results.json` sans attendre la fin du run (`session <nom> --synthesize` peut donc repartir d'un run interrompu).
+- **Tickets** : avec un outil de tickets configuré, une recherche des tickets liés précède le tri (voir Tickets).
+- **Rapport d'incident** : le rapport suit le modèle `incident` : synthèse (impact, cause établie ou probable, état, correctif durable, urgence), chronologie, cause racine et pistes écartées, constats annexes, résolution (correctif durable puis mesures immédiates), incidents similaires, points non vérifiés et limites ; le ticket de la demande en tête.
 - **Ctrl-C pour conclure** : un premier Ctrl-C demande la conclusion : les tâches en cours concluent à leur étape suivante avec ce qu'elles ont (« conclusion demandée »), celles pas encore lancées sont abandonnées (« non lancée »), la vérification des constats est sautée, ou abandonnée si elle est en cours (y compris en attente de nouvel essai), et le rapport est produit. Un second Ctrl-C interrompt le run comme sans `--incident`.
 
 `--incident` est incompatible avec `--direct` et `--chat`.
@@ -767,6 +787,28 @@ Si stdout est un terminal, `run` et `session` affichent le rapport mis en forme 
 - à la fin de chaque tâche, ses constats (avec leurs preuves `[Exxx]`) et ce qu'elle n'a pas couvert.
 
 Hors terminal ou avec `--plain`, ces éléments sont des lignes `preuve`, `constat` et `non couvert` de la progression. `--panic` implique `--incident` et a les mêmes incompatibilités.
+
+### Mode demande de changement
+
+`run --change` (alias `--demande`) prépare une modification de l'infrastructure sans rien modifier :
+
+- pas de tri d'incident ni de `cause_report` ; avec un outil de tickets, la recherche des demandes similaires passe d'abord (voir Tickets) ;
+- le planner établit l'état actuel de ce que la demande modifie (configuration en place, versions, ressources) sur chaque périmètre concerné, sa source IaC (dépôt, fichier, ligne, par les instances IaC disponibles), les dépendances et impacts ; les agents formulent chaque modification avec la valeur actuelle prouvée et la valeur cible, l'IaC d'abord pour une ressource qu'elle gère ;
+- le rapport suit le modèle `change` : synthèse (demande précise, faisabilité, lieu de la modification, impact, points bloquants), état actuel avec ses preuves et les écarts entre IaC et état réel, modifications à réaliser par composant (extrait IaC avant/après), impacts, prérequis, risques et retour arrière, plan de mise en œuvre avec la vérification de chaque étape, demandes similaires, points à confirmer et limites.
+
+`--change` est incompatible avec `--incident`, `--panic`, `--cve`, `--direct` et `--chat`.
+
+### Tickets
+
+Avec un outil de tickets configuré (`tickets`, template `kind: tickets`), les modes incident et demande de changement s'appuient sur les tickets :
+
+- **Ticket de la demande** : `--ticket <id>` lit le ticket avant le run ; `--ticket` sans valeur prend le premier identifiant de la demande, et un identifiant présent dans la demande d'un run `--incident` ou `--change` est lu aussi, sans option. Le ticket s'affiche (identifiant, type, titre), devient une preuve citée dans le rapport et est transmis au planner, aux tâches et au synthesizer. Sans demande, `clotr run --ticket <id>` traite le ticket lui-même.
+- **Mode tiré du ticket** : `--ticket` seul choisit le mode d'après le type du ticket (incident, ou demande de changement ; autre type : incident). Avec `--incident` ou `--change`, le type du ticket l'emporte : un incident qui porte sur une demande de changement bascule en mode demande de changement, et inversement (message, audit `mode_switch`).
+- **Périmètre déduit du ticket** : si la demande ne cite aucun client ni projet de la configuration, les identifiants client et projet du ticket (`scope`), son titre et sa description servent à proposer les instances, comme s'ils figuraient dans la demande : il suffit que le client ou le projet porte ces identifiants en nom ou en alias (audit `ticket_scope`).
+- **Tickets liés** : une tâche `tickets`, avant le tri, n'a que les outils `ticket_search`, `ticket_get` et `ticket_related` : elle cherche les incidents (ou les demandes) passés semblables, chez le même client puis tous clients confondus, et en relève la résolution ; en mode incident sans ticket, elle cherche d'abord un ticket ouvert récent sur le même sujet (« ticket probable », à confirmer). Chaque ticket lié s'affiche aussitôt au-dessus du tableau, est transmis aux tâches comme piste à vérifier (jamais comme cause établie) et figure dans le rapport (`{{tickets.related}}`) ; audit `ticket_related`, sortie `--json` : `tickets`.
+- **Commentaire interne** : à la fin d'un run incident ou demande de changement, clotr rédige un commentaire interne pour le ticket (état, actions à faire, tickets similaires et leur résolution, points non vérifiés), affiché en jaune après le rapport et écrit dans `turns/NNN/comment.txt` (sortie `--json` : `comment`). Il n'est pas publié dans l'outil de tickets.
+
+`--ticket` est incompatible avec `--cve`, `--direct` et `--chat`. Sans outil de tickets configuré, `--ticket` est refusé ; les modes incident et demande de changement fonctionnent sans tickets.
 
 ### Mode CVE
 
@@ -796,7 +838,7 @@ Pour une compromission, le plan d'action prévoit, pour chaque actif exposé ou 
 
 ### Modèles de rapport
 
-La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour tous les runs hors mode CVE, et `cve` pour `--cve`. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
+La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour les runs sans mode, `incident` pour `--incident` et `--panic`, `change` pour `--change` et `cve` pour `--cve`. Les modèles `incident` et `change` ont les blocs `{{ticket}}` (en-tête du ticket de la demande, ou du ticket probable) et `{{tickets.related}}` (tableau des tickets liés), retirés quand il n'y a pas de ticket. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
 
 `report_models` remplace un modèle embarqué par un fichier, par mode :
 

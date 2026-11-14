@@ -3,6 +3,7 @@ package template
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -304,7 +305,7 @@ func (ti *testInstance) Freeze()               {}
 func (ti *testInstance) Truth() starlark.Bool  { return true }
 func (ti *testInstance) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable") }
 func (ti *testInstance) AttrNames() []string {
-	return []string{"call", "cleanup", "commands", "discover", "environment", "error", "fn", "git_calls", "mcp_calls", "questions", "requests", "startup", "tools", "tracked"}
+	return []string{"call", "cleanup", "commands", "discover", "environment", "error", "fn", "git_calls", "mcp_calls", "questions", "requests", "startup", "ticket_get", "ticket_search", "tools", "tracked"}
 }
 
 func (ti *testInstance) Attr(name string) (starlark.Value, error) {
@@ -418,6 +419,30 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 				out = append(out, map[string]any{"url": r.URL, "path": r.Path, "ref": r.Ref, "status": r.Status, "from": r.From, "to": r.To, "commits": r.Commits, "reason": r.Reason})
 			}
 			return toStarlark(out)
+		}), nil
+	case "ticket_get":
+		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			var id string
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "id", &id); err != nil {
+				return nil, err
+			}
+			t, err := ti.in.TicketGet(threadCtx(thread), id)
+			if err != nil || t == nil {
+				return starlark.None, err
+			}
+			return ticketValue(t)
+		}), nil
+	case "ticket_search":
+		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			var q TicketQuery
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "query?", &q.Query, "kind?", &q.Kind, "state?", &q.State, "since_days?", &q.SinceDays, "limit?", &q.Limit, "customer?", &q.Customer, "all_customers?", &q.AllCustomers, "exclude?", &q.Exclude); err != nil {
+				return nil, err
+			}
+			ts, err := ti.in.TicketSearch(threadCtx(thread), q)
+			if err != nil {
+				return nil, err
+			}
+			return ticketValue(ts)
 		}), nil
 	case "git_calls":
 		return starlark.NewBuiltin(name, func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -769,4 +794,12 @@ func (m *mockMCP) CallTool(_ context.Context, tool string, args map[string]any) 
 		return res, nil
 	}
 	return nil, i18n.E("tpl.test.mcp_mock")
+}
+
+func ticketValue(v any) (starlark.Value, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return jsonToStarlark(b)
 }

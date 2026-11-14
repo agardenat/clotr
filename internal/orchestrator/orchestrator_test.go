@@ -21,8 +21,11 @@ import (
 	"github.com/agardenat/clotr/internal/llm"
 	"github.com/agardenat/clotr/internal/memory"
 	"github.com/agardenat/clotr/internal/progress"
+	"github.com/agardenat/clotr/internal/report"
 	"github.com/agardenat/clotr/internal/router"
+	"github.com/agardenat/clotr/internal/template"
 	"github.com/agardenat/clotr/internal/testutil"
+	"github.com/agardenat/clotr/internal/ticket"
 	"github.com/agardenat/clotr/internal/tools"
 	"github.com/agardenat/clotr/internal/tools/dns"
 )
@@ -841,5 +844,97 @@ func TestContinuationLeavesOtherTasksAlone(t *testing.T) {
 	}
 	if c = continuationTask(plan[0], 2, plan[:1]); strings.Contains(c.Goal, "autres tâches") {
 		t.Fatalf("tâche seule : %s", c.Goal)
+	}
+}
+
+type ticketSource struct{}
+
+func (ticketSource) TicketGet(_ context.Context, id string) (*template.Ticket, error) {
+	return &template.Ticket{ID: id, Kind: template.TicketIncident, Title: "ancien incident"}, nil
+}
+
+func (ticketSource) TicketSearch(context.Context, template.TicketQuery) ([]template.Ticket, error) {
+	return nil, nil
+}
+
+func withTickets(t *testing.T, o *Orchestrator, main *template.Ticket) {
+	t.Helper()
+	ev := evidence.Open(t.TempDir(), 1)
+	o.Runner.Evidence = ev
+	o.Tickets = ticket.New(ticketSource{}, ev, audit.Nop())
+	o.Tickets.SetMain(main)
+	o.Tools.Add(o.Tickets.Tools()...)
+}
+
+func TestTicketsStepBeforeTriage(t *testing.T) {
+	o, tl := newOrch(t, []string{dagPlan}, nil)
+	o.Incident = true
+	withTickets(t, o, &template.Ticket{ID: "TCK-1", Kind: template.TicketIncident, Title: "le pool GPU ne démarre pas", Customer: "ORG-1"})
+	rep, err := o.Run(context.Background(), "TCK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Results[0].TaskID != ticket.TaskID || rep.Results[1].TaskID != triageID || len(rep.Results) != 6 {
+		t.Fatalf("résultats: %+v", rep.Results)
+	}
+	if tl.start[triageID].Before(tl.end[ticket.TaskID]) {
+		t.Fatal("tri démarré avant la recherche des tickets")
+	}
+	if in := tl.input[ticket.TaskID]; !strings.Contains(in, "Recherche des tickets liés") || !strings.Contains(in, "du ticket TCK-1") || strings.Contains(in, "state open") {
+		t.Fatalf("objectif de la recherche: %q", in)
+	}
+	if in := tl.input["planner"]; !strings.Contains(in, "Ticket de la demande [E001]") || !strings.Contains(in, "le pool GPU ne démarre pas") {
+		t.Fatalf("entrée du planner: %q", in)
+	}
+	if sys := tl.system["synthesizer"]; !strings.Contains(sys, "# Incident — ") || !strings.Contains(sys, "{{tickets.related}}") {
+		t.Fatalf("modèle de rapport: %q", sys)
+	}
+	if in := tl.input["synthesizer"]; !strings.Contains(in, "### {{ticket}}") || !strings.Contains(in, "**Ticket TCK-1**") {
+		t.Fatalf("blocs transmis au synthétiseur: %q", in)
+	}
+	if !strings.Contains(o.modeRule(), "Ticket de la demande") {
+		t.Fatal("ticket absent de la consigne des tâches")
+	}
+}
+
+func TestIncidentWithoutTicketLooksForOpenTicket(t *testing.T) {
+	o, _ := newOrch(t, nil, nil)
+	o.Incident = true
+	withTickets(t, o, nil)
+	if goal := o.ticketGoal(); !strings.Contains(goal, "state open") || !strings.Contains(goal, "incidents passés") {
+		t.Fatalf("objectif: %q", goal)
+	}
+	if got := o.fillReport("# Incident\n\n{{ticket}}\n\n## 1. Synthèse\n"); strings.Contains(got, "{{") {
+		t.Fatalf("lignes de blocs restées: %q", got)
+	}
+}
+
+func TestChangeModeSkipsTriage(t *testing.T) {
+	o, tl := newOrch(t, []string{dagPlan}, nil)
+	o.Change = true
+	withTickets(t, o, &template.Ticket{ID: "TCK-2", Kind: template.TicketChange, Title: "ouvrir le port 443"})
+	rep, err := o.Run(context.Background(), "TCK-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rep.Results {
+		if r.TaskID == triageID {
+			t.Fatal("tri d'incident lancé en mode demande de changement")
+		}
+	}
+	if rep.Results[0].TaskID != ticket.TaskID || !strings.Contains(tl.input[ticket.TaskID], "demandes de changement passés") {
+		t.Fatalf("recherche des tickets: %+v", rep.Results[0])
+	}
+	if in := tl.input["planner"]; !strings.Contains(in, "rien n'est modifié par ce run") {
+		t.Fatalf("entrée du planner: %q", in)
+	}
+	if sys := tl.system["synthesizer"]; !strings.Contains(sys, "# Demande de changement — ") {
+		t.Fatalf("modèle de rapport: %q", sys)
+	}
+	if rule := o.modeRule(); !strings.Contains(rule, "Mode demande de changement") || strings.Contains(rule, "Mode incident") {
+		t.Fatalf("consigne des tâches: %q", rule)
+	}
+	if o.reportMode() != report.ModeChange {
+		t.Fatal(o.reportMode())
 	}
 }
