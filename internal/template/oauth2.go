@@ -133,7 +133,7 @@ func (in *Instance) oauthToken(ctx context.Context, hc *httpConn) (string, error
 	if t, ok := st.tokens[r.key]; ok && in.now().Add(oauthMargin).Before(t.exp) {
 		return t.value, nil
 	}
-	client, err := in.httpClient(hc)
+	client, err := in.httpClient(ctx, hc)
 	if err != nil {
 		return "", err
 	}

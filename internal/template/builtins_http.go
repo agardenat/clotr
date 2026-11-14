@@ -66,7 +66,7 @@ func (hc *httpConn) credLabel(instance string) string {
 	return instance + " (" + hc.auth.label + ")"
 }
 
-var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "deny", "proxy", "proxy_port", "verify_tls", "ca_file", "levels", "via"}
+var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "deny", "proxy", "proxy_port", "verify_tls", "ca_file", "ca_vault", "levels", "via"}
 
 func checkHTTPOptions(o options) error {
 	for k := range o {
@@ -150,6 +150,14 @@ func newHTTPConn(name string, o options) (*httpConn, error) {
 	for k, v := range o.sub("headers") {
 		hc.headers[k] = fmt.Sprint(v)
 	}
+	if ref := o.str("ca_vault"); ref != "" {
+		if p, f, _ := strings.Cut(ref, "#"); p == "" || f == "" {
+			return nil, i18n.E("tpl.http.ca_vault", ref)
+		}
+		if o.str("ca_file") != "" {
+			return nil, i18n.E("tpl.http.ca_both")
+		}
+	}
 	var err error
 	if hc.maxBytes, err = o.int("max_bytes", defaultMaxBytes); err != nil {
 		return nil, err
@@ -182,7 +190,26 @@ func newHTTPConn(name string, o options) (*httpConn, error) {
 	return hc, nil
 }
 
-func (in *Instance) httpClient(hc *httpConn) (*http.Client, error) {
+func (in *Instance) connectorCA(ctx context.Context, hc *httpConn) ([]byte, error) {
+	ref := hc.opts.str("ca_vault")
+	if ref == "" {
+		return nil, nil
+	}
+	pem, err := in.vaultRef(ctx, hc.name, ref)
+	if err != nil {
+		return nil, fmt.Errorf("ca_vault: %w", err)
+	}
+	return []byte(pem), nil
+}
+
+func (in *Instance) httpClient(ctx context.Context, hc *httpConn) (*http.Client, error) {
+	var ca []byte
+	if hc.client == nil && in.transport == nil {
+		var err error
+		if ca, err = in.connectorCA(ctx, hc); err != nil {
+			return nil, err
+		}
+	}
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	if hc.client != nil {
@@ -204,7 +231,7 @@ func (in *Instance) httpClient(hc *httpConn) (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	tr, err := netx.Transport(px, verify, config.ExpandHome(hc.opts.str("ca_file")))
+	tr, err := netx.TransportTLS(px, netx.TLS{Verify: verify, CAFile: config.ExpandHome(hc.opts.str("ca_file")), CAPEM: ca})
 	if err != nil {
 		return nil, err
 	}
@@ -253,12 +280,19 @@ func requestTLS(v starlark.Value) (*netx.TLS, error) {
 	return t, nil
 }
 
-func (in *Instance) httpClientFor(hc *httpConn, t *netx.TLS, proxy string) (*http.Client, error) {
+func (in *Instance) httpClientFor(ctx context.Context, hc *httpConn, t *netx.TLS, proxy string) (*http.Client, error) {
 	if t == nil && proxy == "" {
-		return in.httpClient(hc)
+		return in.httpClient(ctx, hc)
 	}
 	if t == nil {
 		t = &netx.TLS{Verify: true}
+	}
+	var ca []byte
+	if len(t.CAPEM) == 0 && in.transport == nil {
+		var err error
+		if ca, err = in.connectorCA(ctx, hc); err != nil {
+			return nil, err
+		}
 	}
 	in.mu.Lock()
 	defer in.mu.Unlock()
@@ -289,6 +323,9 @@ func (in *Instance) httpClientFor(hc *httpConn, t *netx.TLS, proxy string) (*htt
 	o := *t
 	o.Verify = verify && t.Verify
 	o.CAFile = config.ExpandHome(hc.opts.str("ca_file"))
+	if len(o.CAPEM) == 0 {
+		o.CAPEM = ca
+	}
 	tr, err := netx.TransportTLS(px, o)
 	if err != nil {
 		return nil, err
@@ -627,7 +664,7 @@ func (in *Instance) send(ctx context.Context, c *httpCall) (*httpReply, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := in.httpClientFor(c.hc, c.tls, c.proxy)
+	client, err := in.httpClientFor(ctx, c.hc, c.tls, c.proxy)
 	if err != nil {
 		return nil, err
 	}

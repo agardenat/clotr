@@ -129,3 +129,59 @@ func TestDefaultSensitivePathsWithoutDeny(t *testing.T) {
 		t.Fatalf("deny vide déclaré: %v", err)
 	}
 }
+
+func TestConnectorCAVault(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	}))
+	defer srv.Close()
+	serverCA := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
+	tpl := writeTemplate(t, `name: x
+script: x.star
+params:
+  url: {type: url, required: true}
+  ca_vault: {type: string, default: ""}
+connectors:
+  api: {driver: http, base_url: "{{.url}}", ca_vault: "{{.ca_vault}}"}
+`, `
+def get(a):
+    r = http.request("api", "GET", "/")
+    return "%d %s" % (r.status, r.body)
+
+tool(name = "get", description = "d", schema = {"type": "object"}, fn = get)
+`)
+	call := func(ref string, vault map[string]string) (string, error) {
+		in, err := NewInstance("i", tpl, map[string]any{"url": srv.URL, "ca_vault": ref})
+		if err != nil {
+			return "", err
+		}
+		reads := 0
+		in.readVault = func(_ context.Context, r string) (string, error) {
+			reads++
+			if v, ok := vault[r]; ok {
+				return v, nil
+			}
+			return "", fmt.Errorf("absent")
+		}
+		out, err := in.Tools()[0].Call(context.Background(), []byte("{}"))
+		if err == nil {
+			out2, _ := in.Tools()[0].Call(context.Background(), []byte("{}"))
+			if out2 != out || reads != 1 {
+				return "", fmt.Errorf("second appel %q, lectures Vault %d", out2, reads)
+			}
+		}
+		return out, err
+	}
+	if out, err := call("secret/ca#pem", map[string]string{"secret/ca#pem": serverCA}); err != nil || !strings.Contains(out, "200 ok") {
+		t.Fatalf("CA lue dans Vault : %q %v", out, err)
+	}
+	if _, err := call("", nil); err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("sans CA : %v", err)
+	}
+	if _, err := call("secret/ca#pem", nil); err == nil || !strings.Contains(err.Error(), "ca_vault") {
+		t.Fatalf("secret absent : %v", err)
+	}
+	if _, err := NewInstance("i", tpl, map[string]any{"url": srv.URL, "ca_vault": "secret/ca"}); err == nil {
+		t.Fatal("référence sans champ acceptée")
+	}
+}

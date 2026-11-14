@@ -183,7 +183,7 @@ func (in *Instance) stream(ctx context.Context, c *httpCall, protocols []string,
 	if len(protocols) > 0 {
 		req.Header.Set("Sec-WebSocket-Protocol", strings.Join(protocols, ", "))
 	}
-	client, err := in.httpClientFor(c.hc, c.tls, c.proxy)
+	client, err := in.httpClientFor(ctx, c.hc, c.tls, c.proxy)
 	if err != nil {
 		return nil, err
 	}

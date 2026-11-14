@@ -62,17 +62,20 @@ var scriptPredeclared = []string{"http", "mcp", "ssh", "jq", "json", "time", "ma
 
 func checkScript(t *Template) error {
 	_, _, err := starlark.SourceProgramOptions(fileOptions, t.ScriptPath, t.ScriptSrc, func(name string) bool {
-		for _, p := range scriptPredeclared {
-			if p == name {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(scriptPredeclared, name) || (t.Startup() && name == "git")
 	})
 	return err
 }
 
 func (in *Instance) predeclared() starlark.StringDict {
+	d := in.basePredeclared()
+	if in.T.Startup() {
+		d["git"] = in.gitModule()
+	}
+	return d
+}
+
+func (in *Instance) basePredeclared() starlark.StringDict {
 	return starlark.StringDict{
 		"http":         in.httpModule(),
 		"mcp":          in.mcpModule(),
@@ -152,6 +155,11 @@ func (in *Instance) loadScript() error {
 			return i18n.E("tpl.star.discover", in.T.Script)
 		}
 		in.script.discover = fn
+	}
+	if in.T.Startup() {
+		if _, ok := globals["startup"].(starlark.Callable); !ok {
+			return i18n.E("tpl.star.startup", in.T.Script)
+		}
 	}
 	return nil
 }
