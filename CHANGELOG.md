@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Corrigé
+- Driver shell avec rebonds (`then`) : un ssh qui échoue depuis l'hôte de rebond (`ssh: connect to host … Connection timed out`, `Could not resolve hostname`…) arrête l'ouverture de la session avec ce message. Avant, la chaîne tombée laissait la commande de la première étape demander un mot de passe (repli de l'outil de bastion sur l'authentification par mot de passe) : clotr y envoyait le mot de passe des VM, puis signalait un mot de passe refusé et oubliait des identifiants pourtant valides.
+
 ## [0.67.0] - 2026-11-13
 
 ### Ajouté
