@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.68.0] - 2026-11-14
 
 ### Ajouté
 - Templates de démarrage (`kind: startup`) : déclarés sous `startup` dans le fichier principal, ils s'exécutent au lancement de clotr (au plus une fois par `every`, défaut 1h) pour tenir à jour configuration, clients et templates. Primitive `git.sync(url, dir, ref)` : clone ou avance rapide d'un dépôt avec le `git` du poste, confinée au répertoire de configuration et à `templates.dir` ; un répertoire qui n'est pas un clone, modifié localement, sur une autre branche ou divergent n'est jamais touché. Si les fichiers récupérés ne se chargent plus avec la version installée, la mise à jour est annulée avec un avertissement.
