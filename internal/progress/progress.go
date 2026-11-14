@@ -24,10 +24,10 @@ type Event struct {
 }
 
 func (e Event) ModelLabel() string {
-	return modelLabel(e.Model, e.Effort)
+	return ModelLabel(e.Model, e.Effort)
 }
 
-func modelLabel(model, effort string) string {
+func ModelLabel(model, effort string) string {
 	if model == "" || effort == "" {
 		return model
 	}

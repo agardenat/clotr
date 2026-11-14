@@ -1220,14 +1220,17 @@ func cmdModels(ctx context.Context, o *options, w io.Writer) error {
 		return err
 	}
 	roles := map[string][]string{}
+	labels := map[string][]string{}
 	for name := range rt.cfg.Roles {
 		cands, err := rt.router.Candidates(name)
 		if err != nil {
 			roles[name] = []string{i18n.T("cli.models.error") + err.Error()}
+			labels[name] = roles[name]
 			continue
 		}
 		for _, c := range cands {
 			roles[name] = append(roles[name], c.Ref())
+			labels[name] = append(labels[name], progress.ModelLabel(c.Ref(), c.ReasoningEffort[name]))
 		}
 	}
 	statuses := budget.FetchAll(ctx, &http.Client{Timeout: 15 * time.Second}, rt.cfg)
@@ -1256,9 +1259,9 @@ func cmdModels(ctx context.Context, o *options, w io.Writer) error {
 	names = append(names, config.RoleSynthesizer)
 	for _, n := range names {
 		r := rt.cfg.Roles[n]
-		chain := roles[n]
+		chain := labels[n]
 		if !o.all && len(chain) > 3 {
-			chain = append(chain[:3:3], fmt.Sprintf("(+%d)", len(roles[n])-3))
+			chain = append(chain[:3:3], fmt.Sprintf("(+%d)", len(labels[n])-3))
 		}
 		fmt.Fprintf(tw, "%s\t(tier>=%s tools=%t min_context=%d sovereign=%s)\t%s\n", n, r.Tier, r.Tools, r.MinContext, rt.router.Policy(n), strings.Join(chain, " → "))
 	}
