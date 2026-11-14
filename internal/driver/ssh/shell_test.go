@@ -143,6 +143,36 @@ func TestShellThenFailure(t *testing.T) {
 	}
 }
 
+func TestShellThenHopFailure(t *testing.T) {
+	hop := `exec sh -c 'echo "ssh: connect to host %h port 22: Connection timed out"; printf "user@bastion password: "; read p; echo "Permission denied"; sleep 30'`
+	logins, forgot := 0, false
+	s, err := NewShell(ShellOptions{
+		Command:     []string{"sh", "-c", "PS1='[u@jump ~]$ ' exec sh -i"},
+		Then:        []string{hop},
+		OpenTimeout: 10 * time.Second,
+		Login: func(context.Context, string) (string, string, error) {
+			logins++
+			return "ops", "secret", nil
+		},
+		Forget: func(string, string, string) { forgot = true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	start := time.Now()
+	_, err = s.ExecInput(context.Background(), Endpoint{Host: "vm9"}, "true", "", 1024)
+	if err == nil || !strings.Contains(err.Error(), "ssh: connect to host vm9 port 22: Connection timed out") || strings.Contains(err.Error(), "refus") {
+		t.Fatalf("%v", err)
+	}
+	if logins != 0 || forgot {
+		t.Fatalf("mot de passe envoyé après l'échec du rebond : %d appels Login, oubli %v", logins, forgot)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("échec du rebond détecté trop tard : %s", d)
+	}
+}
+
 func TestShellThenLogin(t *testing.T) {
 	hop := `exec sh -c 'while :; do printf "%u@%h password: "; stty -echo; read p; stty echo; echo; [ "$p" = deux ] && break; echo "Permission denied, please try again."; done; HOP=%u@%s PS1="[u@vm ~]$ " exec sh -i'`
 	pass, logins, forgot := "deux", 0, ""

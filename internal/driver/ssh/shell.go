@@ -348,6 +348,11 @@ func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label str
 			if len(seen) > shellSeen {
 				seen = seen[len(seen)-shellSeen:]
 			}
+			if hop {
+				if l := hopFailure(seen); l != "" {
+					return i18n.E("ssh.shell_hop", ss.host, l, lastLines(seen))
+				}
+			}
 			total += len(b)
 			quiet = time.After(shellQuiet)
 			continue
@@ -466,6 +471,13 @@ func lastLine(b []byte) string {
 		s = s[i+1:]
 	}
 	return s
+}
+
+var hopError = regexp.MustCompile(`(?m)^ssh: .*$`)
+
+func hopFailure(b []byte) string {
+	s := strings.ReplaceAll(shellEscapes.ReplaceAllString(string(b), ""), "\r", "")
+	return strings.TrimSpace(hopError.FindString(s))
 }
 
 func refusalReason(b []byte, exited bool) string {
