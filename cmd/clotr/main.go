@@ -55,6 +55,8 @@ import (
 var version = "dev"
 
 type options struct {
+	ctx          context.Context
+	noStartup    bool
 	config       string
 	refresh      bool
 	models       map[string]string
@@ -181,6 +183,10 @@ func newRoot() *cobra.Command {
 	root.PersistentFlags().BoolVar(&o.confidential, "confidential", false, i18n.T("cli.flag.confidential"))
 	root.PersistentFlags().StringVar(&o.langFlag, "lang", "", i18n.T("cli.flag.lang"))
 	root.PersistentFlags().StringVar(&o.uiLangFlag, "ui-lang", "", i18n.T("cli.flag.ui_lang"))
+	root.PersistentFlags().BoolVar(&o.noStartup, "no-startup", false, i18n.T("cli.flag.no_startup"))
+	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		o.ctx = cmd.Context()
+	}
 
 	models := &cobra.Command{
 		Use:   "models",
@@ -315,7 +321,17 @@ func newRoot() *cobra.Command {
 		},
 	}
 
-	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, toolsCmd, templatesCmd, ver)
+	syncCmd := &cobra.Command{
+		Use:   "sync",
+		Short: i18n.T("cli.sync.short"),
+		Long:  i18n.T("cli.sync.long"),
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmdSync(cmd.Context(), o, cmd.OutOrStdout())
+		},
+	}
+
+	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, toolsCmd, templatesCmd, syncCmd, ver)
 	localizeCobra(root)
 	return root
 }
@@ -349,6 +365,13 @@ func loadConfig(o *options) (*config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, err
+	}
+	if len(cfg.Startup) > 0 && !startupDisabled(o) {
+		ctx := o.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		cfg, _ = runStartup(ctx, path, cfg, false, os.Stderr)
 	}
 	applyVaultEnv(cfg.Vault)
 	for _, l := range []struct {
@@ -636,6 +659,9 @@ func clientVars(cl config.Client, project string) map[string]any {
 }
 
 func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, level access.Level, tunnelURL string) (*template.Instance, error) {
+	if t.Startup() {
+		return nil, i18n.E("cli.err.startup_instance", ic.Name, t.Name)
+	}
 	cl, _ := cfg.Client(ic.Client)
 	pr, _ := cl.Project(ic.Project)
 	params := map[string]any{}
@@ -1361,6 +1387,11 @@ func cmdTemplates(o *options, args []string, w io.Writer) error {
 				users = append(users, in.Name)
 			}
 		}
+		for _, st := range cfg.Startup {
+			if st.Template == t.Name {
+				users = append(users, st.Name)
+			}
+		}
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n", t.Name, t.Version, t.Source, strings.Join(users, ","), t.Description)
 	}
 	if err := tw.Flush(); err != nil {
@@ -1381,7 +1412,9 @@ func cmdTemplates(o *options, args []string, w io.Writer) error {
 		if _, ok := set.Get(in.Template); !ok {
 			state = i18n.T("instances.missing")
 		} else if t, _ := set.Get(in.Template); t != nil {
-			if ti, err := template.NewInstance(in.Name, t, in.Params); err != nil {
+			if t.Startup() {
+				state = i18n.T("cli.err.startup_instance", in.Name, t.Name)
+			} else if ti, err := template.NewInstance(in.Name, t, in.Params); err != nil {
 				state = err.Error()
 			} else if err := ti.ExtendPaths(in.SSHPaths); err != nil {
 				state = err.Error()

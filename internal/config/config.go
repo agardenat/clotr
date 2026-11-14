@@ -65,6 +65,7 @@ type Config struct {
 	Templates  TemplatesConf         `yaml:"templates"`
 	Params     map[string]any        `yaml:"params"`
 	Instances  []Instance            `yaml:"instances"`
+	Startup    []Startup             `yaml:"startup"`
 	Clients    []Client              `yaml:"-"`
 	Routing    Routing               `yaml:"routing"`
 	Sessions   SessionsConf          `yaml:"sessions"`
@@ -167,6 +168,18 @@ type Instance struct {
 	Shell    *Shell         `yaml:"shell"`
 	Client   string         `yaml:"-"`
 	Project  string         `yaml:"-"`
+}
+
+type Startup struct {
+	Name     string         `yaml:"name"`
+	Template string         `yaml:"template"`
+	Enabled  *bool          `yaml:"enabled"`
+	Params   map[string]any `yaml:"params"`
+	Every    Duration       `yaml:"every"`
+}
+
+func (s Startup) IsEnabled() bool {
+	return s.Enabled == nil || *s.Enabled
 }
 
 type Shell struct {
@@ -678,6 +691,11 @@ func (c *Config) applyDefaults() {
 		}
 	}
 	c.Templates.CacheDir = ExpandHome(c.Templates.CacheDir)
+	for i := range c.Startup {
+		if c.Startup[i].Every.Duration == 0 {
+			c.Startup[i].Every.Duration = time.Hour
+		}
+	}
 	if c.Templates.CacheTTL.Duration == 0 {
 		c.Templates.CacheTTL.Duration = 15 * time.Minute
 	}
@@ -854,6 +872,22 @@ func (c *Config) validate() error {
 		instNames[in.Name] = true
 		if in.Template == "" {
 			fail(i18n.T("config.instance_template", i))
+		}
+	}
+	startNames := map[string]bool{}
+	for i, st := range c.Startup {
+		if !instanceName.MatchString(st.Name) {
+			fail(i18n.T("config.startup_name", i, st.Name))
+		}
+		if startNames[st.Name] {
+			fail(i18n.T("config.startup_dup", i, st.Name))
+		}
+		startNames[st.Name] = true
+		if st.Template == "" {
+			fail(i18n.T("config.startup_template", i))
+		}
+		if st.Every.Duration < 0 {
+			fail(i18n.T("config.startup_every", i))
 		}
 	}
 	terms := map[string]string{}

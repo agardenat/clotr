@@ -1,6 +1,7 @@
 package template
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -42,24 +43,28 @@ func (in *Instance) vaultValue(thread *starlark.Thread, b *starlark.Builtin, arg
 	if path == "" || field == "" {
 		return "", "", i18n.E("tpl.vault.ref", b.Name(), ref)
 	}
-	ctx := threadCtx(thread)
+	v, err := in.vaultRef(threadCtx(thread), threadTool(thread), ref)
+	return ref, v, err
+}
+
+func (in *Instance) vaultRef(ctx context.Context, tool, ref string) (string, error) {
 	if err := denyOffline(ctx); err != nil {
-		return "", "", err
+		return "", err
 	}
 	if v, ok := in.vaultCache.Load(ref); ok {
-		return ref, v.(string), nil
+		return v.(string), nil
 	}
 	read := in.readVault
 	if read == nil {
 		read = creds.ReadVault
 	}
 	v, err := read(ctx, ref)
-	in.audit("vault_read", map[string]any{"tool": threadTool(thread), "ref": ref, "ok": err == nil})
+	in.audit("vault_read", map[string]any{"tool": tool, "ref": ref, "ok": err == nil})
 	if err != nil {
-		return "", "", i18n.E("tpl.vault.read", ref, err)
+		return "", i18n.E("tpl.vault.read", ref, err)
 	}
 	in.vaultCache.Store(ref, v)
-	return ref, v, nil
+	return v, nil
 }
 
 func (in *Instance) builtinVaultSecret(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

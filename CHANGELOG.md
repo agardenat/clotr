@@ -2,6 +2,11 @@
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
 ## [Unreleased]
 
+### Ajouté
+- Templates de démarrage (`kind: startup`) : déclarés sous `startup` dans le fichier principal, ils s'exécutent au lancement de clotr (au plus une fois par `every`, défaut 1h) pour tenir à jour configuration, clients et templates. Primitive `git.sync(url, dir, ref)` : clone ou avance rapide d'un dépôt avec le `git` du poste, confinée au répertoire de configuration et à `templates.dir` ; un répertoire qui n'est pas un clone, modifié localement, sur une autre branche ou divergent n'est jamais touché. Si les fichiers récupérés ne se chargent plus avec la version installée, la mise à jour est annulée avec un avertissement.
+- `ca_vault` sur les connecteurs `http` : autorité de certification en PEM lue dans Vault (`chemin#champ`) au lieu d'un fichier du poste, exclusive avec `ca_file`.
+- `clotr sync` : exécute aussitôt les templates de démarrage et affiche l'état de chaque dépôt. `--no-startup` et `CLOTR_NO_STARTUP=1` désactivent l'étape.
+
 ### Corrigé
 - Driver shell avec rebonds (`then`) : un ssh qui échoue depuis l'hôte de rebond (`ssh: connect to host … Connection timed out`, `Could not resolve hostname`…) arrête l'ouverture de la session avec ce message. Avant, la chaîne tombée laissait la commande de la première étape demander un mot de passe (repli de l'outil de bastion sur l'authentification par mot de passe) : clotr y envoyait le mot de passe des VM, puis signalait un mot de passe refusé et oubliait des identifiants pourtant valides.
 

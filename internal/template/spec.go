@@ -19,6 +19,7 @@ import (
 
 type Template struct {
 	Name        string               `yaml:"name"`
+	Kind        string               `yaml:"kind"`
 	Version     int                  `yaml:"version"`
 	Description string               `yaml:"description"`
 	Keywords    []string             `yaml:"keywords"`
@@ -185,6 +186,18 @@ func (t *Template) validate() error {
 			}
 		}
 	}
+	switch t.Kind {
+	case "":
+	case KindStartup:
+		if t.Script == "" {
+			fail(i18n.T("tpl.spec.startup_script"))
+		}
+		if len(t.Tools) > 0 || len(t.Targets) > 0 || len(t.Connectors) > 0 || len(t.Companions) > 0 {
+			fail(i18n.T("tpl.spec.startup_only"))
+		}
+	default:
+		fail(i18n.T("tpl.spec.kind", t.Kind, KindStartup))
+	}
 	if len(t.Targets) == 0 && t.Script == "" {
 		fail(i18n.T("tpl.spec.targets_script"))
 	}
@@ -234,6 +247,12 @@ func (t *Template) validate() error {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+const KindStartup = "startup"
+
+func (t *Template) Startup() bool {
+	return t.Kind == KindStartup
 }
 
 func (t *Template) sshConnector() (string, Connector, bool) {

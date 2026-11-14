@@ -24,6 +24,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/driver/ssh"
+	"github.com/agardenat/clotr/internal/gitsync"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/netx"
 )
@@ -137,6 +138,9 @@ type Instance struct {
 	creds     map[string]creds.Pair
 	oauth     oauthState
 	pending   *activation
+	gitRoots  []string
+	gitSync   func(ctx context.Context, url, path, ref string) gitsync.Result
+	syncs     []gitsync.Result
 
 	access   access.Level
 	ceiling  access.Level
@@ -160,7 +164,7 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 	if err != nil {
 		return nil, fmt.Errorf("instance %s: %w", name, err)
 	}
-	in := &Instance{Name: name, T: t, params: params, conns: map[string]options{}, https: map[string]*httpConn{}, mcps: map[string]string{}, memo: map[string]*memoEntry{}, creds: map[string]creds.Pair{}, getenv: os.Getenv, readFile: os.ReadFile, realPath: filepath.EvalSymlinks, listDir: walkDir, now: time.Now, sleep: sleepCtx}
+	in := &Instance{Name: name, T: t, params: params, conns: map[string]options{}, https: map[string]*httpConn{}, mcps: map[string]string{}, memo: map[string]*memoEntry{}, creds: map[string]creds.Pair{}, getenv: os.Getenv, readFile: os.ReadFile, realPath: filepath.EvalSymlinks, listDir: walkDir, now: time.Now, sleep: sleepCtx, gitSync: gitsync.Sync}
 	var rendered []string
 	for i, f := range t.Files {
 		r, err := Render(f, params)
@@ -255,6 +259,9 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 	pj, _ := json.Marshal(params)
 	h.Write(pj)
 	in.fp = hex.EncodeToString(h.Sum(nil))[:16]
+	if t.Startup() {
+		return in, nil
+	}
 	if err := in.checkToolNames(); err != nil {
 		return nil, fmt.Errorf("instance %s: %w", name, err)
 	}

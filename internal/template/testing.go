@@ -8,8 +8,10 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +25,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/driver/ssh"
+	"github.com/agardenat/clotr/internal/gitsync"
 	"github.com/agardenat/clotr/internal/i18n"
 )
 
@@ -98,9 +101,9 @@ func (h *testHarness) predeclared() starlark.StringDict {
 func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	name := "test"
 	var params, env, files, credsD, vaultD *starlark.Dict
-	var httpMock, sshMock, mcpMock starlark.Value
+	var httpMock, sshMock, mcpMock, gitMock starlark.Value
 	var now, level, confirm string
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name?", &name, "params?", &params, "http?", &httpMock, "ssh?", &sshMock, "mcp?", &mcpMock, "env?", &env, "files?", &files, "now?", &now, "creds?", &credsD, "access?", &level, "confirm?", &confirm, "vault?", &vaultD); err != nil {
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name?", &name, "params?", &params, "http?", &httpMock, "ssh?", &sshMock, "mcp?", &mcpMock, "env?", &env, "files?", &files, "now?", &now, "creds?", &credsD, "access?", &level, "confirm?", &confirm, "vault?", &vaultD, "git?", &gitMock); err != nil {
 		return nil, err
 	}
 	lvl, err := access.Parse(level)
@@ -167,6 +170,10 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 		return &mockMCP{ti: ti, mock: mcpMock, server: server}, nil
 	}
 	in.oauth.fixed = "test-token"
+	in.SetGitRoots("/config", "/config/templates")
+	in.gitSync = func(_ context.Context, url, path, ref string) gitsync.Result {
+		return ti.mockGit(gitMock, url, path, ref)
+	}
 	given2 := dictTuples(credsD)
 	for cn, hc := range in.https {
 		if hc.auth == nil {
@@ -186,6 +193,42 @@ func (h *testHarness) newInstance(thread *starlark.Thread, b *starlark.Builtin, 
 		in.creds[in.sshName] = p
 	}
 	return ti, nil
+}
+
+func (ti *testInstance) mockGit(mock starlark.Value, url, path, ref string) gitsync.Result {
+	if ref == "" {
+		ref = "main"
+	}
+	ti.mu.Lock()
+	ti.gitCalls = append(ti.gitCalls, map[string]any{"url": url, "path": filepath.ToSlash(path), "ref": ref})
+	ti.mu.Unlock()
+	r := gitsync.Result{URL: url, Path: filepath.ToSlash(path), Ref: ref, Status: gitsync.Current}
+	var v starlark.Value
+	switch m := mock.(type) {
+	case *starlark.Dict:
+		v, _, _ = m.Get(starlark.String(url))
+	case starlark.Callable:
+		out, err := starlark.Call(&starlark.Thread{Name: "git"}, m, starlark.Tuple{starlark.String(url), starlark.String(path), starlark.String(ref)}, nil)
+		if err != nil {
+			r.Status, r.Reason = gitsync.Failed, err.Error()
+			return r
+		}
+		v = out
+	}
+	switch x := v.(type) {
+	case starlark.String:
+		r.Status = string(x)
+	case *starlark.Dict:
+		d := dictStrings(x)
+		if d["status"] != "" {
+			r.Status = d["status"]
+		}
+		r.From, r.To, r.Reason = d["from"], d["to"], d["reason"]
+		if n, err := strconv.Atoi(d["commits"]); err == nil {
+			r.Commits = n
+		}
+	}
+	return r
 }
 
 func mockListDir(fileMap map[string]string, root string, depth, limit int) ([]dirEntry, bool, error) {
@@ -252,6 +295,7 @@ type testInstance struct {
 	mcpCalls  []map[string]any
 	commands  []map[string]any
 	questions []string
+	gitCalls  []map[string]any
 }
 
 func (ti *testInstance) String() string        { return "template.instance(" + ti.in.Name + ")" }
@@ -260,7 +304,7 @@ func (ti *testInstance) Freeze()               {}
 func (ti *testInstance) Truth() starlark.Bool  { return true }
 func (ti *testInstance) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable") }
 func (ti *testInstance) AttrNames() []string {
-	return []string{"call", "cleanup", "commands", "discover", "environment", "error", "fn", "mcp_calls", "questions", "requests", "tools", "tracked"}
+	return []string{"call", "cleanup", "commands", "discover", "environment", "error", "fn", "git_calls", "mcp_calls", "questions", "requests", "startup", "tools", "tracked"}
 }
 
 func (ti *testInstance) Attr(name string) (starlark.Value, error) {
@@ -359,6 +403,27 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 				out = append(out, map[string]any{"resource": r.Resource, "error": e})
 			}
 			return toStarlark(out)
+		}), nil
+	case "startup":
+		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs); err != nil {
+				return nil, err
+			}
+			res, err := ti.in.RunStartup(threadCtx(thread))
+			if err != nil {
+				return nil, err
+			}
+			out := make([]any, 0, len(res))
+			for _, r := range res {
+				out = append(out, map[string]any{"url": r.URL, "path": r.Path, "ref": r.Ref, "status": r.Status, "from": r.From, "to": r.To, "commits": r.Commits, "reason": r.Reason})
+			}
+			return toStarlark(out)
+		}), nil
+	case "git_calls":
+		return starlark.NewBuiltin(name, func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			ti.mu.Lock()
+			defer ti.mu.Unlock()
+			return toStarlark(append([]map[string]any(nil), ti.gitCalls...))
 		}), nil
 	case "mcp_calls":
 		return starlark.NewBuiltin(name, func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
