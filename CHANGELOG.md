@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.69.0] - 2026-11-14
 
 ### Ajouté
 - Modèles de rapport par mode (`internal/report`) : squelette Markdown avec consignes de section et blocs `{{…}}` que clotr remplit après la rédaction par des données établies ; un bloc omis par le modèle de langage est ajouté en fin de rapport (audit `report_block_missing`). Modèles embarqués `default` (format inchangé) et `cve` ; `report_models` en remplace un par un fichier.
