@@ -18,7 +18,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/agardenat/clotr/internal/access"
+	"github.com/agardenat/clotr/internal/cve/sources"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/report"
 )
 
 const (
@@ -54,27 +56,29 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 }
 
 type Config struct {
-	Providers  []Provider            `yaml:"providers"`
-	Profiles   []Profile             `yaml:"profiles"`
-	Roles      map[string]Role       `yaml:"roles"`
-	Limits     Limits                `yaml:"limits"`
-	Catalog    CatalogConf           `yaml:"catalog"`
-	Audit      AuditConf             `yaml:"audit"`
-	Files      *Files                `yaml:"files"`
-	MCP        []MCPServer           `yaml:"mcp"`
-	Templates  TemplatesConf         `yaml:"templates"`
-	Params     map[string]any        `yaml:"params"`
-	Instances  []Instance            `yaml:"instances"`
-	Startup    []Startup             `yaml:"startup"`
-	Clients    []Client              `yaml:"-"`
-	Routing    Routing               `yaml:"routing"`
-	Sessions   SessionsConf          `yaml:"sessions"`
-	Language   string                `yaml:"language"`
-	UILang     string                `yaml:"ui_language"`
-	WebSearch  WebSearch             `yaml:"web_search"`
-	Export     ReportExport          `yaml:"report_export"`
-	Vault      VaultConf             `yaml:"vault"`
-	Compliance map[string]Compliance `yaml:"compliance"`
+	Providers    []Provider            `yaml:"providers"`
+	Profiles     []Profile             `yaml:"profiles"`
+	Roles        map[string]Role       `yaml:"roles"`
+	Limits       Limits                `yaml:"limits"`
+	Catalog      CatalogConf           `yaml:"catalog"`
+	Audit        AuditConf             `yaml:"audit"`
+	Files        *Files                `yaml:"files"`
+	MCP          []MCPServer           `yaml:"mcp"`
+	Templates    TemplatesConf         `yaml:"templates"`
+	Params       map[string]any        `yaml:"params"`
+	Instances    []Instance            `yaml:"instances"`
+	Startup      []Startup             `yaml:"startup"`
+	Clients      []Client              `yaml:"-"`
+	Routing      Routing               `yaml:"routing"`
+	Sessions     SessionsConf          `yaml:"sessions"`
+	Language     string                `yaml:"language"`
+	UILang       string                `yaml:"ui_language"`
+	WebSearch    WebSearch             `yaml:"web_search"`
+	Export       ReportExport          `yaml:"report_export"`
+	Vault        VaultConf             `yaml:"vault"`
+	Compliance   map[string]Compliance `yaml:"compliance"`
+	CVE          CVEConf               `yaml:"cve"`
+	ReportModels map[string]string     `yaml:"report_models"`
 }
 
 type Compliance struct {
@@ -117,6 +121,10 @@ type VaultLogin struct {
 	Role   string   `yaml:"role"`
 	Port   int      `yaml:"port"`
 	MinTTL Duration `yaml:"min_ttl"`
+}
+
+type CVEConf struct {
+	Sources []string `yaml:"sources"`
 }
 
 type WebSearch struct {
@@ -214,6 +222,7 @@ type Client struct {
 	Access     string            `yaml:"access"`
 	Compliance string            `yaml:"compliance"`
 	WebSearch  string            `yaml:"web_search"`
+	CVESources []string          `yaml:"cve_sources"`
 	Params     map[string]any    `yaml:"params"`
 	Tunnel     *Tunnel           `yaml:"tunnel"`
 	Instances  []Instance        `yaml:"instances"`
@@ -654,6 +663,9 @@ func (c *Config) applyDefaults() {
 		c.Sessions.Dir = filepath.Join(StateDir(), "clotr", "sessions")
 	}
 	c.Sessions.Dir = ExpandHome(c.Sessions.Dir)
+	for mode, path := range c.ReportModels {
+		c.ReportModels[mode] = ExpandHome(path)
+	}
 	if l := c.Vault.Login; l != nil {
 		if l.Path == "" {
 			l.Path = "oidc"
@@ -849,6 +861,18 @@ func (c *Config) validate() error {
 	} else if c.WebSearch.API != "" {
 		fail(i18n.T("config.web_api_model"))
 	}
+	for _, name := range c.CVE.Sources {
+		if !sources.Known(name) {
+			fail(i18n.T("config.cve_source", name, strings.Join(sources.Distros, ", ")))
+		}
+	}
+	for mode, path := range c.ReportModels {
+		if !slices.Contains(report.Modes, mode) {
+			fail(i18n.T("config.report_mode", mode, strings.Join(report.Modes, ", ")))
+		} else if _, err := os.Stat(path); err != nil {
+			fail(i18n.T("config.report_model", mode, err))
+		}
+	}
 	if c.Export.MCP != "" && !mcpNames[c.Export.MCP] {
 		fail(i18n.T("config.export_mcp", c.Export.MCP))
 	}
@@ -918,6 +942,11 @@ func (c *Config) validate() error {
 		}
 		if cl.WebSearch != "" && !ValidWebPolicy(cl.WebSearch) {
 			fail(i18n.T("config.client_web", cl.Name, cl.WebSearch))
+		}
+		for _, name := range cl.CVESources {
+			if !sources.Known(name) {
+				fail(i18n.T("config.client_cve_source", cl.Name, name, strings.Join(sources.Distros, ", ")))
+			}
 		}
 		if cl.Tunnel != nil {
 			for _, m := range cl.Tunnel.check(cl.Name, tunnelPorts) {

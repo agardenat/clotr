@@ -31,6 +31,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/cve"
+	"github.com/agardenat/clotr/internal/cve/sources"
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/httpx"
 	"github.com/agardenat/clotr/internal/i18n"
@@ -57,6 +58,7 @@ var version = "dev"
 type options struct {
 	ctx          context.Context
 	noStartup    bool
+	startupDone  bool
 	config       string
 	refresh      bool
 	models       map[string]string
@@ -97,6 +99,7 @@ type options struct {
 	access       access.Level
 	cveFlag      string
 	cveIDs       []string
+	cveDistros   []string
 }
 
 type app struct {
@@ -366,12 +369,13 @@ func loadConfig(o *options) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(cfg.Startup) > 0 && !startupDisabled(o) {
+	if len(cfg.Startup) > 0 && !startupDisabled(o) && !o.startupDone {
+		o.startupDone = true
 		ctx := o.ctx
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		cfg, _ = runStartup(ctx, path, cfg, false, os.Stderr)
+		cfg, _ = runStartup(ctx, path, cfg, false, o.quiet, os.Stderr)
 	}
 	applyVaultEnv(cfg.Vault)
 	for _, l := range []struct {
@@ -470,7 +474,7 @@ func resolveWeb(cfg *config.Config, o *options, confidential bool, cited []confi
 	case policy == "allow":
 		return true, target, nil
 	case policy == "deny" && client != "":
-		return false, i18n.T("web.client_policy", client), nil
+		return false, i18n.T("web.client_policy", clientLabel(client)), nil
 	case policy == "deny":
 		return false, i18n.T("web.policy"), nil
 	}
@@ -506,7 +510,11 @@ func webConfidentialAllowed(cfg *config.Config, cited []config.Client, kind, tar
 		if !cfg.Compliance[cl.Compliance].Confidential {
 			continue
 		}
-		if cl.WebSearch != "allow" && cl.WebSearch != "ask" {
+		policy := cl.WebSearch
+		if policy == "" {
+			policy = cfg.WebSearch.Policy
+		}
+		if policy != "allow" && policy != "ask" {
 			return false
 		}
 		n++
@@ -521,6 +529,8 @@ func webConfidentialAllowed(cfg *config.Config, cited []config.Client, kind, tar
 	}
 	return true
 }
+
+func clientLabel(name string) string { return strings.ToUpper(name) }
 
 func citedClients(cfg *config.Config, forced []string, text string) []config.Client {
 	var out []config.Client
@@ -541,8 +551,34 @@ func sessionScope(sess *session.Session, tools []string, request string) ([]stri
 	return forced, request
 }
 
+func cveDistros(cfg *config.Config, cited []config.Client) []string {
+	var out []string
+	add := func(list []string) {
+		if len(list) == 0 {
+			list = cfg.CVE.Sources
+		}
+		if len(list) == 0 {
+			list = sources.Distros
+		}
+		for _, d := range list {
+			if !slices.Contains(out, d) {
+				out = append(out, d)
+			}
+		}
+	}
+	for _, cl := range cited {
+		add(cl.CVESources)
+	}
+	if len(cited) == 0 {
+		add(nil)
+	}
+	return out
+}
+
 func (o *options) decideWeb(cfg *config.Config, confidential bool, forced []string, text string) error {
-	allowed, why, err := resolveWeb(cfg, o, confidential, citedClients(cfg, forced, text))
+	cited := citedClients(cfg, forced, text)
+	o.cveDistros = cveDistros(cfg, cited)
+	allowed, why, err := resolveWeb(cfg, o, confidential, cited)
 	if err != nil {
 		return err
 	}
@@ -847,6 +883,8 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		}
 		if len(o.cveIDs) > 0 {
 			rt.cves = cve.New(o.cveIDs, rt.memory, rt.evidence, rt.audit)
+			rt.cves.CacheDir = filepath.Join(config.StateDir(), "clotr", "cve")
+			rt.cves.Sources = sources.New(o.cveDistros, rt.cves.CacheDir)
 			rt.registry.Add(rt.cves.Tools()...)
 		}
 	}
@@ -1117,7 +1155,7 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 	for _, in := range rt.instances {
 		if !rt.confidential && rt.cfg.Confidential(in.Client) {
 			hidden = append(hidden, in.Name)
-			env = append(env, fmt.Sprintf("- Instance %s (template %s) : non proposée, le client %s impose un run confidentiel (le nommer, -t %s ou --confidential, pour l'utiliser).", in.Name, in.T.Name, in.Client, in.Client))
+			env = append(env, fmt.Sprintf("- Instance %s (template %s) : non proposée, le client %s impose un run confidentiel (le nommer, -t %s ou --confidential, pour l'utiliser).", in.Name, in.T.Name, clientLabel(in.Client), in.Client))
 			continue
 		}
 		explicit := slices.ContainsFunc(forced, func(t string) bool {
@@ -1136,11 +1174,11 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 		}
 		hidden = append(hidden, in.Name)
 		if named[in.Client] {
-			env = append(env, fmt.Sprintf("- Instance %s (template %s, projet %s) : non proposée, la demande cite le projet %s du client %s et pas celui de cette instance (la nommer, ou -t %s, pour l'utiliser).", in.Name, in.T.Name, in.Project, strings.Join(projects[in.Client], ", "), in.Client, in.Name))
+			env = append(env, fmt.Sprintf("- Instance %s (template %s, projet %s) : non proposée, la demande cite le projet %s du client %s et pas celui de cette instance (la nommer, ou -t %s, pour l'utiliser).", in.Name, in.T.Name, in.Project, strings.Join(projects[in.Client], ", "), clientLabel(in.Client), in.Name))
 			continue
 		}
 		if generic {
-			env = append(env, fmt.Sprintf("- Instance %s (template %s) : non proposée, la demande cite le client %s et pas cette instance (la nommer, ou -t %s, pour l'utiliser).", in.Name, in.T.Name, strings.Join(clients, ", "), in.Name))
+			env = append(env, fmt.Sprintf("- Instance %s (template %s) : non proposée, la demande cite le client %s et pas cette instance (la nommer, ou -t %s, pour l'utiliser).", in.Name, in.T.Name, clientLabel(strings.Join(clients, ", ")), in.Name))
 			continue
 		}
 		env = append(env, fmt.Sprintf("- Instance %s (template %s) : non proposée pour cette demande, qui ne la mentionne pas (la nommer, ou -t %s, pour l'utiliser).", in.Name, in.T.Name, in.Name))
@@ -1150,10 +1188,10 @@ func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
 		if len(names) == 0 {
 			continue
 		}
-		env = append(env, scopeLine("- Client "+cl.Name, cl.Aliases, cl.Context, cl.Vars)+". Instances de ce client : "+strings.Join(names, ", ")+".")
+		env = append(env, scopeLine("- Client "+clientLabel(cl.Name), cl.Aliases, cl.Context, cl.Vars)+". Instances de ce client : "+strings.Join(names, ", ")+".")
 		for _, p := range cl.Projects {
 			if names := offeredIn[[2]string{cl.Name, p.Name}]; len(names) > 0 {
-				env = append(env, scopeLine("- Projet "+p.Name+" du client "+cl.Name, p.Aliases, p.Context, p.Vars)+". Instances de ce projet : "+strings.Join(names, ", ")+".")
+				env = append(env, scopeLine("- Projet "+p.Name+" du client "+clientLabel(cl.Name), p.Aliases, p.Context, p.Vars)+". Instances de ce projet : "+strings.Join(names, ", ")+".")
 			}
 		}
 	}
@@ -1730,7 +1768,7 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	}
 	if o.cveFlag != "" {
 		fmt.Fprintln(os.Stderr, i18n.T("cve.mode", strings.Join(o.cveIDs, ", ")))
-		if !o.webAllowed {
+		if !o.webAllowed && slices.ContainsFunc(o.cveIDs, func(id string) bool { return !sources.Official(id) }) {
 			fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.no_web"))
 		}
 	}
@@ -1958,10 +1996,10 @@ func (o *options) applyCompliance(cfg *config.Config, forced []string, text stri
 			continue
 		}
 		if o.sovereign != "" {
-			return i18n.E("cli.err.compliance_sovereign", cl.Name, cl.Compliance, o.sovereign)
+			return i18n.E("cli.err.compliance_sovereign", clientLabel(cl.Name), clientLabel(cl.Compliance), o.sovereign)
 		}
 		o.confidential, o.sovereign = true, "require"
-		fmt.Fprintln(os.Stderr, i18n.T("compliance.confidential", cl.Name, cl.Compliance))
+		fmt.Fprintln(os.Stderr, i18n.T("compliance.confidential", clientLabel(cl.Name), clientLabel(cl.Compliance)))
 		return nil
 	}
 	return nil
@@ -2108,11 +2146,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 		o.tools = toolFilterFromAudit(filepath.Join(dir, "audit.jsonl"))
 	}
 	o.cveIDs = sess.Turns[n-1].CVE
-	connectors := strings.Join(o.tools, ",")
-	if len(o.exclude) > 0 {
-		connectors += " -x " + strings.Join(o.exclude, ",")
-	}
-	fmt.Fprintln(os.Stderr, i18n.T("session.resynth", o.sessName(sess.Name), n, connectors))
+	fmt.Fprintln(os.Stderr, i18n.T("session.resynth", o.sessName(sess.Name), n, i18n.N(len(o.tools), "connector")))
 	rt, err := setup(ctx, o, true)
 	if err != nil {
 		return err
@@ -2144,11 +2178,6 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	events.Close()
 	if err != nil {
 		return err
-	}
-	if rt.cves != nil {
-		if sec := rt.cves.Section(); sec != "" {
-			md = sec + "\n\n---\n\n" + md
-		}
 	}
 	md = withRequest(md, sess.Turns[:n])
 	if err := sess.WriteReport(dir, md); err != nil {
@@ -2199,28 +2228,35 @@ func toolFilterFromAudit(path string) []string {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	var out, hidden []string
+	started := false
 	for sc.Scan() {
 		var ev struct {
-			Kind  string   `json:"kind"`
-			Tools []string `json:"tools"`
+			Kind   string   `json:"kind"`
+			Tools  []string `json:"tools"`
+			Hidden []string `json:"hidden"`
 		}
-		if json.Unmarshal(sc.Bytes(), &ev) != nil || ev.Kind != "run_start" {
+		if json.Unmarshal(sc.Bytes(), &ev) != nil {
 			continue
 		}
-		var out []string
-		for _, t := range ev.Tools {
-			parts := strings.SplitN(t, "_", 3)
-			prefix := parts[0]
-			if prefix == "mcp" && len(parts) > 1 {
-				prefix += "_" + parts[1]
+		switch {
+		case ev.Kind == "run_start" && !started:
+			started = true
+			for _, t := range ev.Tools {
+				parts := strings.SplitN(t, "_", 3)
+				prefix := parts[0]
+				if prefix == "mcp" && len(parts) > 1 {
+					prefix += "_" + parts[1]
+				}
+				if prefix != "memory" && prefix != "cve" && !slices.Contains(out, prefix) {
+					out = append(out, prefix)
+				}
 			}
-			if prefix != "memory" && prefix != "cve" && !slices.Contains(out, prefix) {
-				out = append(out, prefix)
-			}
+		case ev.Kind == "instances_scope":
+			hidden = append(hidden, ev.Hidden...)
 		}
-		return out
 	}
-	return nil
+	return slices.DeleteFunc(out, func(p string) bool { return slices.Contains(hidden, p) })
 }
 
 func cveFromAudit(path string) ([]cve.Advisory, []cve.Finding) {

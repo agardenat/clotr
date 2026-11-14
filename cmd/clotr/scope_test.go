@@ -143,13 +143,13 @@ func TestScopeClients(t *testing.T) {
 		}
 	}
 	_, env := rt.scope(nil, "le widget de north")
-	if !strings.Contains(env, "- Client north (northcorp) : client fictif du nord. Références : cmp=CMP-0000, project=PRJ-0000. Instances de ce client : north-widget.") || !strings.Contains(env, "la demande cite le client north") {
+	if !strings.Contains(env, "- Client NORTH (northcorp) : client fictif du nord. Références : cmp=CMP-0000, project=PRJ-0000. Instances de ce client : north-widget.") || !strings.Contains(env, "la demande cite le client NORTH") {
 		t.Fatalf("environnement:\n%s", env)
 	}
 	if got := expandClients(cfg, []string{"fs", "south", "north-widget"}); strings.Join(got, ",") != "fs,south-widget,south-bad,north-widget" {
 		t.Fatalf("expandClients: %v", got)
 	}
-	if why := rt.instances[1].Mention("souci chez NorthCorp"); why != "client north" {
+	if why := rt.instances[1].Mention("souci chez NorthCorp"); why != "client NORTH" {
 		t.Fatalf("Mention: %q", why)
 	}
 }
@@ -216,9 +216,9 @@ func TestScopeProjects(t *testing.T) {
 	}
 	_, env := rt.scope(nil, "le widget de prod")
 	for _, want := range []string{
-		"- Client north : client fictif. Références : cmp=CMP-0000, project=PRJ-OLD. Instances de ce client : north-shared, north-main.",
-		"- Projet PRJ-0001 du client north (prod) : site principal. Instances de ce projet : north-main.",
-		"- Instance north-pra (template acme, projet PRJ-0002) : non proposée, la demande cite le projet PRJ-0001 du client north",
+		"- Client NORTH : client fictif. Références : cmp=CMP-0000, project=PRJ-OLD. Instances de ce client : north-shared, north-main.",
+		"- Projet PRJ-0001 du client NORTH (prod) : site principal. Instances de ce projet : north-main.",
+		"- Instance north-pra (template acme, projet PRJ-0002) : non proposée, la demande cite le projet PRJ-0001 du client NORTH",
 	} {
 		if !strings.Contains(env, want) {
 			t.Fatalf("environnement sans %q:\n%s", want, env)
@@ -281,7 +281,7 @@ func TestComplianceConfidential(t *testing.T) {
 			t.Errorf("%v %q: confidential=%v sovereign=%q %v", c.forced, c.text, o.confidential, o.sovereign, err)
 		}
 	}
-	if err := (&options{sovereign: "any"}).applyCompliance(cfg, nil, "north", false); err == nil || !strings.Contains(err.Error(), "north") {
+	if err := (&options{sovereign: "any"}).applyCompliance(cfg, nil, "north", false); err == nil || !strings.Contains(err.Error(), "NORTH") {
 		t.Fatalf("--sovereign any accepté : %v", err)
 	}
 	rt := &app{cfg: cfg, registry: tools.NewRegistry(100), audit: audit.Nop()}
@@ -296,7 +296,7 @@ func TestComplianceConfidential(t *testing.T) {
 		}
 		return strings.Join(groups, ",") + "|" + env
 	}
-	if got := offered("le widget est lent"); !strings.HasPrefix(got, "south-widget|") || !strings.Contains(got, "le client north impose un run confidentiel") {
+	if got := offered("le widget est lent"); !strings.HasPrefix(got, "south-widget|") || !strings.Contains(got, "le client NORTH impose un run confidentiel") {
 		t.Fatalf("hors run confidentiel : %s", got)
 	}
 	rt.confidential = true

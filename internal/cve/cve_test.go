@@ -50,19 +50,19 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 	if !slices.Equal(s.Missing(), []string{"CVE-2026-0001"}) {
 		t.Fatal(s.Missing())
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x"}`)); err == nil || !strings.Contains(err.Error(), "commands") {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x","summary":"s","mitigation":"m","remediation":"r"}`)); err == nil || !strings.Contains(err.Error(), "commands") {
 		t.Fatalf("fiche sans commandes: %v", err)
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-9999","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x","commands":["x"]}`)); err == nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-9999","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x","summary":"s","mitigation":"m","remediation":"r","commands":["x"]}`)); err == nil {
 		t.Fatal("CVE hors demande acceptée")
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"cve-2026-0001","product":"PHP","affected":"8.2 < 8.2.27","fixed":"8.2.27","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"php -v","commands":["php -v","rpm -qa  | grep -i php"],"evidence":["`+src+`"]}`)); err != nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"cve-2026-0001","product":"PHP","affected":"8.2 < 8.2.27","fixed":"8.2.27","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"php -v","summary":"s","mitigation":"m","remediation":"r","commands":["php -v","rpm -qa  | grep -i php"],"evidence":["`+src+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(s.Commands(), []string{"php -v", "rpm -qa | grep -i php"}) || !strings.Contains(s.Advisories()[0].line(), "`rpm -qa | grep -i php`") {
 		t.Fatalf("commandes: %v", s.Commands())
 	}
-	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x","commands":["a\nb"]}`)); err == nil {
+	if _, err := adv.Call(t0, json.RawMessage(`{"cve":"CVE-2026-0001","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x","summary":"s","mitigation":"m","remediation":"r","commands":["a\nb"]}`)); err == nil {
 		t.Fatal("commande multiligne acceptée")
 	}
 	if len(s.Missing()) != 0 || !s.Advisories()[0].Verified {
@@ -70,26 +70,31 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 	}
 
 	bad := []string{
-		`{"cve":"CVE-2026-0001","asset":"k/p","status":"clean","detail":"d","evidence":[]}`,
-		`{"cve":"CVE-2026-0001","asset":"k/p","status":"maybe","detail":"d","evidence":["` + out + `"]}`,
-		`{"cve":"CVE-2026-0001","asset":" ","status":"clean","detail":"d","evidence":["` + out + `"]}`,
-		`{"cve":"CVE-2026-0001","asset":"k/p","status":"clean","detail":"d","evidence":["E999"]}`,
+		`{"cve":"CVE-2026-0001","asset":"k/p","asset_type":"host","status":"clean","detail":"d","evidence":[]}`,
+		`{"cve":"CVE-2026-0001","asset":"k/p","asset_type":"host","status":"maybe","detail":"d","evidence":["` + out + `"]}`,
+		`{"cve":"CVE-2026-0001","asset":" ","asset_type":"host","status":"clean","detail":"d","evidence":["` + out + `"]}`,
+		`{"cve":"CVE-2026-0001","asset":"k/p","asset_type":"host","status":"clean","detail":"d","evidence":["E999"]}`,
+		`{"cve":"CVE-2026-0001","asset":"k/p","status":"clean","detail":"d","evidence":["` + out + `"]}`,
+		`{"cve":"CVE-2026-0001","asset":"k/p","asset_type":"pod","status":"clean","detail":"d","evidence":["` + out + `"]}`,
+		`{"cve":"CVE-2026-0001","asset":"k/p","asset_type":"host","status":"vulnerable","detail":"d","evidence":["` + out + `"]}`,
+		`{"cve":"CVE-2026-0001","asset":"k/p","asset_type":"host","status":"vulnerable","exposure":"exposed","detail":"d","evidence":["` + out + `"]}`,
+		`{"cve":"CVE-2026-0001","asset":"k/p","asset_type":"host","status":"vulnerable","exposure":"maybe","conditions":"c","detail":"d","evidence":["` + out + `"]}`,
 	}
 	for _, b := range bad {
 		if _, err := rep.Call(t1, json.RawMessage(b)); err == nil {
 			t.Fatalf("accepté: %s", b)
 		}
 	}
-	if _, err := rep.Call(t1, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"k8s/prod/web/app","status":"unknown","detail":"php absent du PATH","evidence":["`+out+`"]}`)); err != nil {
+	if _, err := rep.Call(t1, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"k8s/prod/web/app","asset_type":"workload","status":"unknown","detail":"php absent du PATH","evidence":["`+out+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rep.Call(t1, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"/k8s/prod/web/app/","status":"vulnerable","detail":"php 8.2.4 < 8.2.27","evidence":["`+out+`"]}`)); err != nil {
+	if _, err := rep.Call(t1, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"/k8s/prod/web/app/","asset_type":"workload","status":"vulnerable","exposure":"exposed","conditions":"ingress public","os":"debian 12 bookworm","detail":"php 8.2.4 < 8.2.27","evidence":["`+out+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if res, err := rep.Call(t2, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"k8s/prod/web/app","status":"vulnerable","detail":"php 8.2.4 < 8.2.27","evidence":["`+out+`"]}`)); err != nil || !strings.Contains(res, "déjà signalé par t1") {
+	if res, err := rep.Call(t2, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"k8s/prod/web/app","asset_type":"workload","status":"vulnerable","exposure":"exposed","conditions":"ingress public","os":"debian 12 bookworm","detail":"php 8.2.4 < 8.2.27","evidence":["`+out+`"]}`)); err != nil || !strings.Contains(res, "déjà signalé par t1") {
 		t.Fatalf("doublon: %q %v", res, err)
 	}
-	if _, err := rep.Call(t2, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"vm/web1","status":"clean","detail":"paquet php absent (rpm -q)","evidence":["`+out+`"]}`)); err != nil {
+	if _, err := rep.Call(t2, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"vm/web1","asset_type":"host","status":"clean","detail":"paquet php absent (rpm -q)","evidence":["`+out+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	f := s.Findings()
@@ -112,8 +117,12 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 		t.Fatalf("%d entrées mémoire", n)
 	}
 
-	sec := s.Section()
-	for _, want := range []string{"| CVE-2026-0001 | PHP | 8.2 < 8.2.27 | 8.2.27 | CVSS 3.1 9.8 CRITICAL | [E001] |", "🚨 1", "✅ 1", "| 🚨 | k8s/prod/web/app | 🚨 | php 8.2.4 < 8.2.27 | [E002] |", "- `vm` (1) : web1"} {
+	blocks, order := s.Blocks()
+	if len(order) != len(BlockNames) {
+		t.Fatalf("ordre des blocs: %v", order)
+	}
+	sec := strings.Join([]string{blocks[BlockKey("CVE-2026-0001", BlockVerdict)], blocks[BlockKey("CVE-2026-0001", BlockFiche)], blocks[BlockKey("CVE-2026-0001", BlockPositives)], blocks[BlockKey("CVE-2026-0001", BlockNegatives)]}, "\n")
+	for _, want := range []string{"- **Score**: CVSS 3.1 9.8 CRITICAL", "🚨 1 vulnerable", "✅ 1 clean", "1 exposed", "**🚨 k8s/prod/web/app** (workload, debian 12 bookworm)\n\n- **Found**: php 8.2.4 < 8.2.27\n- **Exposure**: **exposed**: ingress public\n- **Deciding test**: `k8s_pod_exec` [E002]\n- **Evidence**: [E002]", "**Hosts** (1)", "- `vm` (1): web1"} {
 		if !strings.Contains(sec, want) {
 			t.Fatalf("%q absent de\n%s", want, sec)
 		}
@@ -124,14 +133,15 @@ func TestAdvisoryReportAndInbox(t *testing.T) {
 func TestUnverifiedAdvisory(t *testing.T) {
 	s := New([]string{"CVE-2026-0002"}, memory.NewStore(), evidence.Open(t.TempDir(), 1), audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0002","product":"x","affected":"y","fixed":"z","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"w","commands":["x --version"]}`)); err != nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0002","product":"x","affected":"y","fixed":"z","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"w","summary":"s","mitigation":"m","remediation":"r","commands":["x --version"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if a := s.Advisories()[0]; a.Verified || !strings.Contains(a.line(), "NON VÉRIFIÉE") {
 		t.Fatalf("%+v", a)
 	}
-	if s.Section() == "" {
-		t.Fatal("section vide")
+	blocks, _ := s.Blocks()
+	if !strings.Contains(blocks[BlockKey("CVE-2026-0002", BlockFiche)], "outside official sources") {
+		t.Fatalf("fiche hors sources non signalée:\n%s", blocks[BlockKey("CVE-2026-0002", BlockFiche)])
 	}
 }
 
@@ -161,7 +171,7 @@ func TestReminder(t *testing.T) {
 		ev.Add("t2", "k8s_pod_exec", "{}", "out", nil)
 	}
 	ctx := tools.WithCaller(context.Background(), reader)
-	if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0003","asset":"a/b","status":"unknown","detail":"d","evidence":["`+last+`"]}`)); err != nil {
+	if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0003","asset":"a/b","asset_type":"host","status":"unknown","detail":"d","evidence":["`+last+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	ev.Add("t2", "k8s_pod_exec", "{}", "out", nil)
@@ -194,7 +204,7 @@ func TestTriageReminder(t *testing.T) {
 	}
 	ctx := tools.WithCaller(context.Background(), reader)
 	fiche := func(id string) json.RawMessage {
-		return json.RawMessage(`{"cve":"` + id + `","product":"p","affected":"a","fixed":"f","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"d","commands":["p -v"],"evidence":["` + last + `"]}`)
+		return json.RawMessage(`{"cve":"` + id + `","product":"p","affected":"a","fixed":"f","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"d","summary":"s","mitigation":"m","remediation":"r","commands":["p -v"],"evidence":["` + last + `"]}`)
 	}
 	if _, err := s.Tools()[0].Call(ctx, fiche("CVE-2026-0003")); err != nil {
 		t.Fatal(err)
@@ -220,34 +230,54 @@ func TestTriageReminder(t *testing.T) {
 	}
 }
 
-func TestSectionCompact(t *testing.T) {
+func TestBlocksCompact(t *testing.T) {
 	ev := evidence.Open(t.TempDir(), 1)
-	e := ev.Add("t1", "x", "{}", "o", nil)
-	s := New([]string{"CVE-A-0001", "CVE-B-0002"}, memory.NewStore(), ev, audit.Nop())
-	s.IDs = []string{"CVE-2026-0010", "CVE-2026-0011"}
+	e := ev.Add("t1", "k8s_pod_exec", `{"argv":["sh","-c","rpm -qa | grep php"]}`, "o", nil)
+	s := New([]string{"CVE-2026-0010", "CVE-2026-0011"}, memory.NewStore(), ev, audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
-	rep := func(cve, asset, status, detail string) {
+	rep := func(cve, asset, typ, status, detail string) {
 		t.Helper()
-		if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"`+cve+`","asset":"`+asset+`","status":"`+status+`","detail":"`+detail+`","evidence":["`+e+`"]}`)); err != nil {
+		extra := ""
+		if status == Vulnerable {
+			extra = `,"exposure":"limited","conditions":"php-fpm non publié"`
+		}
+		if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"`+cve+`","asset":"`+asset+`","asset_type":"`+typ+`","status":"`+status+`","detail":"`+detail+`","evidence":["`+e+`"]`+extra+`}`)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for i := range 50 {
 		a := fmt.Sprintf("k8s/prod/ns%d/app-%d/main", i%3, i)
-		rep("CVE-2026-0010", a, "clean", strings.Repeat("aucun php dans l'image ", 10))
-		rep("CVE-2026-0011", a, "clean", strings.Repeat("aucun php dans l'image ", 10))
+		rep("CVE-2026-0010", a, "workload", "clean", strings.Repeat("aucun php dans l'image ", 10))
+		rep("CVE-2026-0011", a, "workload", "clean", strings.Repeat("aucun php dans l'image ", 10))
 	}
-	rep("CVE-2026-0010", "k8s/prod/ns0/legacy/php", "vulnerable", "php 8.1.2")
-	rep("CVE-2026-0011", "k8s/prod/ns0/legacy/php", "clean", "fpm absent")
-	rep("CVE-2026-0010", "vm/web1", "clean", "rpm sans php")
-	sec := s.Section()
-	for _, want := range []string{"🚨 1 vulnerable · ❓ 1 undetermined · ✅ 50 clean (52 assets)", "| 🚨 | k8s/prod/ns0/legacy/php | 🚨 | ✅ | php 8.1.2 |", "| ❓ | vm/web1 | ✅ | — |", "- `k8s/prod/ns0` (17) : app-0/main, app-12/main"} {
-		if !strings.Contains(sec, want) {
-			t.Fatalf("%q absent de\n%s", want, sec)
+	rep("CVE-2026-0010", "k8s/prod/ns0/legacy/php", "workload", "vulnerable", "php 8.1.2")
+	rep("CVE-2026-0011", "k8s/prod/ns0/legacy/php", "workload", "clean", "fpm absent")
+	rep("CVE-2026-0010", "vm/web1", "host", "clean", "rpm sans php")
+	rep("CVE-2026-0010", "vm/web2", "host", "unknown", "accès refusé")
+	blocks, _ := s.Blocks()
+	verdict := blocks[BlockKey("CVE-2026-0010", BlockVerdict)]
+	pos := blocks[BlockKey("CVE-2026-0010", BlockPositives)]
+	unk := blocks[BlockKey("CVE-2026-0010", BlockUnknown)]
+	neg := blocks[BlockKey("CVE-2026-0010", BlockNegatives)]
+	for want, in := range map[string]string{
+		"🚨 1 vulnerable · ❓ 1 undetermined · ✅ 51 clean (53 assets)": verdict,
+		"1 limited exposure": verdict,
+		"**🚨 k8s/prod/ns0/legacy/php** (workload)\n\n- **Found**: php 8.1.2\n- **Exposure**: **limited**: php-fpm non publié\n- **Deciding test**: `rpm -qa | grep php` [E001]": pos,
+		"**❓ vm/web2** (host)\n\n- **What is missing**: accès refusé": unk,
+		"**Workloads** (50)":                             neg,
+		"- `k8s/prod/ns0` (17): app-0/main, app-12/main": neg,
+		"tests: `rpm -qa | grep php`":                    neg,
+		"**Hosts** (1)":                                  neg,
+	} {
+		if !strings.Contains(in, want) {
+			t.Fatalf("%q absent de\n%s", want, in)
 		}
 	}
-	if strings.Contains(sec, "aucun php dans l'image") || len(sec) > 4000 {
-		t.Fatalf("détails des sains repris ou tableau trop long (%d)", len(sec))
+	if strings.Contains(neg, "aucun php dans l'image") || len(neg) > 4000 {
+		t.Fatalf("détails des sains repris ou bloc trop long (%d)", len(neg))
+	}
+	if got := blocks[BlockKey("CVE-2026-0011", BlockPositives)]; got != "No positive asset." {
+		t.Fatalf("positifs CVE-2026-0011: %q", got)
 	}
 }
 
@@ -269,24 +299,28 @@ func TestSubjectsAndCompromise(t *testing.T) {
 	subject := "LiteLLM 1.107.0 supply chain"
 	s := New([]string{subject}, memory.NewStore(), ev, audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"litellm 1.107.0 SUPPLY chain","kind":"compromise","product":"litellm (PyPI)","affected":"1.107.0","fixed":"1.106.x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"pip show litellm","commands":["pip show litellm"],"iocs":["/tmp/.x","evil.example"]}`)); err != nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"litellm 1.107.0 SUPPLY chain","kind":"compromise","product":"litellm (PyPI)","affected":"1.107.0","fixed":"1.106.x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"pip show litellm","summary":"s","mitigation":"m","remediation":"r","commands":["pip show litellm"],"iocs":["/tmp/.x","evil.example"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	a := s.Advisories()[0]
 	if a.CVE != subject || a.Kind != KindCompr || len(a.IOCs) != 2 || !strings.Contains(a.line(), "(compromission)") || !strings.Contains(a.line(), "evil.example") {
 		t.Fatalf("fiche: %+v", a)
 	}
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"`+subject+`","kind":"ransomware","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x","commands":["x"]}`)); err == nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"`+subject+`","kind":"ransomware","product":"x","affected":"x","fixed":"x","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"x","summary":"s","mitigation":"m","remediation":"r","commands":["x"]}`)); err == nil {
 		t.Fatal("kind invalide accepté")
 	}
-	for asset, st := range map[string]string{"gw/clovis": "compromised", "gw/onellm": "vulnerable", "gw/other": "clean"} {
-		if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"`+subject+`","asset":"`+asset+`","status":"`+st+`","detail":"d","evidence":["`+e+`"]}`)); err != nil {
+	for asset, st := range map[string]string{"gw/alpha": "compromised", "gw/beta": "vulnerable", "gw/other": "clean"} {
+		if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"`+subject+`","asset":"`+asset+`","asset_type":"service","status":"`+st+`","exposure":"unmeasured","conditions":"non mesuré","detail":"d","evidence":["`+e+`"]}`)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	sec := s.Section()
-	if !strings.Contains(sec, "☠️ 1 compromised · 🚨 1 vulnerable") || strings.Index(sec, "| ☠️ | gw/clovis") > strings.Index(sec, "| 🚨 | gw/onellm") || strings.Index(sec, "| ☠️ | gw/clovis") < 0 {
-		t.Fatalf("section:\n%s", sec)
+	blocks, _ := s.Blocks()
+	verdict, pos := blocks[BlockKey(subject, BlockVerdict)], blocks[BlockKey(subject, BlockPositives)]
+	if !strings.Contains(verdict, "☠️ 1 compromised · 🚨 1 vulnerable") || strings.Index(pos, "| ☠️ | gw/alpha") > strings.Index(pos, "| 🚨 | gw/beta") || strings.Index(pos, "| ☠️ | gw/alpha") < 0 {
+		t.Fatalf("blocs:\n%s\n%s", verdict, pos)
+	}
+	if f := s.Findings(); slices.ContainsFunc(f, func(x Finding) bool { return x.Status == Clean && x.Exposure != "" }) {
+		t.Fatalf("exposition gardée sur un actif sain: %+v", f)
 	}
 }
 
@@ -296,7 +330,7 @@ func TestHostComponent(t *testing.T) {
 	s := New([]string{"CVE-2026-0020"}, memory.NewStore(), ev, audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
 	adv, rep := s.Tools()[0], s.Tools()[1]
-	base := `"cve":"CVE-2026-0020","product":"noyau","affected":"< 2","fixed":"2","score":"non publié","detection":"uname -r","commands":["uname -r"]`
+	base := `"cve":"CVE-2026-0020","product":"noyau","affected":"< 2","fixed":"2","score":"non publié","detection":"uname -r","commands":["uname -r"],"summary":"s","mitigation":"m","remediation":"r"`
 	if _, err := adv.Call(ctx, json.RawMessage(`{`+base+`}`)); err == nil || !strings.Contains(err.Error(), "host_component") {
 		t.Fatalf("fiche sans host_component: %v", err)
 	}
@@ -307,6 +341,9 @@ func TestHostComponent(t *testing.T) {
 		t.Fatal(s.Advisories()[0].line())
 	}
 	report := func(asset, status, extra string) error {
+		if status == Vulnerable {
+			extra += `,"exposure":"exposed","conditions":"c"`
+		}
 		_, err := rep.Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0020","asset":"`+asset+`","status":"`+status+`","detail":"d","evidence":["`+e+`"]`+extra+`}`))
 		return err
 	}
@@ -353,8 +390,12 @@ func TestHostComponent(t *testing.T) {
 	if err := report("k8s/prod/ns/dae", "vulnerable", work+`,"runs_on":["vm/x0","vm/x1","vm/x2","vm/x3","vm/x4"]`); err != nil {
 		t.Fatal(err)
 	}
-	if sec := s.Section(); !strings.Contains(sec, "on vm/x0, vm/x1, vm/x2 +2 : d") {
+	blocks, _ := s.Blocks()
+	if sec := blocks[BlockKey("CVE-2026-0020", BlockPositives)]; !strings.Contains(sec, "on vm/x0, vm/x1, vm/x2 +2 : d") {
 		t.Fatalf("hôtes absents du tableau:\n%s", sec)
+	}
+	if err := report("k8s/prod/ns/img", "clean", `,"asset_type":"image"`); err == nil || !strings.Contains(err.Error(), "host ou workload") {
+		t.Fatalf("image acceptée pour un composant de l'hôte: %v", err)
 	}
 	f := s.Findings()
 	if got := f[len(f)-1].RunsOn; len(got) != 5 {
@@ -367,10 +408,10 @@ func TestNotHostComponentKeepsImageRule(t *testing.T) {
 	e := ev.Add("t1", "x", "{}", "o", nil)
 	s := New([]string{"CVE-2026-0021"}, memory.NewStore(), ev, audit.Nop())
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t1"})
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0021","product":"php","affected":"< 2","fixed":"2","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"php -v","commands":["php -v"]}`)); err != nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0021","product":"php","affected":"< 2","fixed":"2","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"php -v","summary":"s","mitigation":"m","remediation":"r","commands":["php -v"]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0021","asset":"k8s/prod/ns/web","status":"clean","detail":"php absent de l'image","evidence":["`+e+`"]}`)); err != nil {
+	if _, err := s.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0021","asset":"k8s/prod/ns/web","asset_type":"image","status":"clean","detail":"php absent de l'image","evidence":["`+e+`"]}`)); err != nil {
 		t.Fatalf("image sans le composant: %v", err)
 	}
 }
@@ -382,7 +423,7 @@ func TestAdvisoryScoreAndCard(t *testing.T) {
 	rec := &cardEvents{}
 	s.Events = rec
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
-	base := `"cve":"CVE-2026-0005","product":"Noyau","affected":"< 6.6.159","fixed":"6.6.159","host_component":true,"detection":"version du noyau","commands":["uname -r","rpm -q kernel"],"evidence":["` + src + `"]`
+	base := `"cve":"CVE-2026-0005","product":"Noyau","affected":"< 6.6.159","fixed":"6.6.159","host_component":true,"detection":"version du noyau","summary":"s","mitigation":"m","remediation":"r","commands":["uname -r","rpm -q kernel"],"evidence":["` + src + `"]`
 	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{`+base+`}`)); err == nil || !strings.Contains(err.Error(), "score requis") {
 		t.Fatalf("faille sans score acceptée: %v", err)
 	}
@@ -401,13 +442,13 @@ func TestAdvisoryScoreAndCard(t *testing.T) {
 	if !slices.Equal(commands, []string{"uname -r", "rpm -q kernel"}) {
 		t.Fatalf("commandes: %v", commands)
 	}
-	if sec := s.Section(); !strings.Contains(sec, "| CVSS 3.1 7.8 HIGH |") {
-		t.Fatalf("score absent du rapport: %s", sec)
+	if blocks, _ := s.Blocks(); !strings.Contains(blocks[BlockKey("CVE-2026-0005", BlockFiche)], "CVSS 3.1 7.8 HIGH") {
+		t.Fatalf("score absent du rapport: %s", blocks[BlockKey("CVE-2026-0005", BlockFiche)])
 	}
 	if adv := s.Advisories()[0]; !strings.Contains(adv.line(), "score : CVSS 3.1 7.8 HIGH") {
 		t.Fatalf("score absent de la fiche transmise: %s", adv.line())
 	}
-	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0005","kind":"compromise","product":"p","affected":"1.0","fixed":"0.9","host_component":false,"detection":"d","commands":["p -v"]}`)); err != nil {
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0005","kind":"compromise","product":"p","affected":"1.0","fixed":"0.9","host_component":false,"detection":"d","summary":"s","mitigation":"m","remediation":"r","commands":["p -v"]}`)); err != nil {
 		t.Fatalf("compromission sans score refusée: %v", err)
 	}
 }

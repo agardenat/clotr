@@ -3,6 +3,7 @@ package i18n
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -32,8 +33,49 @@ func SetReport(l string) {
 	report = norm(l)
 }
 
+var (
+	frWords = []string{"le", "la", "les", "des", "du", "un", "une", "sur", "dans", "pour", "avec", "est", "sont", "et", "ou", "que", "qui", "quel", "quels", "quelle", "nous", "pas", "touche", "vérifie", "vérifier"}
+	enWords = []string{"the", "a", "an", "of", "on", "in", "for", "with", "is", "are", "and", "or", "that", "which", "what", "does", "do", "check", "affected", "affect", "our", "not"}
+)
+
+func Guess(text string) (string, bool) {
+	fr, en := 0, 0
+	for _, w := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'à' && r <= 'ÿ')
+	}) {
+		switch {
+		case strings.ContainsAny(w, "àâçéèêëîïôûùüÿœ"):
+			fr++
+		case slices.Contains(frWords, w):
+			fr++
+		case slices.Contains(enWords, w):
+			en++
+		}
+	}
+	switch {
+	case fr > en:
+		return "fr", true
+	case en > fr:
+		return "en", true
+	}
+	return "", false
+}
+
+func ReportFrom(setting, text string) {
+	if setting == "fr" || setting == "en" {
+		return
+	}
+	if l, ok := Guess(text); ok {
+		SetReport(l)
+	}
+}
+
 func UI() string {
 	return ui
+}
+
+func Report() string {
+	return report
 }
 
 type msg struct{ en, fr string }
@@ -118,7 +160,7 @@ var msgs = map[string]msg{
 	"verify.abandoned":     {"abandoned: conclusion requested", "abandonnée : conclusion demandée"},
 	"verify.done":          {"%d confirmed, %d partial, %d unsupported", "%d confirmés, %d partiels, %d non étayés"},
 	"answer.rejected":      {"answer rejected by the check, new attempt", "réponse refusée par le contrôle, nouvelle tentative"},
-	"session.resynth":      {"session: %s (turn %d) · regenerating the report · connectors: %s", "session : %s (tour %d) · régénération du rapport · connecteurs : %s"},
+	"session.resynth":      {"session: %s (turn %d) · regenerating the report · %s", "session : %s (tour %d) · régénération du rapport · %s"},
 	"session.line":         {"session: %s (turn %d) → %s", "session : %s (tour %d) → %s"},
 	"session.refine":       {"refine: clotr run -s %s \"…\"", "affiner : clotr run -s %s \"…\""},
 	"session.header":       {"session %s · created %s · %d turn(s)%s", "session %s · créée %s · %d tour(s)%s"},
@@ -218,6 +260,7 @@ var plurals = map[string]msg{
 	"instance":  {"instance|instances", "instance|instances"},
 	"step":      {"step|steps", "étape|étapes"},
 	"tool call": {"tool call|tool calls", "appel d'outil|appels d'outils"},
+	"connector": {"connector|connectors", "connecteur|connecteurs"},
 	"finding":   {"finding|findings", "constat|constats"},
 	"call":      {"call|calls", "appel|appels"},
 	"entry":     {"entry|entries", "entrée|entrées"},
@@ -230,12 +273,15 @@ func pick(m msg, l string) string {
 	return m.en
 }
 
-func R(key string) string {
+func R(key string, args ...any) string {
 	m, ok := reportMsgs[key]
 	if !ok {
 		return key
 	}
-	return pick(m, report)
+	if len(args) == 0 {
+		return pick(m, report)
+	}
+	return fmt.Sprintf(pick(m, report), args...)
 }
 
 func All(key string) []string {

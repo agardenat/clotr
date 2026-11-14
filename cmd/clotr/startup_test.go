@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -86,26 +87,50 @@ func TestStartupSyncAndRollback(t *testing.T) {
 	if cfg.Language != "fr" || git(t, conf, "rev-parse", "HEAD") != head {
 		t.Fatalf("configuration non mise à jour au démarrage (language %q)", cfg.Language)
 	}
+	once := &options{config: path, ctx: context.Background()}
+	for range 2 {
+		if _, err := loadConfig(once); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !once.startupDone {
+		t.Fatal("étape de démarrage non marquée comme faite")
+	}
 
 	push(cfgText + "language: en\n")
-	cfg, _ = runStartup(context.Background(), path, cfg, false, &out)
+	cfg, _ = runStartup(context.Background(), path, cfg, false, false, &out)
 	if cfg.Language != "fr" {
 		t.Fatal("every ignoré : synchronisation relancée avant l'intervalle")
 	}
-	cfg, rep := runStartup(context.Background(), path, cfg, true, &out)
+	if !strings.Contains(out.String(), "configuration (conf): up to date, last checked just now") {
+		t.Fatalf("état de la dernière vérification non affiché :\n%s", out.String())
+	}
+	out.Reset()
+	if runStartup(context.Background(), path, cfg, false, true, &out); out.Len() != 0 {
+		t.Fatalf("--quiet : %q", out.String())
+	}
+	cfg, rep := runStartup(context.Background(), path, cfg, true, false, &out)
 	if cfg.Language != "en" || rep.failed != 0 || rep.rolledBack {
 		t.Fatalf("synchronisation forcée : language %q, %+v\n%s", cfg.Language, rep, out.String())
+	}
+	out.Reset()
+	runStartup(context.Background(), path, cfg, true, false, &out)
+	if !strings.Contains(out.String(), "configuration (conf): up to date — ") {
+		t.Fatalf("« à jour » non affiché :\n%s", out.String())
 	}
 
 	good := git(t, conf, "rev-parse", "HEAD")
 	push(cfgText + "language: en\nunknown_key: 1\n")
 	out.Reset()
-	cfg, rep = runStartup(context.Background(), path, cfg, true, &out)
+	cfg, rep = runStartup(context.Background(), path, cfg, true, false, &out)
 	if !rep.rolledBack || git(t, conf, "rev-parse", "HEAD") != good {
 		t.Fatalf("pas de retour arrière : %+v\n%s", rep, out.String())
 	}
 	if cfg == nil || cfg.Language != "en" || !strings.Contains(out.String(), "unknown_key") {
 		t.Fatalf("après retour arrière : %v\n%s", cfg, out.String())
+	}
+	if line, alert := recentLine("conf", time.Now()); !alert || !strings.Contains(line, "last check failed") || !strings.Contains(line, "update undone") {
+		t.Fatalf("échec non mémorisé : %q", line)
 	}
 	if err := cmdSync(context.Background(), &options{config: path}, &out); err == nil {
 		t.Fatal("clotr sync sans erreur après retour arrière")
@@ -113,7 +138,7 @@ func TestStartupSyncAndRollback(t *testing.T) {
 
 	writeFile(t, path, cfgText+"language: en\n# local\n")
 	out.Reset()
-	if _, rep = runStartup(context.Background(), path, cfg, true, &out); rep.failed != 0 || !strings.Contains(out.String(), "conf") {
+	if _, rep = runStartup(context.Background(), path, cfg, true, false, &out); rep.failed != 0 || !strings.Contains(out.String(), "conf") {
 		t.Fatalf("modification locale : %+v\n%s", rep, out.String())
 	}
 	if b, _ := os.ReadFile(path); !strings.Contains(string(b), "# local") {

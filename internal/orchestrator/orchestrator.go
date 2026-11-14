@@ -23,6 +23,7 @@ import (
 	"github.com/agardenat/clotr/internal/lead"
 	"github.com/agardenat/clotr/internal/memory"
 	"github.com/agardenat/clotr/internal/progress"
+	"github.com/agardenat/clotr/internal/report"
 	"github.com/agardenat/clotr/internal/tools"
 	"github.com/agardenat/clotr/internal/tools/dns"
 	"github.com/agardenat/clotr/internal/websearch"
@@ -43,6 +44,7 @@ type Task struct {
 	Goal      string   `json:"goal"`
 	Tools     []string `json:"tools"`
 	DependsOn []string `json:"depends_on"`
+	label     string
 }
 
 type Plan struct {
@@ -144,20 +146,20 @@ func (o *Orchestrator) ConcludeNow() {
 func (o *Orchestrator) triage(ctx context.Context, request string) Result {
 	goal, label, reached := triageGoal, i18n.T("triage"), o.causeEstablished
 	if o.CVE != nil {
-		goal, label, reached = fmt.Sprintf(cveGoal, strings.Join(o.CVE.IDs, ", ")), i18n.T("cve.triage"), o.advisoriesDone
+		goal, label, reached = fmt.Sprintf(cveGoal, strings.Join(o.CVE.Missing(), ", "), o.CVE.Brief()), i18n.T("cve.triage"), o.advisoriesDone
 	}
 	role, err := o.DirectRole("")
 	if err != nil {
 		return Result{TaskID: triageID, Goal: goal, Status: "failed", Error: err.Error()}
 	}
-	t := Task{ID: triageID, Role: role, Goal: goal, Tools: o.triageTools()}
+	t := Task{ID: triageID, Role: role, Goal: goal, Tools: o.triageTools(), label: label}
 	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: t.ID, Role: t.Role, Goal: label}}})
 	o.Audit.Log("triage", map[string]any{"role": role, "cve": o.CVE != nil})
 	return o.runTask(ctx, request, t, nil, reached)
 }
 
 const (
-	cveGoal = "Fiches, avant toute planification : pour chacun des sujets %s (CVE, avis GHSA, ou compromission sans CVE désignée par ce libellé exact), établis depuis des sources vérifiées (avis de l'éditeur, NVD, GHSA, distribution, rapport d'incident ; recherche web) le type (faille ou compromission de chaîne d'approvisionnement), le produit et le composant touchés, les versions touchées ou malveillantes et les versions corrigées ou saines, le score de gravité publié (CVSS avec sa version et sa sévérité), et pour une compromission les indicateurs de compromission (empreintes, fichiers déposés, domaines et IP contactés, processus, persistance), les conditions d'exposition et le moyen de vérifier un actif (commande de version, paquet, fichier), puis enregistre-la aussitôt avec cve_advisory en citant les preuves des sources. host_component (obligatoire) : true si le composant est fourni par l'hôte et partagé avec ses conteneurs, comme le noyau. commands (obligatoire) : les commandes de détection exactes à lancer sur un actif, une ligne shell chacune, sans effet de bord (versions du binaire et de ses variantes, interrogation du gestionnaire de paquets, recherche des fichiers), et pour chaque condition d'exposition la commande qui la mesure ; elles s'exécuteront sans confirmation de l'utilisateur. Ne vérifie aucun actif : la vérification des actifs est confiée aux tâches planifiées ensuite. Un sujet introuvable dans les sources s'enregistre quand même, sans preuve (fiche non vérifiée), avec ce que la demande en dit."
+	cveGoal = "Fiches, avant toute planification, pour chacun des sujets %s : enregistre la fiche de chaque sujet avec cve_advisory. Procédure fixe : clotr a déjà interrogé les sources officielles (CVE.org, NVD, CISA KEV, EPSS, GitHub, distributions) et en a extrait les faits, ci-dessous ; il joint lui-même à la fiche les scores, l'exploitation connue, les versions par distribution et les commandes de détection des paquets. Rédige le reste (summary, product, affected, fixed, exposure, detection, mitigation, remediation, iocs, et commands seulement pour ce que les commandes générées ne couvrent pas) à partir de ces seules preuves : lis le détail d'une source avec evidence_read au besoin, sans recherche web, et cite dans evidence les preuves utilisées. " + writingStyle + " Ne reformule pas ce qu'une source dit déjà clairement : deux runs sur les mêmes sources doivent donner la même fiche. mitigation : traduis fidèlement les contournements publiés par les éditeurs, ou « aucun contournement publié ». remediation : la version ou le paquet corrigé à déployer, par distribution ou écosystème, en renvoyant au tableau des distributions pour le détail. host_component : true si le composant est fourni par l'hôte et partagé avec ses conteneurs, comme le noyau. Ne vérifie aucun actif : la vérification est confiée aux tâches planifiées ensuite.%s"
 	cveDone = "Toutes les fiches CVE sont enregistrées : l'objectif est atteint. Conclus maintenant, au format demandé, sans appeler d'outil : résumé de chaque fiche avec ses preuves ; indique dans gaps ce qui reste incertain (versions, conditions d'exposition)."
 )
 
@@ -166,7 +168,10 @@ func (o *Orchestrator) triageTools() []string {
 	if o.CVE == nil {
 		return names
 	}
-	allowed := append(append([]string{evidence.ToolName, evidence.SearchName, cve.AdvisoryTool}, memory.ToolNames()...), o.WebTools...)
+	allowed := append([]string{evidence.ToolName, evidence.SearchName, cve.AdvisoryTool}, memory.ToolNames()...)
+	if o.CVE.NeedsWeb() {
+		allowed = append(allowed, o.WebTools...)
+	}
 	return slices.DeleteFunc(names, func(n string) bool { return !slices.Contains(allowed, n) })
 }
 
@@ -187,8 +192,19 @@ func (o *Orchestrator) causeEstablished() string {
 }
 
 func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error) {
+	i18n.ReportFrom(o.Language, request)
 	var results []Result
-	if o.Incident || o.CVE != nil {
+	if o.CVE != nil {
+		o.CVE.Prepare(ctx)
+		if ctx.Err() != nil {
+			return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
+		}
+	}
+	if o.CVE != nil && len(o.CVE.Missing()) == 0 {
+		t := o.cachedAdvisories()
+		results = append(results, t)
+		o.triaged = &t
+	} else if o.Incident || o.CVE != nil {
 		t := o.triage(ctx, request)
 		results = append(results, t)
 		if t.Status == "ok" {
@@ -218,11 +234,6 @@ func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error)
 		return &Report{Plan: plan, Results: results}, ctx.Err()
 	}
 	md, model, err := o.Synthesize(ctx, request, results)
-	if o.CVE != nil && md != "" {
-		if sec := o.CVE.Section(); sec != "" {
-			md = sec + "\n\n---\n\n" + md
-		}
-	}
 	return &Report{Plan: plan, Results: results, Markdown: md, Model: model}, err
 }
 
@@ -523,7 +534,11 @@ func (o *Orchestrator) planInput(request string) string {
 		return user
 	}
 	if o.CVE != nil {
-		return user + "\n\nFiches CVE établies par la tâche " + triageID + " (déjà exécutée ; fiches transmises à chaque tâche):" + synthInput([]Result{*o.triaged}) + "\nNe replanifie pas les fiches. Planifie la vérification des actifs : une tâche par périmètre (instance, cible, cluster ou contexte, groupe d'hôtes) concerné par la demande, chargée d'inventorier tous ses actifs susceptibles de contenir le composant (workloads et leurs images, conteneurs, hôtes, paquets) et de signaler chacun avec cve_report dès que son statut est établi. Pour un composant de l'hôte selon la fiche : inventorier d'abord les hôtes, puis les workloads réunissant une condition d'exposition de la fiche. L'id " + triageID + " est réservé: ne l'utilise pas."
+		var fiches strings.Builder
+		for _, a := range o.CVE.Advisories() {
+			fiches.WriteString("\n- " + a.Line())
+		}
+		return user + "\n\nFiches CVE établies avant la planification (transmises à chaque tâche) :" + fiches.String() + "\nNe replanifie pas les fiches. Planifie la vérification des actifs : une tâche par périmètre (instance, cible, cluster ou contexte, groupe d'hôtes) concerné par la demande, chargée d'inventorier tous ses actifs susceptibles de contenir le composant (workloads et leurs images, conteneurs, hôtes, paquets) et de signaler chacun avec cve_report dès que son statut est établi. Pour un composant de l'hôte selon la fiche : inventorier d'abord les hôtes, puis les workloads réunissant une condition d'exposition de la fiche. L'id " + triageID + " est réservé: ne l'utilise pas."
 	}
 	if groups := o.triageGroups(); len(groups) > 0 {
 		user += "\n\nCause établie au tri : seules ces instances, celles du tri, restent utilisables : " + groupNames(groups) + ". Ne planifie aucune tâche sur une autre instance, et aucune tâche fondée sur un identifiant absent des preuves du tri."
@@ -769,7 +784,11 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 		return finish()
 	}
 	model, effort := o.Runner.First(cands, t.Role)
-	o.Events.Emit(progress.Event{Task: t.ID, Kind: "start", Model: model, Effort: effort, Detail: t.Goal})
+	shown := t.Goal
+	if t.label != "" {
+		shown = t.label
+	}
+	o.Events.Emit(progress.Event{Task: t.ID, Kind: "start", Model: model, Effort: effort, Detail: shown})
 	tctx, cancel := context.WithCancel(ctx)
 	var deadline time.Time
 	if timeout := o.Cfg.Limits.AgentTimeout.Duration; timeout > 0 {
@@ -824,6 +843,7 @@ func (o *Orchestrator) runTask(ctx context.Context, request string, t Task, deps
 }
 
 func (o *Orchestrator) Synthesize(ctx context.Context, request string, results []Result) (string, string, error) {
+	i18n.ReportFrom(o.Language, request)
 	ok := 0
 	var errs []string
 	for _, r := range results {
@@ -860,9 +880,12 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 		}
 	}
 	if o.CVE != nil {
-		if sec := o.CVE.Section(); sec != "" {
-			user += "\n\nFiches et statuts des CVE signalés en cours de run (clotr ajoute lui-même ce tableau en tête du rapport : ne le recopie pas). La conclusion répond pour chaque sujet : actifs compromis, vulnérables ou exposés, indéterminés et ce qui manque pour conclure ; les recommandations donnent la version corrigée à déployer par actif vulnérable, et pour une compromission, pour chaque actif exposé ou compromis : retrait de la version malveillante, rotation des secrets que le composant a pu lire (clés d'API, jetons, identifiants), recherche des traces sur la période d'exposition :\n" + sec
+		blocks, order := o.CVE.Blocks()
+		var b strings.Builder
+		for _, key := range order {
+			fmt.Fprintf(&b, "\n\n### {{%s}}\n%s", key, blocks[key])
 		}
+		user += "\n\nBlocs que clotr insérera dans le rapport à la place des lignes {{…}} du modèle (données établies : ne les recopie pas, appuie-toi dessus pour le verdict, l'arbitrage, les paragraphes des négatifs et le plan d'action) :" + b.String()
 	}
 	if len(leads) > 0 {
 		user += "\n\nCauses et pistes signalées par les agents en cours de run (à confirmer par les preuves citées et les constats ; une piste non établie se présente comme telle):\n" + memory.Format(leads)
@@ -882,7 +905,37 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 	}
 	o.Events.Emit(progress.Event{Task: "synthesizer", Kind: "done", Model: out.Model, Effort: out.Effort})
 	o.afterTask(ctx)
-	return o.finalize(out.Content), out.Model, nil
+	return o.finalize(o.fillReport(out.Content)), out.Model, nil
+}
+
+func (o *Orchestrator) fillReport(md string) string {
+	if o.CVE == nil {
+		return md
+	}
+	blocks, order := o.CVE.Blocks()
+	md, missing := report.Fill(md, blocks, order, i18n.R("report.missing_blocks"))
+	if len(missing) > 0 {
+		o.Audit.Log("report_block_missing", map[string]any{"blocks": missing})
+	}
+	return md
+}
+
+func (o *Orchestrator) cachedAdvisories() Result {
+	start := time.Now()
+	label := i18n.T("cve.triage")
+	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: triageID, Role: cve.ClotrModel, Goal: label}}})
+	o.Events.Emit(progress.Event{Task: triageID, Kind: "start", Model: cve.ClotrModel, Detail: label})
+	r := Result{TaskID: triageID, Role: cve.ClotrModel, Goal: label, Model: cve.ClotrModel, Status: "ok"}
+	for _, a := range o.CVE.Advisories() {
+		r.Findings = append(r.Findings, a.Line())
+	}
+	r.Duration = time.Since(start).Truncate(time.Millisecond).String()
+	o.Audit.Log("triage_skipped", map[string]any{"reason": "fiches reprises du cache, sources officielles inchangées"})
+	if o.OnResult != nil {
+		o.OnResult(r)
+	}
+	o.Events.Emit(progress.Event{Task: triageID, Kind: "done", Model: cve.ClotrModel, Detail: i18n.T("cve.cached_all"), Duration: time.Since(start)})
+	return r
 }
 
 func (o *Orchestrator) finalize(content string) string {
@@ -1125,6 +1178,7 @@ func (o *Orchestrator) workerPrompt(role string) string {
 Tu travailles en autonomie complète: ne pose aucune question, n'attends aucune confirmation.
 Tu ne modifies jamais rien; tes outils sont uniquement des outils de lecture.
 Reste factuel : chaque affirmation repose sur une sortie d'outil citée [Exxx]. N'invente jamais une valeur par défaut, un comportement de produit, la signification d'un message ou d'un paramètre, ni une chronologie.
+`+writingStyle+`
 %s%s%s
 Avant de classer un constat comme anomalie, vérifie qu'il ne s'explique pas par un comportement attendu décrit dans l'environnement. Si ta tâche porte sur un problème, cherche ce qui le cause et ce qui l'empêcherait durablement (paramètre, mécanisme, documentation), pas seulement son état actuel. Pour un échec d'opération, lis d'abord le message d'erreur exact (code, sous-code, détails) : il donne souvent la cause, avant tout parcours de l'historique par fenêtres successives. Un lien de cause à effet doit être appuyé par une preuve (message d'erreur, configuration, chronologie) ; sinon présente-le comme hypothèse dans gaps. Distingue valeurs par défaut et valeurs modifiées.
 Une erreur d'outil (paramètre ou nom refusé, réponse illisible, sortie tronquée) est une limite de ta collecte, pas un constat sur l'infrastructure : note-la dans gaps, jamais dans findings. Pour tout taux, ratio ou projection, écris l'opération avec les valeurs mesurées et leurs horodatages.
@@ -1154,7 +1208,7 @@ func (o *Orchestrator) accessRule() string {
 
 func (o *Orchestrator) incidentRule() string {
 	if o.CVE != nil {
-		return "\nMode CVE (" + strings.Join(o.CVE.IDs, ", ") + ") : les fiches des sujets (versions touchées ou malveillantes, corrigées, moyen de détection, indicateurs de compromission) te sont transmises ; appuie-toi sur elles. Pour chaque actif de ton périmètre, appelle " + cve.ReportTool + " dès que son statut est établi, sans attendre ta conclusion : compromised si une preuve montre un indicateur de compromission de la fiche (pour une compromission, cherche-les sur chaque actif exposé : fichiers, empreintes, connexions, processus, persistance), vulnerable si une preuve montre une version touchée ou malveillante, clean seulement si une preuve couvre la CVE pour cet actif (composant absent de l'inventaire des paquets ou de l'image, version corrigée), unknown sinon, avec ce qui manque. Les commandes de détection des fiches s'exécutent sans confirmation : utilise-les telles quelles. Un binaire introuvable dans le PATH ne prouve pas l'absence du composant (autre nom, autre chemin, bibliothèque embarquée) : inspecte le gestionnaire de paquets ou les fichiers (commandes de lecture : rpm -qa, dpkg -l, find sans -exec, ls), et si un outil lance une ressource éphémère propre à clotr (ex. un pod avec l'image du conteneur), utilise-le avant de conclure ; unknown seulement en dernier recours, avec ce qui manque. Si la fiche indique un composant de l'hôte : l'absence du composant dans une image ne prouve rien ; signale d'abord les hôtes (asset_type host), puis chaque workload réunissant une condition d'exposition (asset_type workload, runs_on), avec son statut hérité des hôtes et la condition mesurée dans detail. Une condition se mesure là où elle s'applique : réseau propre du workload, un pod partageant le réseau de l'hôte ne mesurant que l'hôte. Une version de compilateur ou de langage ne prouve pas un comportement : observe l'effet (pour un socket, la colonne sockets de /proc/net/protocols compte ceux du namespace réseau par protocole). Un fichier ou une commande absents ne prouvent une absence que si une source le dit. Les outils marqués « soumis à l'autorisation de l'utilisateur » ne s'appellent que si aucun autre outil ne permet de conclure ; un refus se signale en unknown. Les statuts signalés par les autres tâches te sont transmis : ne refais pas leurs actifs."
+		return "\nMode CVE (" + strings.Join(o.CVE.IDs, ", ") + ") : les fiches des sujets (versions touchées ou malveillantes, corrigées, moyen de détection, indicateurs de compromission) te sont transmises ; appuie-toi sur elles. Commence par les commandes de détection de la fiche, telles quelles, avec cat /etc/os-release sur chaque hôte ou image pour la distribution. Pour chaque actif de ton périmètre, appelle " + cve.ReportTool + " dès que son statut est établi, sans attendre ta conclusion, avec asset_type, os (distribution lue) et en premier la preuve du test qui détermine le statut ; pour un actif vulnerable ou compromised, mesure les prérequis d'exploitation de la fiche (option ou module activés, port en écoute, publication vers internet par un load balancer, un ingress ou une IP publique) et renseigne exposure et conditions avec leurs preuves : compromised si une preuve montre un indicateur de compromission de la fiche (pour une compromission, cherche-les sur chaque actif exposé : fichiers, empreintes, connexions, processus, persistance), vulnerable si une preuve montre une version touchée ou malveillante, clean seulement si une preuve couvre la CVE pour cet actif (composant absent de l'inventaire des paquets ou de l'image, version corrigée), unknown sinon, avec ce qui manque. Les commandes de détection des fiches s'exécutent sans confirmation : utilise-les telles quelles. Un binaire introuvable dans le PATH ne prouve pas l'absence du composant (autre nom, autre chemin, bibliothèque embarquée) : inspecte le gestionnaire de paquets ou les fichiers (commandes de lecture : rpm -qa, dpkg -l, find sans -exec, ls), et si un outil lance une ressource éphémère propre à clotr (ex. un pod avec l'image du conteneur), utilise-le avant de conclure ; unknown seulement en dernier recours, avec ce qui manque. Si la fiche indique un composant de l'hôte : l'absence du composant dans une image ne prouve rien ; signale d'abord les hôtes (asset_type host), puis chaque workload réunissant une condition d'exposition (asset_type workload, runs_on), avec son statut hérité des hôtes et la condition mesurée dans detail. Une condition se mesure là où elle s'applique : réseau propre du workload, un pod partageant le réseau de l'hôte ne mesurant que l'hôte. Une version de compilateur ou de langage ne prouve pas un comportement : observe l'effet (pour un socket, la colonne sockets de /proc/net/protocols compte ceux du namespace réseau par protocole). Un fichier ou une commande absents ne prouvent une absence que si une source le dit. Les outils marqués « soumis à l'autorisation de l'utilisateur » ne s'appellent que si aucun autre outil ne permet de conclure ; un refus se signale en unknown. Les statuts signalés par les autres tâches te sont transmis : ne refais pas leurs actifs."
 	}
 	if !o.Incident || !slices.Contains(o.Tools.Names(), lead.ToolName) {
 		return ""
@@ -1175,6 +1229,7 @@ Une erreur d'outil est une limite de ta collecte, pas un constat sur l'infrastru
 Tu travailles en autonomie complète : ne pose aucune question, n'attends aucune confirmation, ne modifie jamais rien.
 %s
 Reste factuel : n'invente jamais une valeur par défaut, un comportement de produit, la signification d'un message ou d'un paramètre, ni une chronologie. Un lien de cause à effet doit être appuyé par une preuve, sinon présente-le comme hypothèse. Pour un problème, vise la cause et le correctif durable, pas seulement l'état actuel.
+`+writingStyle+`
 %s
 Environnement:
 %s
@@ -1200,8 +1255,29 @@ func (o *Orchestrator) displayPath(p string) string {
 	return p
 }
 
+func (o *Orchestrator) reportMode() string {
+	if o.CVE != nil {
+		return report.ModeCVE
+	}
+	return report.ModeDefault
+}
+
+func (o *Orchestrator) reportModel() string {
+	mode := o.reportMode()
+	var overrides map[string]string
+	if o.Cfg != nil {
+		overrides = o.Cfg.ReportModels
+	}
+	m, err := report.Model(mode, overrides)
+	if err != nil {
+		o.Audit.Log("report_model_error", map[string]any{"mode": mode, "error": err.Error()})
+		m, _ = report.Model(mode, nil)
+	}
+	return m
+}
+
 func (o *Orchestrator) synthesizerSystem() string {
-	sys := synthesizerPrompt
+	sys := synthesizerPrompt + o.reportModel() + synthesizerRules
 	if strings.TrimSpace(o.Environment) != "" {
 		sys += "\nEnvironnement et consignes (servent à distinguer comportement attendu et anomalie):\n" + o.Environment
 	}
@@ -1210,24 +1286,9 @@ func (o *Orchestrator) synthesizerSystem() string {
 
 const synthesizerPrompt = `Tu rédiges la réponse finale d'une analyse d'infrastructure en lecture seule à partir des résultats des sous-agents (par tâche : constats citant leurs preuves [Exxx], points non vérifiés). Le texte des preuves n'est pas fourni : clotr ajoute lui-même l'annexe des preuves citées.
 Si la demande impose une forme ou une longueur (une phrase, N puces, un tableau, oui/non…), respecte-la strictement et n'ajoute rien d'autre.
-Sinon, format Markdown:
-1. Conclusion (5 lignes max) : réponse directe à la demande, cause racine (ou ce qui manque pour l'établir), correctif durable proposé, niveau d'urgence justifié par un fait chiffré
-2. Constats classés par sévérité (CRITIQUE, MAJEUR, MINEUR, INFO), chacun avec ses preuves citées par leurs identifiants [Exxx] repris des constats (jamais par les identifiants de tâche t1, t2…, qui ne parlent pas au lecteur) et les valeurs factuelles du constat ; un comportement attendu (décrit dans l'environnement) n'est pas une anomalie ; INFO seulement pour ce qui éclaire la conclusion
-3. Détail par périmètre
-4. Points non vérifiés (hypothèses, gaps, tâches en échec, tâches « arrêtée par » une limite : nomme le périmètre resté incomplet et la limite atteinte, sans le présenter comme vérifié)
-5. Limites de la collecte (erreurs d'outils, paramètres refusés, sorties tronquées) : ce sont des limites de l'analyse, pas des constats sur l'infrastructure ; ne les classe pas par sévérité et n'en fais pas de recommandation pour la plateforme
-6. Recommandations (actions proposées, jamais exécutées), en deux parties :
-   a. Correctif durable : ce qui supprime la cause ou empêche la récidive (configuration, dimensionnement, architecture, correction en amont). Pour chaque mesure : la cause traitée, la preuve [Exxx] ou la documentation qui la justifie, le risque et l'impact, et comment vérifier son effet.
-   b. Mesures immédiates : palliatifs en attendant le correctif, brièvement
-Mise en page (sauf forme imposée par la demande) :
-- Sections en titres « ## 1. Conclusion » … « ## 6. Recommandations », séparées par une ligne « --- ».
-- Conclusion : 3 à 5 puces ; chacune commence par la phrase clé en gras (« **La cause racine est …** ») puis l'explication avec ses preuves.
-- Constats : sous-titres « ### CRITIQUE », « ### MAJEUR », « ### MINEUR », « ### INFO » (omis s'ils sont vides). Chaque constat est numéroté en continu à travers les sévérités et titré en gras sur sa propre ligne (« **3. Service api : processus arrêté sur node3, pas de redémarrage automatique** »), jamais avec un code (C1, M2, m3), puis des puces d'une à trois lignes, un fait par puce, preuves [Exxx] en fin de puce, la valeur ou le fait décisif en gras. Pas de paragraphe sous un titre de constat.
-- Un tableau pour des valeurs homogènes à comparer ou un calcul (valeurs par rôle ou par hôte, chronologie, projection), avec des cellules courtes.
-- Détail par périmètre : un sous-titre « ### » par périmètre, des puces brèves qui renvoient aux constats par leur numéro (« voir constat 3 ») sans les recopier.
-- Points non vérifiés et limites : une puce par point, le sujet en gras puis l'explication.
-- Recommandations : liste numérotée, titre de la mesure en gras, puis des puces « Cause traitée », « Action », « Risque », « Vérification ».
-Règles de cohérence :
+`
+
+const synthesizerRules = `Règles de cohérence :
 - Une cause n'est présentée comme établie, dans la conclusion comme dans les constats, que si un constat la prouve (message d'erreur, configuration, chronologie). Si un constat la contredit ou si elle n'est qu'une hypothèse, écris « hypothèse » et place-la dans les points non vérifiés ; la conclusion ne dit rien que le reste du rapport contredit.
 - Tout calcul (projection, taux, ratio, délai avant saturation) est refait à partir des valeurs citées, avec l'opération et l'hypothèse explicites (ex : 14 Go libres / 5,3 Go par jour ≈ 2,6 jours si la croissance reste linéaire). Ne reprends pas un résultat calculé par un sous-agent sans le vérifier.
 - Si deux résultats donnent des valeurs incompatibles pour la même mesure, signale l'écart au lieu de choisir silencieusement.
@@ -1235,4 +1296,7 @@ Règles de cohérence :
 - Un constat marqué « [NON PROUVÉ … ] » ne cite aucune preuve existante (contrôle fait par clotr) : il ne peut figurer qu'en point non vérifié, jamais dans la conclusion, les constats ou comme cause.
 - Les notes de mémoire (#N) sont des résumés datés, pas des preuves : ne les cite jamais comme source (clotr signale dans le rapport toute ligne qui ne s'appuie que sur une note) ; un fait chiffré se cite par sa preuve [Exxx] ; une note contredite par un résultat ou une note plus récente est périmée et ne doit pas être reprise. Une valeur susceptible d'avoir changé (occupation disque, taille, état) se présente avec l'heure de sa mesure, et le délai écoulé depuis.
 - Ce que la demande ou l'historique présente comme déjà connu ou déjà fait (une purge réalisée, un symptôme connu) n'est ni une découverte ni une recommandation principale. Un palliatif ne remplace jamais le correctif durable : si la cause racine n'est pas établie, dis-le et précise ce qu'il faut établir pour proposer un correctif durable.
-Reste factuel : n'ajoute aucune connaissance extérieure aux résultats fournis ; une information issue d'une source web est attribuée à sa preuve [Exxx]. Dédupliquer les constats redondants.`
+Reste factuel : n'ajoute aucune connaissance extérieure aux résultats fournis ; une information issue d'une source web est attribuée à sa preuve [Exxx]. Dédupliquer les constats redondants.
+` + writingStyle
+
+const writingStyle = `Style : factuel et neutre, sans jugement, emphase ni formule de politesse. Une action se formule par ce qu'il faut faire (« mettre à jour openssh en 0:8.7p1-38.el9_4.1 sur web1 », « vérifier la règle de pare-feu du port 22 »), jamais par qui doit la faire ou à qui s'adresser (pas de « dire à l'équipe système », « demander à l'équipe réseau », « contacter le support »). Concis mais clair : chaque explication donne le fait, ce qu'il implique et sa preuve, sans répétition ni phrase de remplissage.`

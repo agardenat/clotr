@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/agardenat/clotr/internal/audit"
+	"github.com/agardenat/clotr/internal/cve/sources"
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/memory"
@@ -30,6 +31,16 @@ const (
 	KindCompr    = "compromise"
 	AssetHost    = "host"
 	AssetWork    = "workload"
+	AssetImage   = "image"
+	AssetService = "service"
+	Exposed      = "exposed"
+	Limited      = "limited"
+	Unmeasured   = "unmeasured"
+)
+
+var (
+	assetTypes = []string{AssetHost, AssetWork, AssetImage, AssetService}
+	exposures  = []string{Exposed, Limited, Unmeasured}
 )
 
 var idRe = regexp.MustCompile(`(?i)\b(?:CVE-\d{4}-\d{4,}|GHSA(?:-[0-9a-z]{4}){3})\b`)
@@ -59,36 +70,50 @@ func Subjects(flag, request string) []string {
 }
 
 type Advisory struct {
-	CVE       string   `json:"cve"`
-	Product   string   `json:"product"`
-	Affected  string   `json:"affected"`
-	Fixed     string   `json:"fixed"`
-	Score     string   `json:"score,omitempty"`
-	Exposure  string   `json:"exposure,omitempty"`
-	Host      bool     `json:"host_component,omitempty"`
-	Kind      string   `json:"kind"`
-	IOCs      []string `json:"iocs,omitempty"`
-	Detection string   `json:"detection"`
-	Commands  []string `json:"commands,omitempty"`
-	Evidence  []string `json:"evidence,omitempty"`
-	Verified  bool     `json:"verified"`
-	Task      string   `json:"task"`
+	CVE         string         `json:"cve"`
+	Product     string         `json:"product"`
+	Affected    string         `json:"affected"`
+	Fixed       string         `json:"fixed"`
+	Score       string         `json:"score,omitempty"`
+	Summary     string         `json:"summary,omitempty"`
+	Exposure    string         `json:"exposure,omitempty"`
+	Host        bool           `json:"host_component,omitempty"`
+	Kind        string         `json:"kind"`
+	IOCs        []string       `json:"iocs,omitempty"`
+	Detection   string         `json:"detection"`
+	Commands    []string       `json:"commands,omitempty"`
+	Mitigation  string         `json:"mitigation,omitempty"`
+	Remediation string         `json:"remediation,omitempty"`
+	Evidence    []string       `json:"evidence,omitempty"`
+	Verified    bool           `json:"verified"`
+	Task        string         `json:"task"`
+	Facts       *sources.Facts `json:"facts,omitempty"`
+	Cached      string         `json:"cached,omitempty"`
+	Changes     []string       `json:"changes,omitempty"`
 }
 
 type Finding struct {
-	CVE      string   `json:"cve"`
-	Asset    string   `json:"asset"`
-	Status   string   `json:"status"`
-	Detail   string   `json:"detail"`
-	Evidence []string `json:"evidence"`
-	Task     string   `json:"task"`
-	Previous string   `json:"previous,omitempty"`
-	RunsOn   []string `json:"runs_on,omitempty"`
+	CVE        string   `json:"cve"`
+	Asset      string   `json:"asset"`
+	Type       string   `json:"asset_type,omitempty"`
+	Status     string   `json:"status"`
+	Detail     string   `json:"detail"`
+	OS         string   `json:"os,omitempty"`
+	Exposure   string   `json:"exposure,omitempty"`
+	Conditions string   `json:"conditions,omitempty"`
+	Evidence   []string `json:"evidence"`
+	Task       string   `json:"task"`
+	Previous   string   `json:"previous,omitempty"`
+	RunsOn     []string `json:"runs_on,omitempty"`
 }
 
 type Store struct {
 	Events     progress.Sink
 	IDs        []string
+	Sources    *sources.Client
+	CacheDir   string
+	facts      map[string]*sources.Facts
+	prior      map[string]*cached
 	mem        *memory.Store
 	ev         *evidence.Store
 	audit      *audit.Logger
@@ -133,7 +158,7 @@ type news struct {
 }
 
 func New(ids []string, mem *memory.Store, ev *evidence.Store, log *audit.Logger) *Store {
-	return &Store{Events: progress.Nop{}, IDs: ids, mem: mem, ev: ev, audit: log, seen: map[string]int{}, mark: map[string]int{}}
+	return &Store{Events: progress.Nop{}, IDs: ids, mem: mem, ev: ev, audit: log, seen: map[string]int{}, mark: map[string]int{}, facts: map[string]*sources.Facts{}, prior: map[string]*cached{}}
 }
 
 func (s *Store) Restore(advisories []Advisory, findings []Finding) {
@@ -262,27 +287,30 @@ type advisoryTool struct{ s *Store }
 func (advisoryTool) Name() string { return AdvisoryTool }
 
 func (advisoryTool) Description() string {
-	return "Enregistre la fiche d'un sujet de la demande (CVE, avis GHSA, ou compromission sans CVE, désignée par son libellé exact), établie depuis des sources vérifiées (avis de l'éditeur, NVD, GHSA, distribution, rapport d'incident) : kind (vulnerability pour une faille, compromise pour une compromission de chaîne d'approvisionnement ou un paquet malveillant), produit et composant, versions touchées (ou malveillantes) et corrigées (ou saines), conditions d'exposition, host_component (true si le composant est fourni par l'hôte et partagé avec ses conteneurs, comme le noyau : il n'est jamais dans l'image d'un conteneur), moyen de détection sur un actif (commande de version, paquet, fichier), et pour une compromission les indicateurs de compromission (iocs : empreintes, fichiers déposés, domaines et IP contactés, processus, persistance). commands : les commandes de détection exactes, une ligne shell chacune (ex. « php -v », « rpm -qa | grep -i php ») : elles sont réputées fiables et s'exécutent sur les actifs sans confirmation de l'utilisateur ; n'y mets que des commandes sans effet de bord. La fiche est affichée tout de suite à l'utilisateur et transmise à toutes les tâches. evidence : les preuves [Exxx] des sources (recherche web) ; sans source vérifiée, laisse evidence vide : la fiche est marquée non vérifiée. Une nouvelle fiche pour la même CVE remplace la précédente."
+	return "Enregistre la fiche d'un sujet de la demande (CVE, avis GHSA, ou compromission sans CVE, désignée par son libellé exact). Quand clotr a interrogé les sources officielles (CVE.org, NVD, CISA KEV, EPSS, GitHub, distributions), il joint lui-même à la fiche les scores, l'exploitation connue, les versions par distribution et les commandes de détection des paquets : rédige le reste à partir de ces seules preuves, sans les recopier ni les contredire. kind : vulnerability pour une faille, compromise pour une compromission de chaîne d'approvisionnement ou un paquet malveillant. summary : en quoi consiste la faille (mécanisme, impact), en deux à quatre phrases. product, affected, fixed : produit et composant, versions touchées (ou malveillantes) et corrigées (ou saines), en résumé. exposure : prérequis d'exploitation (accès réseau, authentification, module ou option activés). host_component : true si le composant est fourni par l'hôte et partagé avec ses conteneurs, comme le noyau. detection : comment vérifier un actif. commands : commandes de détection supplémentaires, une ligne shell chacune, sans effet de bord, pour ce que les commandes de paquet générées par clotr ne couvrent pas (binaire ou bibliothèque hors paquet, paquet applicatif, mesure d'une condition d'exposition) ; elles s'exécutent sur les actifs sans confirmation de l'utilisateur. mitigation : contournement temporaire en attendant le correctif, tel que les éditeurs le publient, ou « aucun contournement publié ». remediation : correctif durable (version ou paquet à déployer par distribution ou écosystème, procédure). iocs : traces d'une exploitation (journaux, fichiers, processus) ou, pour une compromission, indicateurs de compromission (empreintes, fichiers déposés, domaines et IP contactés, persistance). Pas de citation [Exxx] dans les textes : cite les preuves dans evidence ; sans source vérifiée, laisse evidence vide : la fiche est marquée non vérifiée. La fiche est affichée tout de suite à l'utilisateur et transmise à toutes les tâches ; une nouvelle fiche pour le même sujet remplace la précédente."
 }
 
 func (advisoryTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"cve":{"type":"string","description":"identifiant, ex: CVE-2026-12345"},"product":{"type":"string","description":"produit et composant touchés"},"affected":{"type":"string","description":"versions touchées, ex: PHP 8.1 < 8.1.31, 8.2 < 8.2.27"},"fixed":{"type":"string","description":"versions corrigées ou correctif"},"score":{"type":"string","description":"score de gravité publié par la source : référentiel, note et sévérité, sans commentaire ni vecteur, ex: CVSS 3.1 7.8 HIGH ; « non publié » si aucune source n'en donne ; obligatoire pour une faille"},"exposure":{"type":"string","description":"conditions d'exposition (module, configuration, accès réseau), si connues"},"host_component":{"type":"boolean","description":"true si le composant est fourni par l'hôte et partagé avec ses conteneurs (noyau, par exemple)"},"detection":{"type":"string","description":"comment vérifier un actif : commande de version, nom de paquet, fichier"},"commands":{"type":"array","items":{"type":"string"},"description":"commandes de détection exactes, une ligne shell chacune, sans effet de bord"},"kind":{"type":"string","enum":["vulnerability","compromise"]},"iocs":{"type":"array","items":{"type":"string"},"description":"indicateurs de compromission, un par entrée (empreinte, chemin, domaine, IP, processus)"},"evidence":{"type":"array","items":{"type":"string"},"description":"preuves des sources, ex: [\"E004\"]"}},"required":["cve","product","affected","fixed","host_component","detection","commands"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"cve":{"type":"string","description":"identifiant, ex: CVE-2026-12345"},"kind":{"type":"string","enum":["vulnerability","compromise"]},"summary":{"type":"string","description":"en quoi consiste la faille : mécanisme et impact"},"product":{"type":"string","description":"produit et composant touchés"},"affected":{"type":"string","description":"versions touchées, ex: PHP 8.1 < 8.1.31, 8.2 < 8.2.27"},"fixed":{"type":"string","description":"versions corrigées ou correctif"},"score":{"type":"string","description":"sans sources officielles jointes par clotr seulement : score publié, ex: CVSS 3.1 7.8 HIGH, ou « non publié »"},"exposure":{"type":"string","description":"prérequis d'exploitation (accès réseau, authentification, module ou option activés)"},"host_component":{"type":"boolean","description":"true si le composant est fourni par l'hôte et partagé avec ses conteneurs (noyau, par exemple)"},"detection":{"type":"string","description":"comment vérifier un actif : paquet, binaire, fichier, condition d'exposition"},"commands":{"type":"array","items":{"type":"string"},"description":"commandes de détection supplémentaires, une ligne shell chacune, sans effet de bord"},"mitigation":{"type":"string","description":"contournement temporaire publié par les éditeurs, ou « aucun contournement publié »"},"remediation":{"type":"string","description":"correctif durable : version ou paquet à déployer par distribution ou écosystème, procédure"},"iocs":{"type":"array","items":{"type":"string"},"description":"traces d'exploitation ou indicateurs de compromission, un par entrée"},"evidence":{"type":"array","items":{"type":"string"},"description":"preuves des sources, ex: [\"E004\"]"}},"required":["cve","kind","product","affected","fixed","host_component","detection","remediation"]}`)
 }
 
 func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
 	a, err := tools.Decode[struct {
-		CVE       string           `json:"cve"`
-		Product   string           `json:"product"`
-		Affected  string           `json:"affected"`
-		Fixed     string           `json:"fixed"`
-		Score     string           `json:"score"`
-		Exposure  string           `json:"exposure"`
-		Host      *bool            `json:"host_component"`
-		Detection string           `json:"detection"`
-		Commands  tools.StringList `json:"commands"`
-		Kind      string           `json:"kind"`
-		IOCs      tools.StringList `json:"iocs"`
-		Evidence  tools.StringList `json:"evidence"`
+		CVE         string           `json:"cve"`
+		Product     string           `json:"product"`
+		Affected    string           `json:"affected"`
+		Fixed       string           `json:"fixed"`
+		Score       string           `json:"score"`
+		Summary     string           `json:"summary"`
+		Exposure    string           `json:"exposure"`
+		Host        *bool            `json:"host_component"`
+		Detection   string           `json:"detection"`
+		Commands    tools.StringList `json:"commands"`
+		Mitigation  string           `json:"mitigation"`
+		Remediation string           `json:"remediation"`
+		Kind        string           `json:"kind"`
+		IOCs        tools.StringList `json:"iocs"`
+		Evidence    tools.StringList `json:"evidence"`
 	}](raw)
 	if err != nil {
 		return "", err
@@ -291,29 +319,13 @@ func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, er
 	if err != nil {
 		return "", err
 	}
-	for name, v := range map[string]string{"product": a.Product, "affected": a.Affected, "fixed": a.Fixed, "detection": a.Detection} {
+	for name, v := range map[string]string{"product": a.Product, "affected": a.Affected, "fixed": a.Fixed, "detection": a.Detection, "remediation": a.Remediation} {
 		if strings.TrimSpace(v) == "" {
 			return "", fmt.Errorf("%s requis", name)
 		}
 	}
 	if a.Host == nil {
 		return "", errors.New("host_component requis : true si le composant est fourni par l'hôte et partagé avec ses conteneurs (noyau, par exemple), false sinon")
-	}
-	if len(a.Commands) == 0 {
-		return "", fmt.Errorf("commands requis : les commandes de détection exactes, une ligne shell chacune (ex. « php -v », « rpm -qa | grep -i php »)")
-	}
-	ids, err := t.s.checkEvidence(a.Evidence, false)
-	if err != nil {
-		return "", err
-	}
-	var cmds []string
-	for _, cmd := range a.Commands {
-		if strings.ContainsAny(cmd, "\x00\n\r") {
-			return "", fmt.Errorf("commande %q : une seule ligne attendue", cmd)
-		}
-		if cmd = oneLine(cmd); cmd != "" && !slices.Contains(cmds, cmd) {
-			cmds = append(cmds, cmd)
-		}
 	}
 	kind := a.Kind
 	if kind == "" {
@@ -322,8 +334,39 @@ func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, er
 	if kind != KindVuln && kind != KindCompr {
 		return "", fmt.Errorf("kind %q invalide (vulnerability|compromise)", a.Kind)
 	}
-	if kind == KindVuln && strings.TrimSpace(a.Score) == "" {
-		return "", errors.New("score requis pour une faille : le score publié par la source, ex. « CVSS 3.1 7.8 HIGH », ou « non publié » si aucune source n'en donne")
+	t.s.mu.Lock()
+	facts := t.s.facts[id]
+	t.s.mu.Unlock()
+	official := facts != nil && facts.Found()
+	if kind == KindVuln {
+		if strings.TrimSpace(a.Summary) == "" {
+			return "", errors.New("summary requis : en quoi consiste la faille (mécanisme, impact)")
+		}
+		if strings.TrimSpace(a.Mitigation) == "" {
+			return "", errors.New("mitigation requis : le contournement temporaire publié par les éditeurs, ou « aucun contournement publié »")
+		}
+		if !official && strings.TrimSpace(a.Score) == "" {
+			return "", errors.New("score requis pour une faille : le score publié par la source, ex. « CVSS 3.1 7.8 HIGH », ou « non publié » si aucune source n'en donne")
+		}
+	}
+	var cmds []string
+	if official {
+		cmds = facts.Commands()
+	}
+	for _, cmd := range a.Commands {
+		if strings.ContainsAny(cmd, "\x00\n\r") {
+			return "", fmt.Errorf("commande %q : une seule ligne attendue", cmd)
+		}
+		if cmd = oneLine(cmd); cmd != "" && !slices.Contains(cmds, cmd) {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if len(cmds) == 0 {
+		return "", fmt.Errorf("commands requis : les commandes de détection exactes, une ligne shell chacune (ex. « php -v », « rpm -qa | grep -i php »)")
+	}
+	ids, err := t.s.checkEvidence(a.Evidence, false)
+	if err != nil {
+		return "", err
 	}
 	var iocs []string
 	for _, i := range a.IOCs {
@@ -331,32 +374,65 @@ func (t advisoryTool) Call(ctx context.Context, raw json.RawMessage) (string, er
 			iocs = append(iocs, i)
 		}
 	}
-	c := tools.CallerFrom(ctx)
-	adv := &Advisory{CVE: id, Kind: kind, Product: oneLine(a.Product), Affected: oneLine(a.Affected), Fixed: oneLine(a.Fixed), Score: oneLine(a.Score), Exposure: oneLine(a.Exposure), Host: *a.Host, Detection: oneLine(a.Detection), Commands: cmds, IOCs: iocs, Evidence: ids, Verified: len(ids) > 0, Task: c.Task}
-	line := adv.line()
-	t.s.mu.Lock()
-	t.s.advisories = slices.DeleteFunc(t.s.advisories, func(x *Advisory) bool { return x.CVE == id })
-	t.s.advisories = append(t.s.advisories, adv)
-	t.s.news = append(t.s.news, news{c.Task, line})
-	if c.Task == triageTask {
-		t.s.mark[triageTask] = t.s.ev.TaskCount(triageTask, source)
+	adv := &Advisory{CVE: id, Kind: kind, Product: oneLine(a.Product), Affected: oneLine(a.Affected), Fixed: oneLine(a.Fixed), Score: oneLine(a.Score), Summary: oneLine(a.Summary), Exposure: oneLine(a.Exposure), Host: *a.Host, Detection: oneLine(a.Detection), Commands: cmds, Mitigation: oneLine(a.Mitigation), Remediation: oneLine(a.Remediation), IOCs: iocs, Evidence: ids}
+	if official {
+		adv.Facts = facts
+		adv.Score = MainScore(facts)
+		for _, e := range facts.Evidence() {
+			if e = "[" + e + "]"; !slices.Contains(adv.Evidence, e) {
+				adv.Evidence = append(adv.Evidence, e)
+			}
+		}
+		t.s.mu.Lock()
+		if p := t.s.prior[id]; p != nil {
+			adv.Changes = p.changes
+		}
+		t.s.mu.Unlock()
 	}
-	t.s.mu.Unlock()
-	if _, err := t.s.mem.Put(memory.Entry{Key: "cve/" + id + "/fiche", Content: line, Tags: []string{Kind, "fiche"}, Kind: Kind, Task: c.Task, Model: c.Model, Sovereign: c.Sovereign}); err != nil {
+	adv.Verified = len(adv.Evidence) > 0
+	if err := t.s.register(tools.CallerFrom(ctx), adv); err != nil {
 		return "", err
 	}
-	t.s.audit.Log("cve_advisory", map[string]any{"task": c.Task, "model": c.Model, "advisory": adv})
-	t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "cve", Status: "advisory", Model: c.Model, Effort: c.Effort, Detail: i18n.T("cve.advisory", line), Card: adv.card()})
+	if official {
+		t.s.save(adv)
+	}
 	return "fiche enregistrée : affichée à l'utilisateur et transmise aux autres tâches", nil
 }
+
+func (s *Store) register(c tools.Caller, adv *Advisory) error {
+	adv.Task = c.Task
+	line := adv.line()
+	s.mu.Lock()
+	s.advisories = slices.DeleteFunc(s.advisories, func(x *Advisory) bool { return x.CVE == adv.CVE })
+	s.advisories = append(s.advisories, adv)
+	s.news = append(s.news, news{c.Task, line})
+	if c.Task == triageTask {
+		s.mark[triageTask] = s.ev.TaskCount(triageTask, source)
+	}
+	s.mu.Unlock()
+	if _, err := s.mem.Put(memory.Entry{Key: "cve/" + adv.CVE + "/fiche", Content: line, Tags: []string{Kind, "fiche"}, Kind: Kind, Task: c.Task, Model: c.Model, Sovereign: c.Sovereign}); err != nil {
+		return err
+	}
+	s.audit.Log("cve_advisory", map[string]any{"task": c.Task, "model": c.Model, "advisory": adv})
+	s.Events.Emit(progress.Event{Task: c.Task, Kind: "cve", Status: "advisory", Model: c.Model, Effort: c.Effort, Detail: i18n.T("cve.advisory", line), Card: adv.card()})
+	return nil
+}
+
+func (a *Advisory) Line() string { return a.line() }
 
 func (a *Advisory) line() string {
 	s := fmt.Sprintf("%s : %s ; touchées : %s ; corrigées : %s ; détection : %s", a.CVE, a.Product, a.Affected, a.Fixed, a.Detection)
 	if a.Kind == KindCompr {
 		s = fmt.Sprintf("%s (compromission) : %s ; versions malveillantes : %s ; versions saines : %s ; détection : %s", a.CVE, a.Product, a.Affected, a.Fixed, a.Detection)
 	}
+	if a.Summary != "" {
+		s += " ; faille : " + a.Summary
+	}
 	if a.Score != "" {
 		s += " ; score : " + a.Score
+	}
+	if x := exploitLine(a.Facts); x != "" {
+		s += " ; exploitation : " + x
 	}
 	if len(a.IOCs) > 0 {
 		s += " ; indicateurs : " + strings.Join(a.IOCs, " ; ")
@@ -369,6 +445,12 @@ func (a *Advisory) line() string {
 	}
 	if len(a.Commands) > 0 {
 		s += " ; commandes de détection : `" + strings.Join(a.Commands, "` ; `") + "`"
+	}
+	if a.Mitigation != "" {
+		s += " ; mitigation : " + a.Mitigation
+	}
+	if a.Remediation != "" {
+		s += " ; correctif : " + a.Remediation
 	}
 	if a.Verified {
 		return s + " " + strings.Join(a.Evidence, "")
@@ -388,6 +470,8 @@ func (a *Advisory) card() *progress.Card {
 		}
 	}
 	add(i18n.T("cve.f.product"), false, a.Product)
+	add(i18n.T("cve.f.summary"), false, a.Summary)
+	add(i18n.T("cve.f.exploitation"), false, exploitLine(a.Facts))
 	add(affected, false, a.Affected)
 	add(fixed, false, a.Fixed)
 	add(i18n.T("cve.f.exposure"), false, a.Exposure)
@@ -397,11 +481,18 @@ func (a *Advisory) card() *progress.Card {
 	add(i18n.T("cve.f.iocs"), false, a.IOCs...)
 	add(i18n.T("cve.f.detection"), false, a.Detection)
 	add(i18n.T("cve.f.commands"), true, a.Commands...)
-	sources := i18n.T("cve.f.unverified")
+	add(i18n.T("cve.f.mitigation"), false, a.Mitigation)
+	add(i18n.T("cve.f.remediation"), false, a.Remediation)
+	src := i18n.T("cve.f.unverified")
 	if a.Verified {
-		sources = strings.Join(a.Evidence, " ")
+		src = strings.Join(a.Evidence, " ")
 	}
-	add(i18n.T("cve.f.sources"), false, sources)
+	add(i18n.T("cve.f.sources"), false, src)
+	if a.Cached != "" {
+		add(i18n.T("cve.f.cache"), false, i18n.T("cve.f.cached", a.Cached))
+	} else if len(a.Changes) > 0 {
+		add(i18n.T("cve.f.cache"), false, a.Changes...)
+	}
 	return c
 }
 
@@ -410,22 +501,25 @@ type reportTool struct{ s *Store }
 func (reportTool) Name() string { return ReportTool }
 
 func (reportTool) Description() string {
-	return "Signale tout de suite le statut d'un actif (pod, image, workload, hôte) pour un sujet de la demande (CVE, GHSA ou compromission, identifiant exact de la fiche), appuyé par au moins une preuve [Exxx] : l'utilisateur le voit aussitôt et les autres tâches le reçoivent. status : compromised si une preuve montre un indicateur de compromission de la fiche (fichier, empreinte, connexion, processus, persistance) ; vulnerable si une preuve montre une version touchée ou malveillante (selon la fiche) ; clean seulement si une preuve couvre la CVE pour cet actif (composant absent de l'inventaire des paquets ou de l'image, version corrigée) ; unknown sinon (binaire introuvable dans le PATH, image non inspectée, version illisible, accès refusé), avec ce qui manque dans detail. asset : chemin stable instance/cible/namespace/objet[/conteneur] ou instance/hôte, toujours le même pour un même actif. Si la fiche indique un composant de l'hôte : asset_type obligatoire (host ou workload) ; un workload prend le statut de ses hôtes, cités dans runs_on et signalés avant lui, même si son image ne contient pas le composant. Re-signaler un actif remplace son statut (ex. unknown puis clean après inspection de l'image). Un signalement par actif et par CVE, puis poursuis."
+	return "Signale tout de suite le statut d'un actif pour un sujet de la demande (CVE, GHSA ou compromission, identifiant exact de la fiche), appuyé par au moins une preuve [Exxx], celle du test qui détermine le statut : l'utilisateur le voit aussitôt et les autres tâches le reçoivent. status : compromised si une preuve montre un indicateur de compromission de la fiche (fichier, empreinte, connexion, processus, persistance) ; vulnerable si une preuve montre une version touchée ou malveillante (selon la fiche) ; clean seulement si une preuve couvre la CVE pour cet actif (composant absent de l'inventaire des paquets ou de l'image, version corrigée) ; unknown sinon (binaire introuvable dans le PATH, image non inspectée, version illisible, accès refusé), avec ce qui manque dans detail. asset : chemin stable instance/cible/namespace/objet[/conteneur] ou instance/hôte, toujours le même pour un même actif. asset_type (obligatoire) : host (VM, serveur, nœud), workload (pod, conteneur, déploiement), image, service (point d'accès managé, URL). os : la distribution lue dans /etc/os-release, au format « ID VERSION_ID VERSION_CODENAME » (ex. « ubuntu 22.04 jammy », « rhel 9.4 »), quand elle est connue : clotr y associe la version corrigée de la fiche. Pour vulnerable ou compromised : exposure (exposed si les prérequis d'exploitation de la fiche sont réunis, limited si l'un manque, unmeasured s'ils n'ont pas été mesurés) et conditions (ce qui a été mesuré, ex. « port 22 publié par le load balancer public », « module non chargé »), avec leur preuve. Si la fiche indique un composant de l'hôte : asset_type host ou workload ; un workload prend le statut de ses hôtes, cités dans runs_on et signalés avant lui, même si son image ne contient pas le composant. Re-signaler un actif remplace son statut (ex. unknown puis clean après inspection de l'image). Un signalement par actif et par CVE, puis poursuis."
 }
 
 func (reportTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"cve":{"type":"string"},"asset":{"type":"string","description":"ex: k8s-prod/prod/web/web-7d9f/app ou vm-prod/web1"},"status":{"type":"string","enum":["clean","vulnerable","compromised","unknown"]},"asset_type":{"type":"string","enum":["host","workload"],"description":"obligatoire si la fiche indique un composant de l'hôte"},"runs_on":{"type":"array","items":{"type":"string"},"description":"pour un workload et un composant de l'hôte : les hôtes qui l'exécutent, avec leur asset signalé"},"detail":{"type":"string","description":"version ou paquet trouvé, ou ce qui manque pour conclure"},"evidence":{"type":"array","items":{"type":"string"},"description":"ex: [\"E012\"]"}},"required":["cve","asset","status","detail","evidence"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"cve":{"type":"string"},"asset":{"type":"string","description":"ex: k8s-prod/prod/web/web-7d9f/app ou vm-prod/web1"},"asset_type":{"type":"string","enum":["host","workload","image","service"]},"status":{"type":"string","enum":["clean","vulnerable","compromised","unknown"]},"os":{"type":"string","description":"ID VERSION_ID VERSION_CODENAME de /etc/os-release, ex: ubuntu 22.04 jammy"},"exposure":{"type":"string","enum":["exposed","limited","unmeasured"],"description":"obligatoire pour vulnerable ou compromised"},"conditions":{"type":"string","description":"prérequis d'exploitation mesurés sur cet actif ; obligatoire pour vulnerable ou compromised"},"runs_on":{"type":"array","items":{"type":"string"},"description":"pour un workload et un composant de l'hôte : les hôtes qui l'exécutent, avec leur asset signalé"},"detail":{"type":"string","description":"version ou paquet trouvé, ou ce qui manque pour conclure"},"evidence":{"type":"array","items":{"type":"string"},"description":"preuve du test déterminant d'abord, ex: [\"E012\"]"}},"required":["cve","asset","asset_type","status","detail","evidence"]}`)
 }
 
 func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
 	a, err := tools.Decode[struct {
-		CVE      string           `json:"cve"`
-		Asset    string           `json:"asset"`
-		Status   string           `json:"status"`
-		Type     string           `json:"asset_type"`
-		RunsOn   tools.StringList `json:"runs_on"`
-		Detail   string           `json:"detail"`
-		Evidence tools.StringList `json:"evidence"`
+		CVE        string           `json:"cve"`
+		Asset      string           `json:"asset"`
+		Status     string           `json:"status"`
+		Type       string           `json:"asset_type"`
+		OS         string           `json:"os"`
+		Exposure   string           `json:"exposure"`
+		Conditions string           `json:"conditions"`
+		RunsOn     tools.StringList `json:"runs_on"`
+		Detail     string           `json:"detail"`
+		Evidence   tools.StringList `json:"evidence"`
 	}](raw)
 	if err != nil {
 		return "", err
@@ -433,6 +527,21 @@ func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 	id, err := t.s.checkID(a.CVE)
 	if err != nil {
 		return "", err
+	}
+	if !slices.Contains(assetTypes, a.Type) {
+		return "", fmt.Errorf("asset_type %q invalide : host (VM, serveur, nœud), workload (pod, conteneur), image ou service (point d'accès managé, URL)", a.Type)
+	}
+	positive := a.Status == Vulnerable || a.Status == Compromised
+	exposure, conditions := a.Exposure, oneLine(a.Conditions)
+	if positive {
+		if !slices.Contains(exposures, exposure) {
+			return "", errors.New("exposure requis pour un actif vulnerable ou compromised : exposed si les prérequis d'exploitation de la fiche sont réunis, limited si l'un manque, unmeasured s'ils n'ont pas été mesurés")
+		}
+		if conditions == "" {
+			return "", errors.New("conditions requis pour un actif vulnerable ou compromised : ce qui a été mesuré des prérequis d'exploitation (exposition réseau, option activée), ou pourquoi ce n'est pas mesurable")
+		}
+	} else {
+		exposure, conditions = "", ""
 	}
 	asset := normAsset(a.Asset)
 	if asset == "" {
@@ -450,7 +559,7 @@ func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 		return "", err
 	}
 	c := tools.CallerFrom(ctx)
-	f := &Finding{CVE: id, Asset: asset, Status: a.Status, Detail: detail, Evidence: ids, Task: c.Task}
+	f := &Finding{CVE: id, Asset: asset, Type: a.Type, Status: a.Status, Detail: detail, OS: oneLine(a.OS), Exposure: exposure, Conditions: conditions, Evidence: ids, Task: c.Task}
 	t.s.mu.Lock()
 	if f.RunsOn, err = t.s.checkHost(id, a.Status, a.Type, a.RunsOn); err != nil {
 		t.s.mu.Unlock()
@@ -458,7 +567,7 @@ func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 	}
 	for i, old := range t.s.findings {
 		if old.CVE == id && strings.EqualFold(old.Asset, asset) {
-			if old.Status == f.Status && old.Detail == f.Detail {
+			if old.Status == f.Status && old.Detail == f.Detail && old.Exposure == f.Exposure && old.Conditions == f.Conditions && old.OS == f.OS {
 				t.s.mu.Unlock()
 				return fmt.Sprintf("statut déjà signalé par %s : poursuis ta tâche", old.Task), nil
 			}
@@ -490,7 +599,7 @@ func (s *Store) checkHost(id, status, kind string, runsOn []string) ([]string, e
 		return nil, nil
 	}
 	if kind != AssetHost && kind != AssetWork {
-		return nil, errors.New("asset_type requis (host ou workload) : la fiche indique un composant de l'hôte")
+		return nil, errors.New("asset_type host ou workload : la fiche indique un composant de l'hôte, qui n'est jamais dans une image ; signale l'hôte, ou le workload qui s'exécute dessus")
 	}
 	if kind == AssetHost {
 		return nil, nil
@@ -542,7 +651,11 @@ func (f *Finding) withHosts() string {
 }
 
 func (f *Finding) line() string {
-	return fmt.Sprintf("%s %s · %s : %s %s", label(f.Status), f.CVE, f.Asset, f.withHosts(), strings.Join(f.Evidence, ""))
+	s := fmt.Sprintf("%s %s · %s : %s", label(f.Status), f.CVE, f.Asset, f.withHosts())
+	if f.Exposure != "" {
+		s += " ; exposition " + f.Exposure + " : " + f.Conditions
+	}
+	return s + " " + strings.Join(f.Evidence, "")
 }
 
 func (f *Finding) display() string {
@@ -583,136 +696,6 @@ func oneLine(s string) string {
 
 func cell(s string) string {
 	return strings.ReplaceAll(s, "|", `\|`)
-}
-
-func (s *Store) Section() string {
-	advs, finds := s.Advisories(), s.Findings()
-	if len(advs) == 0 && len(finds) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("## " + i18n.R("cve.section") + "\n\n")
-	if len(advs) > 0 {
-		b.WriteString("| CVE | " + i18n.R("cve.col.product") + " | " + i18n.R("cve.col.affected") + " | " + i18n.R("cve.col.fixed") + " | " + i18n.R("cve.col.score") + " | " + i18n.R("cve.col.sources") + " |\n|---|---|---|---|---|---|\n")
-		for _, a := range advs {
-			src := strings.Join(a.Evidence, "")
-			if !a.Verified {
-				src = i18n.R("cve.unverified")
-			}
-			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n", a.CVE, cell(a.Product), cell(a.Affected), cell(a.Fixed), cell(a.Score), src)
-		}
-		b.WriteString("\n")
-	}
-	if len(finds) == 0 {
-		return strings.TrimSuffix(b.String(), "\n")
-	}
-	rows := assetRows(finds)
-	counts := map[string]int{}
-	for _, r := range rows {
-		counts[r.worst(s.IDs)]++
-	}
-	if counts[Compromised] > 0 {
-		fmt.Fprintf(&b, "☠️ %d %s · ", counts[Compromised], i18n.R("cve.st.compromised"))
-	}
-	fmt.Fprintf(&b, "🚨 %d %s · ❓ %d %s · ✅ %d %s (%d %s)\n\n", counts[Vulnerable], i18n.R("cve.st.vulnerable"), counts[Unknown], i18n.R("cve.st.unknown"), counts[Clean], i18n.R("cve.st.clean"), len(rows), i18n.R("cve.assets"))
-	order := map[string]int{Compromised: 0, Vulnerable: 1, Unknown: 2, Clean: 3}
-	slices.SortStableFunc(rows, func(x, y *assetRow) int {
-		if d := order[x.worst(s.IDs)] - order[y.worst(s.IDs)]; d != 0 {
-			return d
-		}
-		return strings.Compare(x.asset, y.asset)
-	})
-	var clean []*assetRow
-	head := false
-	for _, r := range rows {
-		w := r.worst(s.IDs)
-		if w == Clean {
-			clean = append(clean, r)
-			continue
-		}
-		if !head {
-			b.WriteString("| | " + i18n.R("cve.col.asset"))
-			for _, id := range s.IDs {
-				b.WriteString(" | " + id)
-			}
-			b.WriteString(" | " + i18n.R("cve.col.detail") + " | " + i18n.R("cve.col.evidence") + " |\n|" + strings.Repeat("---|", len(s.IDs)+4) + "\n")
-			head = true
-		}
-		fmt.Fprintf(&b, "| %s | %s", Icon(w), cell(r.asset))
-		var details, ev []string
-		for _, id := range s.IDs {
-			f, ok := r.by[id]
-			if !ok {
-				b.WriteString(" | —")
-				continue
-			}
-			b.WriteString(" | " + Icon(f.Status))
-			if d := f.withHosts(); f.Status != Clean && !slices.Contains(details, d) {
-				details = append(details, d)
-			}
-			for _, e := range f.Evidence {
-				if !slices.Contains(ev, e) {
-					ev = append(ev, e)
-				}
-			}
-		}
-		fmt.Fprintf(&b, " | %s | %s |\n", cell(shorten(strings.Join(details, " / "), maxDetail)), strings.Join(ev, ""))
-	}
-	if len(clean) > 0 {
-		if head {
-			b.WriteString("\n")
-		}
-		b.WriteString("**✅ " + i18n.R("cve.clean_title") + "** (" + i18n.R("cve.clean_note") + ")\n\n")
-		var groups []string
-		members := map[string][]string{}
-		for _, r := range clean {
-			g, leaf := splitAsset(r.asset)
-			if _, ok := members[g]; !ok {
-				groups = append(groups, g)
-			}
-			members[g] = append(members[g], leaf)
-		}
-		for _, g := range groups {
-			fmt.Fprintf(&b, "- `%s` (%d) : %s\n", g, len(members[g]), strings.Join(members[g], ", "))
-		}
-	}
-	return strings.TrimSuffix(b.String(), "\n")
-}
-
-type assetRow struct {
-	asset string
-	by    map[string]Finding
-}
-
-func (r *assetRow) worst(ids []string) string {
-	rank := map[string]int{Clean: 0, Unknown: 1, Vulnerable: 2, Compromised: 3}
-	w := Clean
-	for _, id := range ids {
-		st := Unknown
-		if f, ok := r.by[id]; ok {
-			st = f.Status
-		}
-		if rank[st] > rank[w] {
-			w = st
-		}
-	}
-	return w
-}
-
-func assetRows(finds []Finding) []*assetRow {
-	var rows []*assetRow
-	index := map[string]*assetRow{}
-	for _, f := range finds {
-		k := strings.ToLower(f.Asset)
-		r, ok := index[k]
-		if !ok {
-			r = &assetRow{asset: f.Asset, by: map[string]Finding{}}
-			index[k] = r
-			rows = append(rows, r)
-		}
-		r.by[f.CVE] = f
-	}
-	return rows
 }
 
 const (

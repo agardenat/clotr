@@ -109,11 +109,21 @@ func TestCallSites(t *testing.T) {
 			lit, ok := call.Args[0].(*ast.BasicLit)
 			if !ok || lit.Kind != token.STRING {
 				if b, ok := call.Args[0].(*ast.BinaryExpr); ok {
-					if l, ok := b.X.(*ast.BasicLit); ok {
+					x := b.X
+					for {
+						inner, ok := x.(*ast.BinaryExpr)
+						if !ok {
+							break
+						}
+						x = inner.X
+					}
+					if l, ok := x.(*ast.BasicLit); ok {
 						p, _ := strconv.Unquote(l.Value)
-						for k := range msgs {
-							if strings.HasPrefix(k, p) {
-								used[k] = true
+						for _, cat := range []map[string]msg{msgs, reportMsgs} {
+							for k := range cat {
+								if strings.HasPrefix(k, p) {
+									used[k] = true
+								}
 							}
 						}
 					}
@@ -156,5 +166,36 @@ func TestCallSites(t *testing.T) {
 				t.Errorf("clé %q inutilisée", k)
 			}
 		}
+	}
+}
+
+func TestGuessAndReportFrom(t *testing.T) {
+	for text, want := range map[string]string{
+		"CVE-2026-119618 sur calym":                  "fr",
+		"Est-ce que CVE-2024-6387 touche le poste ?": "fr",
+		"Is CVE-2024-6387 affecting our hosts?":      "en",
+		"check CVE-2024-6387 on the k8s clusters":    "en",
+		"CVE-2024-6387":                              "",
+	} {
+		if got, _ := Guess(text); got != want {
+			t.Errorf("%q : %q, attendu %q", text, got, want)
+		}
+	}
+	prev := report
+	defer func() { report = prev }()
+	SetReport("en")
+	ReportFrom("auto", "CVE-2026-119618 sur calym")
+	if report != "fr" {
+		t.Fatal("langue auto non déduite")
+	}
+	ReportFrom("en", "CVE-2026-119618 sur calym")
+	ReportFrom("auto", "CVE-2024-6387")
+	if report != "fr" {
+		t.Fatal("langue imposée ou demande sans indice : la langue ne doit pas changer")
+	}
+	SetReport("en")
+	ReportFrom("en", "vérifie le poste")
+	if report != "en" {
+		t.Fatal("langue imposée ignorée")
 	}
 }

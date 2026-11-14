@@ -522,7 +522,7 @@ func (in *Instance) MentionClient(text string) string {
 	if MentionTerm(text, in.ClientTerms) == "" {
 		return ""
 	}
-	return "client " + in.Client
+	return "client " + strings.ToUpper(in.Client)
 }
 
 func (in *Instance) MentionGeneric(text string) string {

@@ -137,6 +137,17 @@ func (s *Store) Has(id string) bool {
 	return ok
 }
 
+func (s *Store) Item(id string) (Item, bool) {
+	if s == nil {
+		return Item{}, false
+	}
+	id = strings.Trim(strings.TrimSpace(id), "[]")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, ok := s.items[id]
+	return it, ok
+}
+
 func (s *Store) Proven(text string) bool {
 	for _, id := range Cited(text) {
 		if s.Has(id) {

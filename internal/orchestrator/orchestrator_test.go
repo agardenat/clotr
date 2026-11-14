@@ -16,6 +16,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/cve"
 	"github.com/agardenat/clotr/internal/evidence"
+	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/lead"
 	"github.com/agardenat/clotr/internal/llm"
 	"github.com/agardenat/clotr/internal/memory"
@@ -31,10 +32,11 @@ var taskID = regexp.MustCompile(`Ta tâche \(([^)]+)\)`)
 const workDelay = 150 * time.Millisecond
 
 type timeline struct {
-	mu    sync.Mutex
-	start map[string]time.Time
-	end   map[string]time.Time
-	input map[string]string
+	mu     sync.Mutex
+	start  map[string]time.Time
+	end    map[string]time.Time
+	input  map[string]string
+	system map[string]string
 }
 
 func newOrch(t *testing.T, plans []string, fail map[string]bool) (*Orchestrator, *timeline) {
@@ -59,7 +61,7 @@ limits: {max_agents: 8, max_tasks: 5}
 	reg := tools.NewRegistry(1000)
 	reg.Add(testutil.FakeTool{ToolName: "k8s_list", Fn: func(context.Context, json.RawMessage) (string, error) { return "ok", nil }})
 	reg.Add(testutil.FakeTool{ToolName: "fs_read", Fn: func(context.Context, json.RawMessage) (string, error) { return "ok", nil }})
-	tl := &timeline{start: map[string]time.Time{}, end: map[string]time.Time{}, input: map[string]string{}}
+	tl := &timeline{start: map[string]time.Time{}, end: map[string]time.Time{}, input: map[string]string{}, system: map[string]string{}}
 	var planIdx int
 	var pmu sync.Mutex
 	chat := &testutil.FakeChat{Fn: func(ctx context.Context, _ string, req llm.Request) (*llm.Response, error) {
@@ -76,6 +78,9 @@ limits: {max_agents: 8, max_tasks: 5}
 			tl.mu.Unlock()
 			return testutil.Reply(p), nil
 		case strings.Contains(sys, "réponse finale"):
+			tl.mu.Lock()
+			tl.input["synthesizer"], tl.system["synthesizer"] = user, sys
+			tl.mu.Unlock()
 			return testutil.Reply("# Rapport"), nil
 		}
 		id := taskID.FindStringSubmatch(user)[1]
@@ -769,33 +774,50 @@ func TestCVEMode(t *testing.T) {
 	o.CVE = cve.New([]string{"CVE-2026-0001"}, o.Memory, ev, audit.Nop())
 	o.Tools.Add(o.CVE.Tools()...)
 	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
-	if _, err := o.CVE.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0001","product":"PHP","affected":"< 8.2.27","fixed":"8.2.27","score":"CVSS 3.1 9.8 CRITICAL","host_component":false,"detection":"php -v","commands":["php -v"],"evidence":["`+src+`"]}`)); err != nil {
+	if _, err := o.CVE.Tools()[0].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0001","product":"PHP","affected":"< 8.2.27","fixed":"8.2.27","score":"CVSS 3.1 9.8 CRITICAL","summary":"s","mitigation":"aucun contournement publié","remediation":"PHP 8.2.27","host_component":false,"detection":"php -v","commands":["php -v"],"evidence":["`+src+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if o.advisoriesDone() == "" {
 		t.Fatal("fiches complètes non détectées")
 	}
-	if _, err := o.CVE.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"k8s/prod/web","status":"vulnerable","detail":"8.2.4","evidence":["`+src+`"]}`)); err != nil {
+	if _, err := o.CVE.Tools()[1].Call(ctx, json.RawMessage(`{"cve":"CVE-2026-0001","asset":"k8s/prod/web","asset_type":"workload","status":"vulnerable","exposure":"exposed","conditions":"ingress public","detail":"8.2.4","evidence":["`+src+`"]}`)); err != nil {
 		t.Fatal(err)
 	}
+	defer i18n.SetReport(i18n.Report())
 	rep, err := o.Run(context.Background(), "CVE-2026-0001 sur prod")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Results[0].TaskID != "t0" || !strings.Contains(tl.input["t0"], "Fiches, avant toute planification") || !strings.Contains(tl.input["t0"], "CVE-2026-0001") {
-		t.Fatalf("t0: %q", tl.input["t0"])
+	if r := rep.Results[0]; r.TaskID != "t0" || r.Role != cve.ClotrModel || tl.input["t0"] != "" || len(r.Findings) != 1 {
+		t.Fatalf("t0 relancé alors que toutes les fiches existent: %+v %q", r, tl.input["t0"])
 	}
-	if !strings.Contains(tl.input["planner"], "Fiches CVE établies") || strings.Contains(tl.input["planner"], "tri d'incident") {
+	if !strings.Contains(tl.input["planner"], "Fiches CVE établies") || !strings.Contains(tl.input["planner"], "CVE-2026-0001 : PHP") {
 		t.Fatalf("planner: %q", tl.input["planner"])
 	}
 	if !slices.Contains(rep.Plan.Tasks[1].Tools, cve.ReportTool) {
 		t.Fatalf("outils: %v", rep.Plan.Tasks[1].Tools)
 	}
-	if !strings.HasPrefix(rep.Markdown, "## ") || !strings.Contains(rep.Markdown, "| 🚨 | k8s/prod/web | 🚨 |") || !strings.HasSuffix(rep.Markdown, "# Rapport") {
+	if !strings.Contains(tl.system["synthesizer"], "{{cve.<ID>.positives}}") || strings.Contains(tl.system["synthesizer"], "1. Conclusion (5 lignes max)") {
+		t.Fatalf("modèle CVE absent du synthétiseur")
+	}
+	if !strings.Contains(tl.input["synthesizer"], "{{cve.CVE-2026-0001.positives}}") {
+		t.Fatalf("blocs absents de l'entrée du synthétiseur: %q", tl.input["synthesizer"])
+	}
+	if !strings.HasPrefix(rep.Markdown, "# Rapport") || !strings.Contains(rep.Markdown, "## Données CVE") || !strings.Contains(rep.Markdown, "**🚨 k8s/prod/web** (workload)") {
 		t.Fatalf("rapport: %s", rep.Markdown)
 	}
 	if !strings.Contains(o.incidentRule(), "Mode CVE") {
 		t.Fatal("consigne CVE absente")
+	}
+
+	o2, tl2 := newOrch(t, []string{dagPlan}, nil)
+	o2.CVE = cve.New([]string{"CVE-2026-0002"}, o2.Memory, evidence.Open(t.TempDir(), 1), audit.Nop())
+	o2.Tools.Add(o2.CVE.Tools()...)
+	if _, err := o2.Run(context.Background(), "CVE-2026-0002 sur prod"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tl2.input["t0"], "Fiches, avant toute planification") || !strings.Contains(tl2.input["t0"], "CVE-2026-0002") {
+		t.Fatalf("t0: %q", tl2.input["t0"])
 	}
 }
 

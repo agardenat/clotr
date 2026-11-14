@@ -50,6 +50,14 @@ report_export:
   mcp: ""
   # role: analyst
 
+# Mode CVE : distributions interrogées (redhat, ubuntu, debian ; défaut : les trois).
+# cve:
+#   sources: [redhat, ubuntu]
+
+# Modèle de rapport par mode (default, cve), à la place du modèle embarqué.
+# report_models:
+#   cve: ~/.config/clotr/report-cve.md
+
 routing:
   sovereign: prefer
 
