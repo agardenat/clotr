@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.70.1] - 2026-11-14
 
 ### Modifié
 - Progression : quand les appels d'outils d'une étape sont terminés, la ligne de la tâche indique l'attente du modèle au lieu de garder le dernier outil affiché.
