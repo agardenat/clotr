@@ -28,14 +28,16 @@ func Model(mode string, overrides map[string]string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("modèle de rapport %s : %w", mode, err)
 		}
-		return string(b), nil
+		return lf(b), nil
 	}
 	b, err := embedded.ReadFile("models/" + mode + ".md")
 	if err != nil {
 		return "", err
 	}
-	return string(b), nil
+	return lf(b), nil
 }
+
+func lf(b []byte) string { return strings.ReplaceAll(string(b), "\r\n", "\n") }
 
 var (
 	placeholder = regexp.MustCompile(`\{\{\s*([A-Za-z0-9._:-]+)\s*\}\}`)

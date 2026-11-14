@@ -26,10 +26,10 @@ func TestModel(t *testing.T) {
 		t.Fatal("mode inconnu accepté")
 	}
 	path := filepath.Join(t.TempDir(), "cve.md")
-	if err := os.WriteFile(path, []byte("modèle local {{cve.<ID>.verdict}}"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("modèle local\r\n{{cve.<ID>.verdict}}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := Model(ModeCVE, map[string]string{ModeCVE: path}); err != nil || got != "modèle local {{cve.<ID>.verdict}}" {
+	if got, err := Model(ModeCVE, map[string]string{ModeCVE: path}); err != nil || got != "modèle local\n{{cve.<ID>.verdict}}" {
 		t.Fatalf("surcharge: %q %v", got, err)
 	}
 	if _, err := Model(ModeCVE, map[string]string{ModeCVE: path + ".absent"}); err == nil {

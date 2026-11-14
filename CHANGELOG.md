@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.69.1] - 2026-11-14
+
+### Corrigé
+- Windows : les modèles de rapport embarqués gardaient les fins de ligne CRLF du checkout ; ils sont normalisés au chargement (fichiers de `report_models` compris) et les modèles du dépôt sont forcés en LF.
+
 ## [0.69.0] - 2026-11-14
 
 ### Ajouté
