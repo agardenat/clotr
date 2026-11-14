@@ -437,6 +437,68 @@ func TestConcludeNowEndsTask(t *testing.T) {
 	}
 }
 
+func TestConcludeNowCancelsSilentCall(t *testing.T) {
+	var cur, peak int32
+	var r *Runner
+	var final llm.Request
+	started := make(chan struct{})
+	chat := &testutil.FakeChat{Fn: func(ctx context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		if len(req.Tools) > 0 {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		final = req
+		return testutil.Reply(`{"findings":[],"gaps":["interrompue"]}`), nil
+	}}
+	r = runner(chat, registry(&cur, &peak))
+	r.MaxSteps = 10
+	go func() {
+		<-started
+		r.ConcludeNow()
+	}()
+	done := make(chan struct{})
+	var out *Output
+	var err error
+	go func() {
+		out, err = r.Run(context.Background(), Spec{TaskID: "t1", System: "s", User: "u", Tools: []string{"k8s_list"}, Candidates: models})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("appel muet non interrompu par la demande de conclusion")
+	}
+	if err != nil || out.Limit != "interrupted" || len(final.Tools) != 0 || !strings.Contains(out.Content, "interrompue") {
+		t.Fatalf("conclusion: %v %+v", err, out)
+	}
+}
+
+func TestConcludeNowSilentConclusion(t *testing.T) {
+	defer func(d time.Duration) { concludeWait = d }(concludeWait)
+	concludeWait = 50 * time.Millisecond
+	var cur, peak int32
+	var r *Runner
+	chat := &testutil.FakeChat{Fn: func(ctx context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		if len(req.Messages) == 2 {
+			r.ConcludeNow()
+			return testutil.Reply("", testutil.Call("k8s_list", map[string]string{"ns": "a"})), nil
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	r = runner(chat, registry(&cur, &peak))
+	r.ConcludeNotes = func(string) string { return "ns a listé" }
+	out, err := r.Run(context.Background(), Spec{TaskID: "t1", System: "s", User: "u", Tools: []string{"k8s_list"}, Candidates: models, Check: func(string) string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct{ Gaps []string }
+	if json.Unmarshal([]byte(out.Content), &parsed) != nil || len(parsed.Gaps) != 2 || !strings.Contains(parsed.Gaps[0], "interrompue") || !strings.Contains(parsed.Gaps[1], "ns a listé") {
+		t.Fatalf("réponse de repli: %q", out.Content)
+	}
+}
+
 func TestReachedEndsTaskWithoutLimit(t *testing.T) {
 	var cur, peak int32
 	var final llm.Request
