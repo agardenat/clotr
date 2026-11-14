@@ -16,7 +16,7 @@ import (
 func TestToolFilterFromAudit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.jsonl")
 	data := `{"kind":"other"}
-{"kind":"run_start","tools":["prod_api_get","prod_ssh_tail","memory_write","mcp_tracker_issue_get","k8s_list","cve_report","cve_advisory"]}
+{"kind":"run_start","tools":["prod_api_get","prod_ssh_tail","memory_write","mcp_tracker_issue_get","k8s_list","cve_report","cve_advisory","ticket_get","ticket_related","cause_report"]}
 `
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)

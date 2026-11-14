@@ -1,5 +1,15 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.70.2] - 2026-11-14
+
+### Corrigé
+- `idle_timeout` n'était remis à zéro que par une ligne reçue, lignes de maintien de connexion comprises : un modèle qui ne produisait rien derrière une passerelle envoyant ces lignes bloquait sa tâche, et le run, jusqu'à `request_timeout`. Seules les données du flux le remettent à zéro ; l'appel muet bascule sur le modèle suivant.
+- Le premier Ctrl-C n'agissait qu'à l'étape suivante d'une tâche : un appel au modèle ou un outil en cours la bloquait. Il interrompt désormais les appels en cours et demande la conclusion ; si le modèle ne la rend pas sous 2 minutes, la tâche se termine avec ses notes, marquées non vérifiées, et le rapport est produit.
+- `session --synthesize` refusait un tour en mode incident ou demande de changement (« -t/-x ticket : aucun groupe d'outils ») : les outils internes `ticket_*` et `cause_report` ne sont plus pris pour des connecteurs ; `cve` et `ticket` sont réservés comme noms d'instance.
+- `session --synthesize` affichait le rapport en Markdown brut dans le terminal : il est mis en forme comme avec `run` et `session` (`--raw` le garde brut).
+- Commentaire interne : rédigé aussi après un run conclu par Ctrl-C et par `session --synthesize`, et réaffiché par `session <nom>`.
+- Le mode et le ticket d'un tour sont enregistrés dans la session dès son début : `session --synthesize` les reprend aussi après un run coupé.
+
 ## [0.70.1] - 2026-11-14
 
 ### Modifié

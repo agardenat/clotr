@@ -454,12 +454,12 @@ func (c *Client) chatStream(ctx context.Context, req Request) (*Response, error)
 	br := bufio.NewReaderSize(resp.Body, 64<<10)
 	for {
 		line, err := br.ReadString('\n')
-		if idle != nil && line != "" {
-			idle.Reset(c.idleTimeout)
-		}
 		line = strings.TrimSpace(line)
 		if data, ok := strings.CutPrefix(line, "data:"); ok {
 			data = strings.TrimSpace(data)
+			if idle != nil && data != "" {
+				idle.Reset(c.idleTimeout)
+			}
 			if data == "[DONE]" {
 				break
 			}

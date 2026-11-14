@@ -70,10 +70,19 @@ type Runner struct {
 	Budget          *budget.Tracker
 	Boundary        Boundary
 	down            sync.Map
+	inflight        sync.Map
 	concluding      atomic.Bool
 }
 
-func (r *Runner) ConcludeNow() { r.concluding.Store(true) }
+var concludeWait = 2 * time.Minute
+
+func (r *Runner) ConcludeNow() {
+	r.concluding.Store(true)
+	r.inflight.Range(func(_, v any) bool {
+		v.(context.CancelFunc)()
+		return true
+	})
+}
 
 func (r *Runner) Concluding() bool { return r.concluding.Load() }
 
@@ -145,13 +154,14 @@ func (s *session) effort(m catalog.ModelInfo) string {
 }
 
 type session struct {
-	id    string
-	r     *Runner
-	spec  Spec
-	cur   int
-	out   *Output
-	model catalog.ModelInfo
-	shown string
+	id     string
+	r      *Runner
+	spec   Spec
+	cur    int
+	out    *Output
+	model  catalog.ModelInfo
+	shown  string
+	cancel context.CancelFunc
 }
 
 func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
@@ -168,6 +178,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 	read := map[string]map[int]bool{}
 	idle, checks := 0, 0
 	reached := ""
+	defer s.release()
 	for step := 1; ; step++ {
 		s.out.Steps = step
 		t0 := time.Now()
@@ -214,8 +225,19 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 		if !final {
 			req.Tools = defs
 		}
-		resp, err := s.chat(ctx, step, req)
+		stepCtx := s.stepContext(ctx, final, interrupted)
+		resp, err := s.chat(stepCtx, step, req)
 		if err != nil {
+			switch {
+			case ctx.Err() != nil:
+			case interrupted:
+				r.Audit.Log("conclude_failed", map[string]any{"task": spec.TaskID, "step": step, "error": err.Error()})
+				s.out.Content = r.interruptedAnswer(spec)
+				return s.out, nil
+			case !final && r.Concluding():
+				r.Audit.Log("call_interrupted", map[string]any{"task": spec.TaskID, "step": step})
+				continue
+			}
 			return s.out, err
 		}
 		if resp, err = s.switchIfOutputExhausted(ctx, step, req, resp); err != nil {
@@ -293,7 +315,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
 		}
 		calls = append(calls, toolMsg{idx: len(msgs), step: step})
 		msgs = append(msgs, msg)
-		for _, m := range s.execTools(ctx, step, msg.ToolCalls) {
+		for _, m := range s.execTools(stepCtx, step, msg.ToolCalls) {
 			produced = append(produced, toolMsg{idx: len(msgs), step: step})
 			msgs = append(msgs, m)
 		}
@@ -398,6 +420,48 @@ func (r *Runner) compact(msgs []llm.Message, produced, calls []toolMsg, step int
 }
 
 const compactMark = "[… sortie raccourcie dans l'historique"
+
+func (s *session) release() {
+	s.r.inflight.Delete(s)
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
+}
+
+func (s *session) stepContext(ctx context.Context, final, interrupted bool) context.Context {
+	s.release()
+	var c context.Context
+	if interrupted {
+		c, s.cancel = context.WithTimeout(ctx, concludeWait)
+		return c
+	}
+	c, s.cancel = context.WithCancel(ctx)
+	if !final {
+		s.r.inflight.Store(s, s.cancel)
+		if s.r.Concluding() {
+			s.cancel()
+		}
+	}
+	return c
+}
+
+func (r *Runner) interruptedAnswer(spec Spec) string {
+	gap := "Tâche interrompue à la demande de l'utilisateur : le modèle n'a pas rendu sa conclusion dans le délai ; ses sorties d'outils restent archivées (evidence_search)."
+	var notes []string
+	if r.ConcludeNotes != nil {
+		for _, l := range strings.Split(strings.TrimSpace(r.ConcludeNotes(spec.TaskID)), "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				notes = append(notes, "Note de la tâche, non vérifiée : "+l)
+			}
+		}
+	}
+	if spec.Check == nil {
+		return strings.Join(append([]string{gap}, notes...), "\n")
+	}
+	b, _ := json.Marshal(map[string]any{"findings": []string{}, "evidence": []string{}, "gaps": append([]string{gap}, notes...)})
+	return string(b)
+}
 
 func (r *Runner) notes(task string) string {
 	if r.ConcludeNotes == nil {

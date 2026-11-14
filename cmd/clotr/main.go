@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1788,6 +1789,9 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	if rt.mainTicket != nil {
 		sess.Turns[n-1].Ticket = rt.mainTicket.ID
 	}
+	if err := sess.Save(); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.session"), err)
+	}
 	rt.evidence.Begin(filepath.Join(turnDir, "evidence"), n)
 	if err := rt.audit.Reopen(turnDir, "audit"); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.audit"), err)
@@ -1837,17 +1841,8 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		interruptHook.Store(nil)
 	}
 	var comment string
-	if report != nil && report.Markdown != "" && runErr == nil && ctx.Err() == nil {
-		c, err := orch.Comment(ctx, report.Markdown)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("ticket.comment_failed", err))
-		} else if c != "" {
-			comment = c
-			path := filepath.Join(turnDir, "comment.txt")
-			if err := os.WriteFile(path, []byte(c+"\n"), 0o600); err != nil {
-				fmt.Fprintln(os.Stderr, i18n.T("cli.warn.session"), err)
-			}
-		}
+	if report != nil && report.Markdown != "" && ctx.Err() == nil {
+		comment = rt.writeComment(ctx, orch, report.Markdown, turnDir)
 	}
 	cleaned := rt.cleanup(ctx)
 	used := rt.usedModels(report)
@@ -2061,6 +2056,21 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 		}
 	}
 	return runErr
+}
+
+func (rt *app) writeComment(ctx context.Context, orch *orchestrator.Orchestrator, md, dir string) string {
+	c, err := orch.Comment(ctx, md)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("ticket.comment_failed", err))
+		return ""
+	}
+	if c == "" {
+		return ""
+	}
+	if err := os.WriteFile(filepath.Join(dir, "comment.txt"), []byte(c+"\n"), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.session"), err)
+	}
+	return c
 }
 
 func printComment(f *os.File, main *template.Ticket, text string) {
@@ -2449,6 +2459,10 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	}
 	rt.audit.Log("resynthesize", map[string]any{"session": sess.Name, "turn": n, "results": len(results)})
 	md, model, err := orch.Synthesize(ctx, sess.Turns[n-1].Request, results)
+	var comment string
+	if err == nil && md != "" {
+		comment = rt.writeComment(ctx, orch, md, dir)
+	}
 	events.Close()
 	if err != nil {
 		return err
@@ -2473,8 +2487,12 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 			return err
 		}
 		fmt.Fprintln(os.Stderr, i18n.T("cli.report"), o.output)
-	} else if _, err := fmt.Fprintln(w, md); err != nil {
-		return err
+	} else {
+		writeMarkdown(w, md, o.raw || o.withEvidence)
+	}
+	if comment != "" {
+		printComment(os.Stderr, rt.mainTicket, comment)
+		fmt.Fprintln(os.Stderr, i18n.T("ticket.comment_saved", filepath.Join(dir, "comment.txt")))
 	}
 	if o.exportFmt == "" {
 		return nil
@@ -2493,6 +2511,8 @@ func importPriorEvidence(sess *session.Session, store *evidence.Store, turn int)
 		}
 	}
 }
+
+var internalPrefixes = []string{"memory", "cve", "ticket", "cause"}
 
 func toolFilterFromAudit(path string) []string {
 	f, err := os.Open(path)
@@ -2522,7 +2542,7 @@ func toolFilterFromAudit(path string) []string {
 				if prefix == "mcp" && len(parts) > 1 {
 					prefix += "_" + parts[1]
 				}
-				if prefix != "memory" && prefix != "cve" && !slices.Contains(out, prefix) {
+				if !slices.Contains(internalPrefixes, prefix) && !slices.Contains(out, prefix) {
 					out = append(out, prefix)
 				}
 			}
@@ -2651,6 +2671,13 @@ func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error
 	} else if o.exportFmt == "" {
 		fmt.Fprintln(os.Stderr)
 		writeMarkdown(w, report, o.raw || o.withEvidence)
+		if c, err := os.ReadFile(filepath.Join(s.TurnDir(n), "comment.txt")); err == nil && len(bytes.TrimSpace(c)) > 0 {
+			var main *template.Ticket
+			if id := s.Turns[n-1].Ticket; id != "" {
+				main = &template.Ticket{ID: id}
+			}
+			printComment(os.Stderr, main, strings.TrimSpace(string(c)))
+		}
 	}
 	if o.exportFmt == "" {
 		return nil

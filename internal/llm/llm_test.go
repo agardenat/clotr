@@ -181,6 +181,14 @@ func TestStreamIdleAndErrors(t *testing.T) {
 			sse(w, `{"error":{"message":"upstream exploded"}}`)
 		case "empty":
 			sse(w, `[DONE]`)
+		case "keepalive":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			for range 20 {
+				_, _ = w.Write([]byte(": ping\n\n"))
+				w.(http.Flusher).Flush()
+				time.Sleep(30 * time.Millisecond)
+			}
 		}
 	}))
 	defer srv.Close()
@@ -190,6 +198,10 @@ func TestStreamIdleAndErrors(t *testing.T) {
 	_, err := pool.Chat(context.Background(), "p", Request{Model: "stall"})
 	if err == nil || !Transient(err) || !strings.Contains(err.Error(), "no data received") || time.Since(t0) > 400*time.Millisecond {
 		t.Fatalf("idle: %v en %v", err, time.Since(t0))
+	}
+	t0 = time.Now()
+	if _, err := pool.Chat(context.Background(), "p", Request{Model: "keepalive"}); err == nil || !strings.Contains(err.Error(), "no data received") || time.Since(t0) > 400*time.Millisecond {
+		t.Fatalf("lignes de maintien seules: %v en %v", err, time.Since(t0))
 	}
 	if _, err := pool.Chat(context.Background(), "p", Request{Model: "err"}); err == nil || !Transient(err) || !strings.Contains(err.Error(), "exploded") {
 		t.Fatalf("erreur de flux: %v", err)
