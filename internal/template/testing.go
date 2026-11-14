@@ -87,15 +87,18 @@ func (h *testHarness) predeclared() starlark.StringDict {
 		"template": &starlarkstruct.Module{Name: "template", Members: starlark.StringDict{
 			"instance": starlark.NewBuiltin("template.instance", h.newInstance),
 		}},
-		"assert":  assertModule,
-		"json":    starjson.Module,
-		"time":    startime.Module,
-		"struct":  starlark.NewBuiltin("struct", starlarkstruct.Make),
-		"sprintf": starlark.NewBuiltin("sprintf", builtinSprintf),
-		"jq":      starlark.NewBuiltin("jq", builtinJQ),
-		"base64":  base64Module,
-		"crypto":  cryptoModule,
-		"catch":   starlark.NewBuiltin("catch", builtinCatch),
+		"assert":   assertModule,
+		"json":     starjson.Module,
+		"time":     startime.Module,
+		"struct":   starlark.NewBuiltin("struct", starlarkstruct.Make),
+		"sprintf":  starlark.NewBuiltin("sprintf", builtinSprintf),
+		"jq":       starlark.NewBuiltin("jq", builtinJQ),
+		"base64":   base64Module,
+		"crypto":   cryptoModule,
+		"catch":    starlark.NewBuiltin("catch", builtinCatch),
+		"xml":      xmlModule,
+		"zip":      zipModule,
+		"markdown": markdownModule,
 	}
 }
 
@@ -305,7 +308,7 @@ func (ti *testInstance) Freeze()               {}
 func (ti *testInstance) Truth() starlark.Bool  { return true }
 func (ti *testInstance) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable") }
 func (ti *testInstance) AttrNames() []string {
-	return []string{"call", "cleanup", "commands", "discover", "environment", "error", "fn", "git_calls", "mcp_calls", "questions", "requests", "startup", "ticket_get", "ticket_search", "tools", "tracked"}
+	return []string{"call", "cleanup", "commands", "discover", "environment", "error", "fn", "git_calls", "mcp_calls", "questions", "render", "requests", "startup", "ticket_get", "ticket_search", "tools", "tracked"}
 }
 
 func (ti *testInstance) Attr(name string) (starlark.Value, error) {
@@ -404,6 +407,18 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 				out = append(out, map[string]any{"resource": r.Resource, "error": e})
 			}
 			return toStarlark(out)
+		}), nil
+	case "render":
+		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			var d DocumentInput
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "markdown", &d.Markdown, "title?", &d.Title, "mode?", &d.Mode, "language?", &d.Language, "request?", &d.Request, "ticket?", &d.Ticket, "date?", &d.Date, "session?", &d.Session); err != nil {
+				return nil, err
+			}
+			out, err := ti.in.RenderDocument(threadCtx(thread), d)
+			if err != nil {
+				return nil, err
+			}
+			return starlark.Bytes(out), nil
 		}), nil
 	case "startup":
 		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

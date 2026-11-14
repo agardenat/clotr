@@ -714,6 +714,9 @@ func clientVars(cl config.Client, project string) map[string]any {
 }
 
 func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, level access.Level, tunnelURL string) (*template.Instance, error) {
+	if t.Document() {
+		return nil, i18n.E("cli.err.document_instance", ic.Name, t.Name)
+	}
 	if t.Special() {
 		return nil, i18n.E("cli.err.startup_instance", ic.Name, t.Name, t.Kind)
 	}
@@ -841,9 +844,6 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	}
 	var mcpCfgs []config.MCPServer
 	for _, m := range cfg.MCP {
-		if m.Name == cfg.Export.MCP {
-			continue
-		}
 		if m.Name == cfg.WebSearch.MCP {
 			if o.webAllowed && m.IsEnabled() && !matchGroup(o.exclude, "mcp_"+m.Name) {
 				mcpCfgs = append(mcpCfgs, m)
@@ -926,13 +926,6 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		for _, n := range rt.registry.Names() {
 			if strings.HasPrefix(n, "mcp_"+cfg.WebSearch.MCP+"_") {
 				rt.webTools = append(rt.webTools, n)
-			}
-		}
-	}
-	if o.exportFmt != "" {
-		if i := slices.IndexFunc(cfg.MCP, func(m config.MCPServer) bool { return m.Name == cfg.Export.MCP }); i >= 0 {
-			if err := mcp.Login(ctx, cfg.MCP[i], version); err != nil {
-				warn(err.Error())
 			}
 		}
 	}
@@ -1651,7 +1644,9 @@ func cmdTemplates(o *options, args []string, w io.Writer) error {
 		if _, ok := set.Get(in.Template); !ok {
 			state = i18n.T("instances.missing")
 		} else if t, _ := set.Get(in.Template); t != nil {
-			if t.Special() {
+			if t.Document() {
+				state = i18n.T("cli.err.document_instance", in.Name, t.Name)
+			} else if t.Special() {
 				state = i18n.T("cli.err.startup_instance", in.Name, t.Name, t.Kind)
 			} else if ti, err := template.NewInstance(in.Name, t, in.Params); err != nil {
 				state = err.Error()
@@ -1995,9 +1990,6 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 		return err
 	}
 	defer rt.close()
-	if err := o.checkExport(rt.cfg, sess.Confidential); err != nil {
-		return err
-	}
 	if o.cveFlag != "" {
 		fmt.Fprintln(os.Stderr, i18n.T("cve.mode", strings.Join(o.cveIDs, ", ")))
 		if !o.webAllowed && slices.ContainsFunc(o.cveIDs, func(id string) bool { return !sources.Official(id) }) {
@@ -2048,7 +2040,7 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 		printComment(os.Stderr, rt.mainTicket, res.comment)
 	}
 	if o.exportFmt != "" && md != "" {
-		if err := rt.exportReport(ctx, o, res.dir, exportTitle(md, request), md); err != nil {
+		if err := exportReport(ctx, o, rt.cfg, sess, len(sess.Turns), md); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.T("cli.error"), err)
 			if runErr == nil {
 				runErr = err
@@ -2384,9 +2376,6 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	if err != nil {
 		return err
 	}
-	if err := o.checkExport(cfg, sess.Confidential); err != nil {
-		return err
-	}
 	n := o.turn
 	if n == 0 {
 		n = len(sess.Turns)
@@ -2497,7 +2486,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	if o.exportFmt == "" {
 		return nil
 	}
-	return rt.exportReport(ctx, o, dir, exportTitle(md, sess.Turns[n-1].Request), md)
+	return exportReport(ctx, o, rt.cfg, sess, n, md)
 }
 
 func importPriorEvidence(sess *session.Session, store *evidence.Store, turn int) {
@@ -2630,9 +2619,6 @@ func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error
 	if o.evidenceID != "" {
 		return showEvidence(s.Dir(), o.evidenceID, w)
 	}
-	if err := o.checkExport(cfg, s.Confidential); err != nil {
-		return err
-	}
 	conf := ""
 	if s.Confidential {
 		conf = i18n.T("session.conf")
@@ -2685,12 +2671,7 @@ func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error
 	if o.sovereign == "" {
 		o.sovereign = s.Sovereign
 	}
-	rt, err := exportApp(ctx, o, s.TurnDir(n))
-	if err != nil {
-		return err
-	}
-	defer rt.close()
-	return rt.exportReport(ctx, o, s.TurnDir(n), exportTitle(report, s.Turns[n-1].Request), report)
+	return exportReport(ctx, o, cfg, s, n, report)
 }
 
 type usedModel struct {

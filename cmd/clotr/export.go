@@ -1,25 +1,21 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
+	"unicode"
 
-	"github.com/agardenat/clotr/internal/agent"
-	"github.com/agardenat/clotr/internal/audit"
-	"github.com/agardenat/clotr/internal/budget"
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/export"
 	"github.com/agardenat/clotr/internal/i18n"
-	"github.com/agardenat/clotr/internal/llm"
-	"github.com/agardenat/clotr/internal/progress"
-	"github.com/agardenat/clotr/internal/tools"
-	"github.com/agardenat/clotr/internal/tools/mcp"
+	"github.com/agardenat/clotr/internal/report"
+	"github.com/agardenat/clotr/internal/session"
+	"github.com/agardenat/clotr/internal/template"
 )
 
 func outputFormat(path string) string {
@@ -48,24 +44,6 @@ func (o *options) resolveExport() error {
 	return nil
 }
 
-func (o *options) checkExport(cfg *config.Config, confidential bool) error {
-	if o.exportFmt == "" {
-		return nil
-	}
-	name := cfg.Export.MCP
-	switch {
-	case name == "":
-		return i18n.E("cli.err.export_mcp")
-	case confidential:
-		return i18n.E("cli.err.export_confidential", name)
-	case matchGroup(o.exclude, "mcp_"+name):
-		return i18n.E("cli.err.export_excluded", name)
-	case cfg.ExportRole() == "":
-		return i18n.E("cli.err.export_role")
-	}
-	return nil
-}
-
 func exportTitle(md, request string) string {
 	for _, l := range strings.Split(md, "\n") {
 		if t, ok := strings.CutPrefix(strings.TrimSpace(l), "# "); ok && strings.TrimSpace(t) != "" {
@@ -79,112 +57,126 @@ func exportTitle(md, request string) string {
 	return string(r)
 }
 
-func (rt *app) newRunner(events progress.Sink, reg *tools.Registry) *agent.Runner {
-	r := &agent.Runner{
-		Chat:            rt.pool,
-		Tools:           reg,
-		Audit:           rt.audit,
-		Events:          events,
-		MaxSteps:        rt.cfg.Limits.MaxSteps,
-		ConcludeReserve: min(5*time.Minute, rt.cfg.Limits.RequestTimeout.Duration),
-		Attempts:        2,
-		Backoff:         2 * time.Second,
-		RoundPause:      30 * time.Second,
-		Persistent: func(provider string) bool {
-			p, ok := rt.cfg.Provider(provider)
-			return ok && p.PersistentRetry
-		},
-		StallSteps: *rt.cfg.Limits.StallSteps,
-		KeepSteps:  *rt.cfg.Limits.HistoryKeepSteps,
-		ToolChars:  *rt.cfg.Limits.HistoryToolChars,
-		Budget:     rt.budget,
+func reportLanguage(lang, md string) string {
+	if lang == "fr" || lang == "en" {
+		return lang
 	}
-	if rt.memory != nil {
-		r.ConcludeNotes = rt.memory.TaskNotes
+	var prose strings.Builder
+	fence := ""
+	for _, l := range strings.Split(md, "\n") {
+		t := strings.TrimSpace(l)
+		switch {
+		case fence != "":
+			if strings.HasPrefix(t, fence) {
+				fence = ""
+			}
+			continue
+		case strings.HasPrefix(t, "```"):
+			fence = "```"
+			continue
+		case strings.HasPrefix(t, "~~~"):
+			fence = "~~~"
+			continue
+		}
+		prose.WriteString(l)
+		prose.WriteByte('\n')
 	}
-	return r
-}
-
-func exportApp(ctx context.Context, o *options, turnDir string) (*app, error) {
-	rt, err := loadBase(ctx, o)
-	if err != nil {
-		return nil, err
-	}
-	rt.pool = llm.NewPool(rt.cfg, &http.Client{})
-	rt.budget = budget.NewTracker(rt.cfg)
-	if a, err := audit.Open(turnDir, "audit"); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.audit"), err)
-	} else {
-		rt.audit = a
-		rt.closers = append(rt.closers, func() { _ = a.Close() })
-	}
-	return rt, nil
-}
-
-func (rt *app) exportReport(ctx context.Context, o *options, turnDir, title, md string) error {
-	cfg := rt.cfg
-	var srvCfg config.MCPServer
-	for _, m := range cfg.MCP {
-		if m.Name == cfg.Export.MCP {
-			srvCfg = m
+	fr, en := 0, 0
+	for _, w := range strings.FieldsFunc(strings.ToLower(prose.String()), func(r rune) bool { return !unicode.IsLetter(r) }) {
+		switch w {
+		case "le", "la", "les", "des", "est", "une", "dans", "pour", "sur", "pas", "aucun", "avec":
+			fr++
+		case "the", "is", "are", "and", "of", "with", "for", "not", "no", "on", "this", "was":
+			en++
 		}
 	}
-	role := cfg.ExportRole()
-	cands, err := rt.router.Candidates(role)
+	if en > fr {
+		return "en"
+	}
+	return "fr"
+}
+
+func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *session.Session, n int, md string) error {
+	if cfg.Export.Template == "" {
+		return i18n.E("export.no_template")
+	}
+	set, err := template.Load(cfg.Templates.Dir)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, i18n.T("export.start", o.exportFmt, srvCfg.Name, role))
-	srv, err := mcp.ConnectWriter(ctx, srvCfg, version)
+	t, ok := set.Get(cfg.Export.Template)
+	if !ok {
+		for _, w := range set.Warnings {
+			if strings.Contains(w, string(filepath.Separator)+cfg.Export.Template+".") {
+				return i18n.E("export.template_invalid", cfg.Export.Template, w)
+			}
+		}
+		return i18n.E("export.template_missing", cfg.Export.Template, cfg.Templates.Dir)
+	}
+	if !t.Document() {
+		return i18n.E("export.template_kind", t.Name, t.Kind)
+	}
+	in, err := template.NewInstance(t.Name, t, cfg.Export.Params)
 	if err != nil {
 		return err
 	}
-	defer srv.Close()
-	if len(srv.Tools()) == 0 {
-		return i18n.E("export.no_tools", srvCfg.Name)
+	turn := sess.Turns[n-1]
+	mode := turn.Mode
+	if mode == "" && len(turn.CVE) > 0 {
+		mode = report.ModeCVE
 	}
-	job := &export.Job{Server: srv, Format: o.exportFmt, Markdown: md, Title: title}
-	reg := job.Registry(cfg.Limits.ToolOutputMaxChars)
-	rt.budget.NewRun()
-	rt.audit.Log("export_start", map[string]any{"format": o.exportFmt, "mcp": srvCfg.Name, "role": role, "tools": reg.Names(), "chars": len(md)})
-	events := newProgress(o, cfg.Limits.MaxSteps, i18n.T("export.title", o.exportFmt))
-	out, runErr := rt.newRunner(events, reg).Run(ctx, job.Spec(ctx, role, cands, reg))
-	events.Close()
-	res, err := job.Result(ctx)
-	model := ""
-	if out != nil {
-		model = out.Model
+	if mode == "" {
+		mode = report.ModeDefault
 	}
-	rec := map[string]any{"model": model, "error": errString(runErr)}
-	if res != nil {
-		rec["bytes"], rec["checked"], rec["missing"], rec["moved"], rec["flat"], rec["artifacts"] = len(res.Data), res.Checked, len(res.Missing), len(res.Moved), len(res.Flat), res.Artifacts
-	}
-	rt.audit.Log("export_end", rec)
-	for _, c := range rt.budget.Summary() {
-		fmt.Fprintln(os.Stderr, i18n.T("cost.line", c.String()))
-	}
-	if res == nil {
-		if runErr != nil {
-			return i18n.E("export.failed", runErr)
-		}
+	fmt.Fprintln(os.Stderr, i18n.T("export.start", o.exportFmt, t.Name))
+	data, err := in.RenderDocument(ctx, template.DocumentInput{
+		Markdown: md,
+		Title:    exportTitle(md, turn.Request),
+		Mode:     mode,
+		Language: reportLanguage(cmp.Or(o.langFlag, sess.Language), md),
+		Request:  turn.Request,
+		Ticket:   turn.Ticket,
+		Date:     turn.Time.Local().Format("2006-01-02"),
+		Session:  sess.Name,
+	})
+	if err != nil {
 		return i18n.E("export.failed", err)
 	}
-	path := filepath.Join(turnDir, "report."+o.exportFmt)
-	if err := os.WriteFile(path, res.Data, 0o600); err != nil {
+	doc, err := export.Read("docx", data)
+	if err != nil {
+		return i18n.E("export.failed", err)
+	}
+	if o.exportFmt == "pdf" {
+		pdf, err := export.PDF(ctx, data)
+		if err != nil {
+			path := filepath.Join(sess.TurnDir(n), "report.docx")
+			if werr := os.WriteFile(path, data, 0o600); werr != nil {
+				return err
+			}
+			if o.exportPath != "" {
+				alt := strings.TrimSuffix(o.exportPath, filepath.Ext(o.exportPath)) + ".docx"
+				if werr := os.WriteFile(alt, data, 0o644); werr == nil {
+					path = alt
+				}
+			}
+			return i18n.E("export.pdf_fallback", err, path)
+		}
+		data = pdf
+	}
+	path := filepath.Join(sess.TurnDir(n), "report."+o.exportFmt)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return err
 	}
 	if o.exportPath != "" {
-		if err := os.WriteFile(o.exportPath, res.Data, 0o644); err != nil {
+		if err := os.WriteFile(o.exportPath, data, 0o644); err != nil {
 			return err
 		}
 		path = o.exportPath
 	}
-	if model != "" {
-		fmt.Fprintln(os.Stderr, i18n.T("models.used", model))
-	}
+	res := export.Compare(md, doc)
 	switch {
 	case !res.Checked:
-		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("export.unchecked", o.exportFmt))
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("export.unchecked", "docx"))
 	case res.Issues() > 0:
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("export.issues"))
 		for _, g := range []struct {
@@ -206,9 +198,6 @@ func (rt *app) exportReport(ctx context.Context, o *options, turnDir, title, md 
 		}
 	default:
 		fmt.Fprintln(os.Stderr, i18n.T("export.checked"))
-	}
-	if runErr != nil {
-		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), runErr)
 	}
 	fmt.Fprintln(os.Stderr, i18n.T("export.saved"), path)
 	return nil

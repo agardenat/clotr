@@ -61,13 +61,20 @@ const (
 var scriptPredeclared = []string{"http", "mcp", "ssh", "jq", "json", "time", "math", "crypto", "vault", "base64", "file", "env", "parallel", "catch", "sprintf", "logstats", "redact", "instance", "tool", "struct", "re", "url", "compact_json", "yaml", "sleep"}
 
 func checkScript(t *Template) error {
-	_, _, err := starlark.SourceProgramOptions(fileOptions, t.ScriptPath, t.ScriptSrc, func(name string) bool {
+	known := func(name string) bool {
 		return slices.Contains(scriptPredeclared, name) || (t.Startup() && name == "git")
-	})
+	}
+	if t.Document() {
+		known = documentName
+	}
+	_, _, err := starlark.SourceProgramOptions(fileOptions, t.ScriptPath, t.ScriptSrc, known)
 	return err
 }
 
 func (in *Instance) predeclared() starlark.StringDict {
+	if in.T.Document() {
+		return in.documentPredeclared()
+	}
 	d := in.basePredeclared()
 	if in.T.Startup() {
 		d["git"] = in.gitModule()
@@ -159,6 +166,11 @@ func (in *Instance) loadScript() error {
 	if in.T.Startup() {
 		if _, ok := globals["startup"].(starlark.Callable); !ok {
 			return i18n.E("tpl.star.startup", in.T.Script)
+		}
+	}
+	if in.T.Document() {
+		if _, ok := globals["render"].(starlark.Callable); !ok {
+			return i18n.E("tpl.star.document", in.T.Script)
 		}
 	}
 	if in.T.Tickets() {

@@ -1,5 +1,15 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Modifié
+- `--export docx|pdf` construit le document sur le poste avec un template `kind: document` désigné par `report_export.template` (et `report_export.params`), à la place de l'agent et du serveur MCP de `report_export.mcp` : plus de modèle, de coût ni de transfert du rapport, l'export est donc permis en session confidentielle. `report_export.mcp` et `report_export.role` sont ignorés.
+- PDF converti depuis le `.docx` par LibreOffice (`soffice`), table des matières et renvois de page mis à jour avant la conversion ; sans LibreOffice, le `.docx` est enregistré à la place.
+- Contrôle du document : les numéros en tête de titre sont ignorés.
+
+### Ajouté
+- Templates `kind: document` : fonction `render(doc)` qui rend le `.docx` ; modules `asset`, `zip`, `xml` et `markdown`, sans accès au réseau ni aux fichiers du poste ; `inst.render(...)` dans les tests de templates.
+
 ## [0.70.2] - 2026-11-14
 
 ### Corrigé

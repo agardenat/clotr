@@ -2,8 +2,6 @@ package main
 
 import (
 	"testing"
-
-	"github.com/agardenat/clotr/internal/config"
 )
 
 func TestResolveExport(t *testing.T) {
@@ -36,22 +34,17 @@ func TestResolveExport(t *testing.T) {
 	}
 }
 
-func TestCheckExport(t *testing.T) {
-	cfg := &config.Config{Roles: config.DefaultRoles(), MCP: []config.MCPServer{{Name: "docs"}}, Export: config.ReportExport{MCP: "docs"}}
-	if err := (&options{}).checkExport(&config.Config{}, true); err != nil {
-		t.Fatalf("sans export: %v", err)
-	}
-	if err := (&options{exportFmt: "pdf"}).checkExport(cfg, false); err != nil {
-		t.Fatalf("nominal: %v", err)
-	}
-	if err := (&options{exportFmt: "pdf"}).checkExport(cfg, true); err == nil {
-		t.Fatal("session confidentielle acceptée")
-	}
-	if err := (&options{exportFmt: "pdf", exclude: []string{"mcp_docs"}}).checkExport(cfg, false); err == nil {
-		t.Fatal("serveur exclu accepté")
-	}
-	if err := (&options{exportFmt: "pdf"}).checkExport(&config.Config{Roles: config.DefaultRoles()}, false); err == nil {
-		t.Fatal("aucun serveur désigné accepté")
+func TestReportLanguage(t *testing.T) {
+	for _, c := range []struct{ lang, md, want string }{
+		{"en", "le service est arrêté", "en"},
+		{"auto", "Le service est arrêté dans la nuit, aucun impact pour les utilisateurs.", "fr"},
+		{"auto", "The service is stopped and there was no impact on the users of this cluster.", "en"},
+		{"", "", "fr"},
+		{"auto", "Le service est arrêté dans la nuit.\n\n```\nThe service is stopped and there is no data for the users of this cluster and the file is not on the host\n```\n", "fr"},
+	} {
+		if got := reportLanguage(c.lang, c.md); got != c.want {
+			t.Errorf("%q %q: %s", c.lang, c.md, got)
+		}
 	}
 }
 
