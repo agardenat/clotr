@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.68.1] - 2026-11-14
 
 ### Modifié
 - `clotr models` : niveau de raisonnement (`reasoning_effort` du profil pour le rôle) entre parenthèses après chaque modèle du routage, comme dans le tableau de progression.
