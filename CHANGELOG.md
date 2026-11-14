@@ -1,5 +1,21 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- Mode demande de changement : `run --change` (alias `--demande`) établit l'état actuel de ce que la demande modifie et sa source IaC, sans tri d'incident, et produit un rapport des modifications à réaliser (extraits IaC avant/après), impacts, prérequis, risques, retour arrière et plan de mise en œuvre (modèle `change`).
+- Rapport d'incident propre au mode (modèle `incident`) : synthèse, chronologie, cause racine et pistes écartées, constats annexes, résolution, incidents similaires, points non vérifiés et limites.
+- Templates `kind: tickets` : outil de tickets décrit par un template (`id_pattern`, fonctions `get(id)` et `search(q)`, connecteurs `mcp` ou `http`), déclaré sous `tickets` dans la configuration ; `inst.ticket_get` et `inst.ticket_search` dans les tests de templates.
+- `run --ticket [id]` : lecture du ticket de la demande (ou du premier identifiant relevé dans la demande), enregistré comme preuve et transmis au planner, aux tâches et au synthesizer ; le type du ticket choisit le mode ou le fait basculer entre incident et demande de changement (audit `mode_switch`).
+- Périmètre déduit du ticket : sans client ni projet cité dans la demande, les identifiants client et projet du ticket, son titre et sa description servent à proposer les instances.
+- Tickets liés : en modes incident et demande de changement, une tâche `tickets` cherche avant le tri les tickets passés semblables et leur résolution (outils `ticket_search`, `ticket_get`, `ticket_related`), et en incident sans ticket un ticket ouvert récent sur le même sujet ; affichés en direct, transmis aux tâches comme pistes, repris dans le rapport (blocs `{{ticket}}` et `{{tickets.related}}`) et dans `--json`.
+- Commentaire interne : en fin de run incident ou demande de changement, commentaire pour le ticket (état, actions, tickets similaires, points non vérifiés), affiché en jaune et écrit dans `comment.txt` du tour.
+- `session --synthesize` reprend le mode et les tickets du tour.
+
+### Modifié
+- `--incident` et `--panic` utilisent le modèle de rapport `incident` au lieu de `default`.
+- Les serveurs MCP connectés pour les templates seuls ne signalent plus leurs outils non exposés aux agents.
+
 ## [0.69.1] - 2026-11-14
 
 ### Corrigé

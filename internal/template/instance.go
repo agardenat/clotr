@@ -259,7 +259,7 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 	pj, _ := json.Marshal(params)
 	h.Write(pj)
 	in.fp = hex.EncodeToString(h.Sum(nil))[:16]
-	if t.Startup() {
+	if t.Special() {
 		return in, nil
 	}
 	if err := in.checkToolNames(); err != nil {

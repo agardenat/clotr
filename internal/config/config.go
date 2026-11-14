@@ -68,6 +68,7 @@ type Config struct {
 	Params       map[string]any        `yaml:"params"`
 	Instances    []Instance            `yaml:"instances"`
 	Startup      []Startup             `yaml:"startup"`
+	Tickets      *Tickets              `yaml:"tickets"`
 	Clients      []Client              `yaml:"-"`
 	Routing      Routing               `yaml:"routing"`
 	Sessions     SessionsConf          `yaml:"sessions"`
@@ -188,6 +189,16 @@ type Startup struct {
 
 func (s Startup) IsEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
+}
+
+type Tickets struct {
+	Template string         `yaml:"template"`
+	Enabled  *bool          `yaml:"enabled"`
+	Params   map[string]any `yaml:"params"`
+}
+
+func (t *Tickets) IsEnabled() bool {
+	return t != nil && t.Template != "" && (t.Enabled == nil || *t.Enabled)
 }
 
 type Shell struct {
@@ -913,6 +924,9 @@ func (c *Config) validate() error {
 		if st.Every.Duration < 0 {
 			fail(i18n.T("config.startup_every", i))
 		}
+	}
+	if c.Tickets != nil && c.Tickets.Template == "" {
+		fail(i18n.T("config.tickets_template"))
 	}
 	terms := map[string]string{}
 	tunnelPorts := map[int]string{}

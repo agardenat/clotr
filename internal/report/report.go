@@ -10,11 +10,13 @@ import (
 )
 
 const (
-	ModeDefault = "default"
-	ModeCVE     = "cve"
+	ModeDefault  = "default"
+	ModeCVE      = "cve"
+	ModeIncident = "incident"
+	ModeChange   = "change"
 )
 
-var Modes = []string{ModeDefault, ModeCVE}
+var Modes = []string{ModeDefault, ModeCVE, ModeIncident, ModeChange}
 
 //go:embed models/*.md
 var embedded embed.FS

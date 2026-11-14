@@ -54,7 +54,12 @@ report_export:
 # cve:
 #   sources: [redhat, ubuntu]
 
-# Modèle de rapport par mode (default, cve), à la place du modèle embarqué.
+# Outil de tickets des modes incident et demande de changement (template kind: tickets).
+# tickets:
+#   template: tracker
+#   params: {}
+
+# Modèle de rapport par mode (default, cve, incident, change), à la place du modèle embarqué.
 # report_models:
 #   cve: ~/.config/clotr/report-cve.md
 

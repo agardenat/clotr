@@ -44,6 +44,7 @@ import (
 	"github.com/agardenat/clotr/internal/router"
 	"github.com/agardenat/clotr/internal/session"
 	"github.com/agardenat/clotr/internal/template"
+	"github.com/agardenat/clotr/internal/ticket"
 	"github.com/agardenat/clotr/internal/tools"
 	"github.com/agardenat/clotr/internal/tools/dns"
 	"github.com/agardenat/clotr/internal/tools/files"
@@ -91,6 +92,10 @@ type options struct {
 	withEvidence bool
 	raw          bool
 	incident     bool
+	change       bool
+	ticketFlag   string
+	request      string
+	resynth      bool
 	panic        bool
 	exportFmt    string
 	exportPath   string
@@ -124,6 +129,10 @@ type app struct {
 	evidence     *evidence.Store
 	leads        *lead.Store
 	cves         *cve.Store
+	tickets      *ticket.Store
+	ticketSrc    *template.Instance
+	mainTicket   *template.Ticket
+	change       bool
 	journal      bool
 	filtered     []*template.Instance
 	closers      []func()
@@ -247,6 +256,15 @@ func newRoot() *cobra.Command {
 	run.Flags().BoolVar(&o.raw, "raw", false, i18n.T("cli.flag.raw"))
 	run.Flags().BoolVar(&o.withEvidence, "with-evidence", false, i18n.T("cli.flag.with_evidence"))
 	run.Flags().BoolVar(&o.incident, "incident", false, i18n.T("cli.flag.incident"))
+	run.Flags().BoolVar(&o.change, "change", false, i18n.T("cli.flag.change"))
+	run.Flags().BoolVar(&o.change, "demande", false, i18n.T("cli.flag.change"))
+	if i18n.UI() == "fr" {
+		_ = run.Flags().MarkHidden("change")
+	} else {
+		_ = run.Flags().MarkHidden("demande")
+	}
+	run.Flags().StringVar(&o.ticketFlag, "ticket", "", i18n.T("cli.flag.ticket"))
+	run.Flags().Lookup("ticket").NoOptDefVal = "auto"
 	run.Flags().StringVar(&o.cveFlag, "cve", "", i18n.T("cli.flag.cve"))
 	run.Flags().Lookup("cve").NoOptDefVal = "auto"
 	run.Flags().BoolVar(&o.panic, "panic", false, i18n.T("cli.flag.panic"))
@@ -695,8 +713,8 @@ func clientVars(cl config.Client, project string) map[string]any {
 }
 
 func newInstance(cfg *config.Config, ic config.Instance, t *template.Template, level access.Level, tunnelURL string) (*template.Instance, error) {
-	if t.Startup() {
-		return nil, i18n.E("cli.err.startup_instance", ic.Name, t.Name)
+	if t.Special() {
+		return nil, i18n.E("cli.err.startup_instance", ic.Name, t.Name, t.Kind)
 	}
 	cl, _ := cfg.Client(ic.Client)
 	pr, _ := cl.Project(ic.Project)
@@ -859,7 +877,15 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		}
 	}
 	rt.setupInstances(ctx, o, filter, warn)
+	if err := rt.setupTickets(o, warn); err != nil {
+		rt.close()
+		return nil, err
+	}
 	rt.connectTemplateMCP(ctx, warn)
+	if err := rt.resolveTicket(ctx, o, warn); err != nil {
+		rt.close()
+		return nil, err
+	}
 	rt.baseEnv = envLines
 	for _, in := range rt.instances {
 		envLines = append(envLines, rt.instanceEnv[in.Name]...)
@@ -880,6 +906,12 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 			rt.leads = lead.New(rt.memory, rt.evidence, rt.audit)
 			rt.journal = o.panic
 			rt.registry.Add(rt.leads.Tool())
+		}
+		rt.change = o.change && len(o.cveIDs) == 0
+		if rt.ticketSrc != nil && (o.incident || o.change) {
+			rt.tickets = ticket.New(rt.ticketSrc, rt.evidence, rt.audit)
+			rt.tickets.SetMain(rt.mainTicket)
+			rt.registry.Add(rt.tickets.Tools()...)
 		}
 		if len(o.cveIDs) > 0 {
 			rt.cves = cve.New(o.cveIDs, rt.memory, rt.evidence, rt.audit)
@@ -1007,6 +1039,148 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 	}
 }
 
+func (rt *app) runClient() (config.Client, bool) {
+	name := ""
+	for _, in := range rt.instances {
+		switch {
+		case in.Client == "":
+		case name == "":
+			name = in.Client
+		case name != in.Client:
+			return config.Client{}, false
+		}
+	}
+	if name == "" {
+		return config.Client{}, false
+	}
+	return rt.cfg.Client(name)
+}
+
+func (rt *app) setupTickets(o *options, warn func(string)) error {
+	cfg := rt.cfg
+	wanted := o.ticketFlag != ""
+	if !wanted && !o.incident && !o.change {
+		return nil
+	}
+	if !cfg.Tickets.IsEnabled() {
+		if wanted {
+			return i18n.E("ticket.none")
+		}
+		return nil
+	}
+	fail := func(err error) error {
+		if wanted {
+			return i18n.E("ticket.error", err)
+		}
+		warn(i18n.T("ticket.off", err))
+		return nil
+	}
+	set, err := template.Load(cfg.Templates.Dir)
+	if err != nil {
+		return fail(err)
+	}
+	t, ok := set.Get(cfg.Tickets.Template)
+	if !ok {
+		return fail(i18n.E("cli.warn.template_missing", "tickets", cfg.Tickets.Template))
+	}
+	if !t.Tickets() {
+		return fail(i18n.E("tpl.tickets.not", t.Name))
+	}
+	params := map[string]any{}
+	cl, single := rt.runClient()
+	sources := []map[string]any{cfg.Params}
+	if single {
+		sources = append(sources, cl.Params)
+	}
+	for _, defaults := range sources {
+		for k, v := range defaults {
+			if _, declared := t.Params[k]; declared {
+				params[k] = v
+			}
+		}
+	}
+	maps.Copy(params, cfg.Tickets.Params)
+	vars := map[string]any{}
+	if single {
+		vars = clientVars(cl, "")
+	}
+	rendered, err := renderVars(params, vars)
+	if err != nil {
+		return fail(fmt.Errorf("tickets.params.%w", err))
+	}
+	in, err := template.NewInstance("tickets", t, rendered.(map[string]any))
+	if err != nil {
+		return fail(err)
+	}
+	in.Audit = rt.audit.Log
+	in.MCP = rt.templateMCP
+	in.Warn = warn
+	rt.ticketSrc = in
+	return nil
+}
+
+func (rt *app) resolveTicket(ctx context.Context, o *options, warn func(string)) error {
+	in := rt.ticketSrc
+	if in == nil || o.resynth {
+		return nil
+	}
+	explicit := o.ticketFlag != "" && o.ticketFlag != "auto"
+	var id string
+	if explicit {
+		ids := in.TicketIDs(o.ticketFlag)
+		if len(ids) != 1 || !strings.EqualFold(ids[0], strings.TrimSpace(o.ticketFlag)) {
+			return i18n.E("ticket.bad_id", o.ticketFlag, in.T.IDPattern)
+		}
+		id = ids[0]
+	} else if ids := in.TicketIDs(o.request); len(ids) > 0 {
+		id = ids[0]
+	} else if o.ticketFlag == "auto" {
+		return i18n.E("ticket.no_id", in.T.IDPattern)
+	}
+	if id == "" {
+		return nil
+	}
+	tk, err := in.TicketGet(ctx, id)
+	switch {
+	case err != nil && o.ticketFlag != "":
+		return i18n.E("ticket.error", err)
+	case err != nil:
+		warn(i18n.T("ticket.error", err))
+		return nil
+	case tk == nil && o.ticketFlag != "":
+		return i18n.E("ticket.not_found", id)
+	case tk == nil:
+		warn(i18n.T("ticket.not_found", id))
+		return nil
+	}
+	rt.mainTicket = tk
+	rt.audit.Log("ticket", map[string]any{"id": tk.ID, "kind": tk.Kind, "status": tk.Status})
+	fmt.Fprintln(os.Stderr, i18n.T("ticket.read", tk.ID, i18n.T("ticket.mode."+tk.Kind), tk.Title))
+	from := ""
+	switch {
+	case o.incident:
+		from = template.TicketIncident
+	case o.change:
+		from = template.TicketChange
+	}
+	to := from
+	switch tk.Kind {
+	case template.TicketIncident, template.TicketChange:
+		to = tk.Kind
+	}
+	if to == "" {
+		to = template.TicketIncident
+	}
+	o.incident, o.change = to == template.TicketIncident, to == template.TicketChange
+	if from != "" && from != to {
+		fmt.Fprintln(os.Stderr, i18n.T("ticket.switch", tk.ID, i18n.T("ticket.mode."+tk.Kind), i18n.T("ticket.mode."+from), i18n.T("ticket.mode."+to)))
+		rt.audit.Log("mode_switch", map[string]any{"ticket": tk.ID, "from": from, "to": to})
+	} else if from == "" {
+		fmt.Fprintln(os.Stderr, i18n.T("ticket.mode_line", i18n.T("ticket.mode."+to)))
+	}
+	return nil
+}
+
 func (rt *app) openTunnels(active []config.Instance, warn func(string)) map[string]*tunnel.Tunnel {
 	out := map[string]*tunnel.Tunnel{}
 	for _, ic := range active {
@@ -1074,7 +1248,11 @@ func (rt *app) connectTemplateMCP(ctx context.Context, warn func(string)) {
 	}
 	var need []config.MCPServer
 	seen := map[string]bool{}
-	for _, in := range rt.instances {
+	instances := rt.instances
+	if rt.ticketSrc != nil {
+		instances = append(slices.Clone(instances), rt.ticketSrc)
+	}
+	for _, in := range instances {
 		for _, n := range in.MCPServers() {
 			if seen[n] || rt.mcpByName[n] != nil {
 				continue
@@ -1091,7 +1269,7 @@ func (rt *app) connectTemplateMCP(ctx context.Context, warn func(string)) {
 	if len(need) == 0 {
 		return
 	}
-	servers, warnings := mcp.ConnectAll(ctx, need, version)
+	servers, warnings := mcp.ConnectForTemplates(ctx, need, version)
 	for _, w := range warnings {
 		warn(w)
 	}
@@ -1130,6 +1308,20 @@ func (rt *app) warnFiltered(text string) {
 	if n > 0 {
 		fmt.Fprintln(os.Stderr, i18n.T("instances.filtered", i18n.N(n, "instance")))
 	}
+}
+
+func (rt *app) namesClient(text string) bool {
+	for _, cl := range rt.cfg.Clients {
+		if template.MentionTerm(text, append([]string{cl.Name}, cl.Aliases...)) != "" {
+			return true
+		}
+		for _, p := range cl.Projects {
+			if template.MentionTerm(text, append([]string{p.Name}, p.Aliases...)) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (rt *app) scope(forced []string, text string) (*tools.Registry, string) {
@@ -1230,6 +1422,9 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		rt.leads.Events = events
 		runner.Inbox = rt.leads.Inbox
 	}
+	if rt.tickets != nil {
+		rt.tickets.Events = events
+	}
 	if rt.cves != nil {
 		rt.cves.Events = events
 		runner.Inbox = rt.cves.Inbox
@@ -1247,6 +1442,8 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		Language:    rt.lang,
 		WebTools:    rt.webTools,
 		Incident:    rt.leads != nil,
+		Change:      rt.change,
+		Tickets:     rt.tickets,
 		CVE:         rt.cves,
 		Journal:     rt.journal,
 	}
@@ -1453,8 +1650,8 @@ func cmdTemplates(o *options, args []string, w io.Writer) error {
 		if _, ok := set.Get(in.Template); !ok {
 			state = i18n.T("instances.missing")
 		} else if t, _ := set.Get(in.Template); t != nil {
-			if t.Startup() {
-				state = i18n.T("cli.err.startup_instance", in.Name, t.Name)
+			if t.Special() {
+				state = i18n.T("cli.err.startup_instance", in.Name, t.Name, t.Kind)
 			} else if ti, err := template.NewInstance(in.Name, t, in.Params); err != nil {
 				state = err.Error()
 			} else if err := ti.ExtendPaths(in.SSHPaths); err != nil {
@@ -1562,13 +1759,14 @@ func openRun(ctx context.Context, o *options, request string) (*session.Session,
 }
 
 type turnOutcome struct {
-	report *orchestrator.Report
-	err    error
-	n      int
-	dir    string
-	used   []usedModel
-	costs  []budget.Line
-	info   []string
+	report  *orchestrator.Report
+	err     error
+	n       int
+	dir     string
+	used    []usedModel
+	costs   []budget.Line
+	info    []string
+	comment string
 }
 
 func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, request string, events progress.Sink, answer func(string)) turnOutcome {
@@ -1581,6 +1779,15 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	sess.Turns[n-1].Tools = o.tools
 	sess.Turns[n-1].Exclude = o.exclude
 	sess.Turns[n-1].CVE = o.cveIDs
+	switch {
+	case rt.change:
+		sess.Turns[n-1].Mode = template.TicketChange
+	case rt.leads != nil:
+		sess.Turns[n-1].Mode = template.TicketIncident
+	}
+	if rt.mainTicket != nil {
+		sess.Turns[n-1].Ticket = rt.mainTicket.ID
+	}
 	rt.evidence.Begin(filepath.Join(turnDir, "evidence"), n)
 	if err := rt.audit.Reopen(turnDir, "audit"); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.audit"), err)
@@ -1596,6 +1803,10 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	for _, t := range sess.Turns[:n-1] {
 		mention += "\n" + t.Request
 		forced = append(forced, t.Tools...)
+	}
+	if tk := rt.mainTicket; tk != nil && !rt.namesClient(mention) {
+		mention += "\n" + strings.Join(tk.Scope, " ") + "\n" + tk.Title + "\n" + tk.Description
+		rt.audit.Log("ticket_scope", map[string]any{"ticket": tk.ID, "scope": tk.Scope})
 	}
 	rt.warnFiltered(mention)
 	reg, env := rt.scope(forced, mention)
@@ -1625,12 +1836,28 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		report, runErr = orch.Run(ctx, request)
 		interruptHook.Store(nil)
 	}
+	var comment string
+	if report != nil && report.Markdown != "" && runErr == nil && ctx.Err() == nil {
+		c, err := orch.Comment(ctx, report.Markdown)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("ticket.comment_failed", err))
+		} else if c != "" {
+			comment = c
+			path := filepath.Join(turnDir, "comment.txt")
+			if err := os.WriteFile(path, []byte(c+"\n"), 0o600); err != nil {
+				fmt.Fprintln(os.Stderr, i18n.T("cli.warn.session"), err)
+			}
+		}
+	}
 	cleaned := rt.cleanup(ctx)
 	used := rt.usedModels(report)
 	costs := rt.budget.Summary()
 	rt.audit.Log("run_end", map[string]any{"error": errString(runErr), "models": used, "costs": costs, "memory": rt.memory.Stats()})
 	rt.saveTurn(sess, n, turnDir, report, runErr, used, costs)
-	res := turnOutcome{report: report, err: runErr, n: n, dir: turnDir, used: used, costs: costs, info: cleaned}
+	res := turnOutcome{report: report, err: runErr, n: n, dir: turnDir, used: used, costs: costs, info: cleaned, comment: comment}
+	if comment != "" {
+		res.info = append(res.info, i18n.T("ticket.comment_saved", filepath.Join(turnDir, "comment.txt")))
+	}
 	if len(used) > 0 {
 		var parts, foreign []string
 		for _, u := range used {
@@ -1740,6 +1967,12 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if o.incident && (o.chat || o.direct != "") {
 		return i18n.E("cli.err.incident_modes")
 	}
+	if o.change && (o.incident || o.cveFlag != "" || o.chat || o.direct != "") {
+		return i18n.E("cli.err.change_modes")
+	}
+	if o.ticketFlag != "" && (o.cveFlag != "" || o.chat || o.direct != "") {
+		return i18n.E("cli.err.ticket_modes")
+	}
 	if o.cveFlag != "" && (o.incident || o.chat || o.direct != "") {
 		return i18n.E("cve.modes")
 	}
@@ -1749,10 +1982,14 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if err := o.resolveExport(); err != nil {
 		return err
 	}
+	if len(args) == 0 && o.ticketFlag != "" && o.ticketFlag != "auto" {
+		args = []string{o.ticketFlag}
+	}
 	request, err := readRequest(args)
 	if err != nil {
 		return err
 	}
+	o.request = request
 	if o.cveFlag != "" {
 		if o.cveIDs = cve.Subjects(o.cveFlag, request); len(o.cveIDs) == 0 {
 			return i18n.E("cve.no_id")
@@ -1793,6 +2030,12 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 		if rt.cves != nil {
 			doc["cve"] = map[string]any{"advisories": rt.cves.Advisories(), "findings": rt.cves.Findings()}
 		}
+		if rt.tickets != nil {
+			doc["tickets"] = map[string]any{"ticket": rt.tickets.Main(), "related": rt.tickets.Related()}
+		}
+		if res.comment != "" {
+			doc["comment"] = res.comment
+		}
 		out, _ := json.MarshalIndent(doc, "", "  ")
 		if err := writeReport(w, o.output, append(out, '\n'), nil); err != nil {
 			return err
@@ -1806,6 +2049,9 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 			writeMarkdown(w, md, o.raw || o.withEvidence)
 		}
 	}
+	if res.comment != "" && !o.json {
+		printComment(os.Stderr, rt.mainTicket, res.comment)
+	}
 	if o.exportFmt != "" && md != "" {
 		if err := rt.exportReport(ctx, o, res.dir, exportTitle(md, request), md); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.T("cli.error"), err)
@@ -1815,6 +2061,22 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 		}
 	}
 	return runErr
+}
+
+func printComment(f *os.File, main *template.Ticket, text string) {
+	title := i18n.T("ticket.comment_noticket")
+	if main != nil {
+		title = i18n.T("ticket.comment", main.ID)
+	}
+	title += " :"
+	if i18n.UI() != "fr" {
+		title = strings.TrimSuffix(title, " :") + ":"
+	}
+	if term.IsTerminal(f.Fd()) {
+		fmt.Fprintln(f, "\n"+progress.Comment(title, text))
+		return
+	}
+	fmt.Fprintln(f, "\n"+title+"\n"+text)
 }
 
 func withRequest(md string, turns []session.Turn) string {
@@ -2146,6 +2408,13 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 		o.tools = toolFilterFromAudit(filepath.Join(dir, "audit.jsonl"))
 	}
 	o.cveIDs = sess.Turns[n-1].CVE
+	o.resynth = true
+	switch sess.Turns[n-1].Mode {
+	case template.TicketIncident:
+		o.incident = true
+	case template.TicketChange:
+		o.change = true
+	}
 	fmt.Fprintln(os.Stderr, i18n.T("session.resynth", o.sessName(sess.Name), n, i18n.N(len(o.tools), "connector")))
 	rt, err := setup(ctx, o, true)
 	if err != nil {
@@ -2159,6 +2428,11 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	rt.memory.Load(prior)
 	if rt.cves != nil {
 		rt.cves.Restore(cveFromAudit(filepath.Join(dir, "audit.jsonl")))
+	}
+	if rt.tickets != nil {
+		main, related := ticketsFromAudit(filepath.Join(dir, "audit.jsonl"))
+		rt.tickets.Restore(main, related)
+		rt.mainTicket = main
 	}
 	events := newProgress(o, rt.cfg.Limits.MaxSteps, sess.Name)
 	defer events.Close()
@@ -2257,6 +2531,35 @@ func toolFilterFromAudit(path string) []string {
 		}
 	}
 	return slices.DeleteFunc(out, func(p string) bool { return slices.Contains(hidden, p) })
+}
+
+func ticketsFromAudit(path string) (*template.Ticket, []ticket.Related) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil
+	}
+	defer f.Close()
+	var main *template.Ticket
+	var related []ticket.Related
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	for sc.Scan() {
+		var ev struct {
+			Kind    string           `json:"kind"`
+			Ticket  *template.Ticket `json:"ticket"`
+			Related *ticket.Related  `json:"related"`
+		}
+		if json.Unmarshal(sc.Bytes(), &ev) != nil {
+			continue
+		}
+		switch {
+		case ev.Kind == "ticket_main" && ev.Ticket != nil:
+			main = ev.Ticket
+		case ev.Kind == "ticket_related" && ev.Related != nil:
+			related = append(related, *ev.Related)
+		}
+	}
+	return main, related
 }
 
 func cveFromAudit(path string) ([]cve.Advisory, []cve.Finding) {
