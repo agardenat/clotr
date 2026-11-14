@@ -620,6 +620,10 @@ func (s *session) execTools(ctx context.Context, step int, calls []llm.ToolCall)
 		}()
 	}
 	wg.Wait()
+	if ctx.Err() == nil {
+		m := s.spec.Candidates[s.cur]
+		s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "stream", Model: m.Ref(), Effort: s.effort(m), Detail: i18n.T("thinking.after_tools", len(calls)), Step: step})
+	}
 	s.out.ToolCalls += len(calls)
 	for _, tc := range calls {
 		s.out.Used = append(s.out.Used, tc.Function.Name)

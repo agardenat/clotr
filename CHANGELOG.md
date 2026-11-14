@@ -1,5 +1,11 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Modifié
+- Progression : quand les appels d'outils d'une étape sont terminés, la ligne de la tâche indique l'attente du modèle au lieu de garder le dernier outil affiché.
+- Mode demande de changement : le plan se limite à la ressource modifiée et à sa source IaC ; une information absente de la demande ou du ticket (adresse, port, pièce jointe) va dans les points à confirmer au lieu d'être cherchée sur les hôtes et les clusters.
+
 ## [0.70.0] - 2026-11-14
 
 ### Ajouté
