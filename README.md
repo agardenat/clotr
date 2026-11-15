@@ -50,7 +50,8 @@ Chaque `run` ouvre une session au nom aléatoire, dans la langue de l'interface 
 
 `clotr run -s <session|last> "…"` ajoute un tour à une session existante pour l'affiner. Le nouveau tour démarre avec :
 - la mémoire de la session ;
-- les demandes précédentes et le dernier rapport, transmis au planner et au synthesizer.
+- les demandes précédentes et le dernier rapport, transmis au planner et au synthesizer ;
+- le mode du dernier tour lancé en mode incident (`--incident` ou `--panic`) ou demande de changement, et son ticket si la nouvelle demande n'en cite pas (message `Mode … repris du tour N`). Un mode passé explicitement (`--incident`, `--change`, `--cve`), `--ticket`, `--direct` ou `--chat` l'emporte ; un tour CVE plus récent arrête la reprise. Le journal de `--panic` n'est pas repris.
 
 Le planner ne planifie que ce qui manque. Le synthesizer répond à la nouvelle demande, ou produit le rapport complet mis à jour si c'est ce qui est demandé.
 

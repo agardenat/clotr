@@ -27,6 +27,7 @@ var ticketMsgs = map[string]msg{
 	"ticket.mode.change":      {"change request", "demande de changement"},
 	"ticket.mode.other":       {"other ticket", "autre ticket"},
 	"ticket.mode_line":        {"%s mode", "Mode %s"},
+	"session.mode_inherited":  {"%s mode carried over from turn %d", "Mode %s repris du tour %d"},
 	"ticket.step":             {"related tickets", "tickets liés"},
 	"ticket.related.similar":  {"similar ticket %s · %s · %s", "ticket similaire %s · %s · %s"},
 	"ticket.related.current":  {"probable ticket of this incident %s · %s · %s", "ticket probable de cet incident %s · %s · %s"},
