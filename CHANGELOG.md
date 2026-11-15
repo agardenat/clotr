@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.71.1] - 2026-11-15
 
 ### Corrigé
 - `run -s` reprend le mode du dernier tour en mode incident ou demande de changement, et son ticket quand la nouvelle demande n'en cite pas : une relance d'une session d'incident ne repartait pas en mode incident sans `--incident`. Un mode explicite, `--ticket`, `--direct` ou `--chat` l'emporte ; un tour CVE plus récent arrête la reprise.
