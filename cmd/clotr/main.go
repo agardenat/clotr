@@ -95,6 +95,7 @@ type options struct {
 	incident     bool
 	change       bool
 	ticketFlag   string
+	prevTicket   string
 	request      string
 	resynth      bool
 	panic        bool
@@ -1128,6 +1129,8 @@ func (rt *app) resolveTicket(ctx context.Context, o *options, warn func(string))
 		id = ids[0]
 	} else if ids := in.TicketIDs(o.request); len(ids) > 0 {
 		id = ids[0]
+	} else if o.prevTicket != "" {
+		id = o.prevTicket
 	} else if o.ticketFlag == "auto" {
 		return i18n.E("ticket.no_id", in.T.IDPattern)
 	}
@@ -1734,6 +1737,7 @@ func openRun(ctx context.Context, o *options, request string) (*session.Session,
 	if err != nil {
 		return nil, nil, err
 	}
+	o.inheritMode(sess)
 	forced, text := sessionScope(sess, o.tools, request)
 	if err := o.decideWeb(cfg, sess.Confidential, forced, text); err != nil {
 		return nil, nil, err
@@ -2209,6 +2213,31 @@ func (rt *app) budgetRefresher(events progress.Sink) func(context.Context) {
 			events.Emit(progress.Event{Task: "budget", Kind: "budget", Model: ex.Provider, Detail: i18n.T("budget.dropped", ex.Reason)})
 			rt.audit.Log("budget_exhausted", map[string]any{"provider": ex.Provider, "reason": ex.Reason})
 		}
+	}
+}
+
+func (o *options) inheritMode(sess *session.Session) {
+	if o.incident || o.change || o.cveFlag != "" || o.chat || o.direct != "" {
+		return
+	}
+	for i := len(sess.Turns) - 1; i >= 0; i-- {
+		t := sess.Turns[i]
+		if len(t.CVE) > 0 {
+			return
+		}
+		switch t.Mode {
+		case template.TicketIncident:
+			o.incident = true
+		case template.TicketChange:
+			o.change = true
+		default:
+			continue
+		}
+		if o.ticketFlag == "" {
+			o.prevTicket = t.Ticket
+		}
+		fmt.Fprintln(os.Stderr, i18n.T("session.mode_inherited", i18n.T("ticket.mode."+t.Mode), t.N))
+		return
 	}
 }
 
