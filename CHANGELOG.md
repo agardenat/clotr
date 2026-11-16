@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.73.1] - 2026-11-16
+
+### Corrigé
+- `inst.render(images=…)` des tests de templates accepte les images en `bytes` (par exemple `base64.decode(…)`), comme le documente le README : seul le texte était accepté.
+
 ## [0.73.0] - 2026-11-16
 
 ### Ajouté
