@@ -148,6 +148,7 @@ func (r *app) close() {
 
 func main() {
 	httpx.UserAgent = "clotr/" + version
+	config.Version = version
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigs := make(chan os.Signal, 2)
@@ -1255,6 +1256,10 @@ func (rt *app) connectTemplateMCP(ctx context.Context, warn func(string)) {
 				continue
 			}
 			seen[n] = true
+			if m, ok := in.MCPInline(n); ok {
+				need = append(need, m)
+				continue
+			}
 			i := slices.IndexFunc(rt.cfg.MCP, func(m config.MCPServer) bool { return m.Name == n })
 			if i < 0 {
 				warn(i18n.T("cli.warn.template_mcp", in.Name, n))
@@ -1263,17 +1268,40 @@ func (rt *app) connectTemplateMCP(ctx context.Context, warn func(string)) {
 			need = append(need, rt.cfg.MCP[i])
 		}
 	}
-	if len(need) == 0 {
-		return
+	if len(need) > 0 {
+		servers, warnings := mcp.ConnectForTemplates(ctx, need, version)
+		for _, w := range warnings {
+			warn(w)
+		}
+		for _, s := range servers {
+			rt.mcpByName[s.Name()] = s
+			rt.closers = append(rt.closers, func() { _ = s.Close() })
+		}
 	}
-	servers, warnings := mcp.ConnectForTemplates(ctx, need, version)
-	for _, w := range warnings {
-		warn(w)
+	for _, in := range rt.instances {
+		ts := in.MCPTools(rt.exposedMCP)
+		switch {
+		case len(ts) > 0:
+			rt.registry.Add(ts...)
+			rt.instanceEnv[in.Name] = in.EnvironmentLines()
+		case len(in.ToolNames()) == 0:
+			delete(rt.instanceEnv, in.Name)
+		}
 	}
-	for _, s := range servers {
-		rt.mcpByName[s.Name()] = s
-		rt.closers = append(rt.closers, func() { _ = s.Close() })
+}
+
+func (rt *app) exposedMCP(server string) []template.RemoteTool {
+	s := rt.mcpByName[server]
+	if s == nil {
+		return nil
 	}
+	var out []template.RemoteTool
+	for _, t := range s.Tools() {
+		if r, ok := t.(template.RemoteTool); ok {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 type templateMCPCaller struct{ s *mcp.Server }
@@ -1548,7 +1576,13 @@ func cmdTools(ctx context.Context, o *options, w io.Writer) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	for _, s := range rt.mcpServers {
+	servers := slices.Clone(rt.mcpServers)
+	for _, n := range slices.Sorted(maps.Keys(rt.mcpByName)) {
+		if s := rt.mcpByName[n]; !slices.Contains(servers, s) {
+			servers = append(servers, s)
+		}
+	}
+	for _, s := range servers {
 		if sk := s.Skipped(); len(sk) > 0 {
 			fmt.Fprintf(w, "\n%s\n  %s\n", i18n.T("tools.skipped", s.Name()), strings.Join(sk, "\n  "))
 		}

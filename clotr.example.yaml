@@ -113,6 +113,15 @@ mcp:
   - name: gitlab
     url: https://gitlab.example.com/api/v4/mcp
     auth: oauth
+  - name: gateway
+    url: "https://gateway.example.com/api/v1/{alias}/mcp"
+    headers:
+      x-api-key: ${GATEWAY_KEY}
+    enabled: false
+    servers:
+      - {alias: wiki}
+      - {alias: web_search, name: websearch, allow: [web_search-search], enabled: true}
+      - {alias: mail, auth: oauth}
 
 templates:
   dir: ~/.config/clotr/templates

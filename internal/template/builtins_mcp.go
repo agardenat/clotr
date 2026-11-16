@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 
+	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/i18n"
 )
 
@@ -23,13 +25,59 @@ type MCPCaller interface {
 	CallTool(ctx context.Context, tool string, args map[string]any) (*MCPResult, error)
 }
 
+var mcpOptions = []string{"server", "url", "headers", "allow", "deny", "timeout"}
+
 func checkMCPOptions(o options) error {
 	for k := range o {
-		if k != "server" {
+		if !slices.Contains(mcpOptions, k) {
 			return i18n.E("tpl.mcp.option", k)
 		}
 	}
 	return nil
+}
+
+func (in *Instance) mcpConnector(cn string, o options) (string, error) {
+	server, url := o.str("server"), o.str("url")
+	if url == "" {
+		if server == "" {
+			return "", i18n.E("tpl.mcp.server")
+		}
+		for _, k := range mcpOptions[2:] {
+			if _, ok := o[k]; ok {
+				return "", i18n.E("tpl.mcp.with_server", k)
+			}
+		}
+		return server, nil
+	}
+	if server != "" {
+		return "", i18n.E("tpl.mcp.server_url")
+	}
+	m := config.MCPServer{Name: in.Name + "-" + strings.ReplaceAll(cn, "_", "-"), URL: url, Transport: "http", Allow: o.list("allow"), Deny: o.list("deny"), Timeout: config.Duration{Duration: time.Minute}}
+	if h := o.sub("headers"); len(h) > 0 {
+		m.Headers = map[string]string{}
+		for k := range h {
+			if v := h.str(k); v != "" {
+				m.Headers[k] = v
+			}
+		}
+	}
+	if t := o.str("timeout"); t != "" {
+		d, err := time.ParseDuration(t)
+		if err != nil || d <= 0 {
+			return "", i18n.E("tpl.mcp.timeout", t)
+		}
+		m.Timeout.Duration = d
+	}
+	if in.mcpInline == nil {
+		in.mcpInline = map[string]config.MCPServer{}
+	}
+	in.mcpInline[m.Name] = m
+	return m.Name, nil
+}
+
+func (in *Instance) MCPInline(name string) (config.MCPServer, bool) {
+	m, ok := in.mcpInline[name]
+	return m, ok
 }
 
 func (in *Instance) MCPServers() []string {

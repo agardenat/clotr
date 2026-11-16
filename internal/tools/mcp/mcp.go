@@ -87,7 +87,7 @@ func transport(cfg config.MCPServer) (sdk.Transport, error) {
 		if cfg.Transport == "sse" {
 			return &sdk.SSEClientTransport{Endpoint: endpoint, HTTPClient: hc}, nil
 		}
-		t := &sdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: hc}
+		t := &sdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: hc, DisableStandaloneSSE: true}
 		if cfg.Auth == config.MCPAuthOAuth {
 			h, err := newOAuthHandler(cfg.Name, endpoint)
 			if err != nil {
@@ -210,6 +210,7 @@ func newTool(s *Server, t *sdk.Tool) *tool {
 	return &tool{srv: s, remote: t.Name, name: ToolName(s.cfg.Name, t.Name), desc: fmt.Sprintf("[MCP %s] %s", s.cfg.Name, desc), schema: schema}
 }
 
+func (t *tool) Remote() string          { return t.remote }
 func (t *tool) Name() string            { return t.name }
 func (t *tool) Description() string     { return t.desc }
 func (t *tool) Schema() json.RawMessage { return t.schema }

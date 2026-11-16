@@ -112,6 +112,8 @@ type Instance struct {
 	invValue  starlark.Value
 	https     map[string]*httpConn
 	mcps      map[string]string
+	mcpTools  []string
+	mcpInline map[string]config.MCPServer
 	sshName   string
 	local     bool
 	shell     bool
@@ -204,9 +206,9 @@ func NewInstance(name string, t *Template, given map[string]any) (*Instance, err
 			}
 			in.https[cn] = hc
 		case "mcp":
-			server := o.str("server")
-			if server == "" {
-				return nil, fmt.Errorf("instance %s: connectors.%s: %w", name, cn, i18n.E("tpl.mcp.server"))
+			server, err := in.mcpConnector(cn, o)
+			if err != nil {
+				return nil, fmt.Errorf("instance %s: connectors.%s: %w", name, cn, err)
 			}
 			in.mcps[cn] = server
 		case "ssh", "local", "shell":
