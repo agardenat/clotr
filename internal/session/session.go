@@ -63,6 +63,7 @@ type Turn struct {
 	Access  string    `json:"access,omitempty"`
 	CVE     []string  `json:"cve,omitempty"`
 	Mode    string    `json:"mode,omitempty"`
+	DAT     string    `json:"dat,omitempty"`
 	Ticket  string    `json:"ticket,omitempty"`
 	Status  string    `json:"status"`
 	Error   string    `json:"error,omitempty"`

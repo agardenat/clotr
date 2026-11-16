@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -16,6 +21,7 @@ import (
 	"github.com/agardenat/clotr/internal/report"
 	"github.com/agardenat/clotr/internal/session"
 	"github.com/agardenat/clotr/internal/template"
+	"github.com/agardenat/clotr/internal/tools/mcp"
 )
 
 func outputFormat(path string) string {
@@ -97,28 +103,41 @@ func reportLanguage(lang, md string) string {
 }
 
 func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *session.Session, n int, md string) error {
-	if cfg.Export.Template == "" {
+	name := cmp.Or(o.exportTpl, cfg.Export.Template)
+	if name == "" {
 		return i18n.E("export.no_template")
 	}
 	set, err := template.Load(cfg.Templates.Dir)
 	if err != nil {
 		return err
 	}
-	t, ok := set.Get(cfg.Export.Template)
+	t, ok := set.Get(name)
 	if !ok {
 		for _, w := range set.Warnings {
-			if strings.Contains(w, string(filepath.Separator)+cfg.Export.Template+".") {
-				return i18n.E("export.template_invalid", cfg.Export.Template, w)
+			if strings.Contains(w, string(filepath.Separator)+name+".") {
+				return i18n.E("export.template_invalid", name, w)
 			}
 		}
-		return i18n.E("export.template_missing", cfg.Export.Template, cfg.Templates.Dir)
+		return i18n.E("export.template_missing", name, cfg.Templates.Dir)
 	}
 	if !t.Document() {
 		return i18n.E("export.template_kind", t.Name, t.Kind)
 	}
-	in, err := template.NewInstance(t.Name, t, cfg.Export.Params)
+	if sess.Confidential && t.External() {
+		return i18n.E("export.template_external", t.Name)
+	}
+	params := cfg.Export.Params
+	if name != cfg.Export.Template {
+		params = nil
+	}
+	in, err := template.NewInstance(t.Name, t, params)
 	if err != nil {
 		return err
+	}
+	if closeMCP, err := connectStandaloneMCP(ctx, cfg, in); err != nil {
+		return i18n.E("export.failed", err)
+	} else {
+		defer closeMCP()
 	}
 	turn := sess.Turns[n-1]
 	mode := turn.Mode
@@ -130,6 +149,7 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	}
 	fmt.Fprintln(os.Stderr, i18n.T("export.start", o.exportFmt, t.Name))
 	data, err := in.RenderDocument(ctx, template.DocumentInput{
+		Images:   reportImages(md, sess.TurnDir(n)),
 		Markdown: md,
 		Title:    exportTitle(md, turn.Request),
 		Mode:     mode,
@@ -201,4 +221,64 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	}
 	fmt.Fprintln(os.Stderr, i18n.T("export.saved"), path)
 	return nil
+}
+
+var imageRef = regexp.MustCompile(`!\[[^\]]*\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)`)
+
+func reportImages(md, dir string) map[string]template.Image {
+	out := map[string]template.Image{}
+	for _, m := range imageRef.FindAllStringSubmatch(md, -1) {
+		src := m[1]
+		if _, seen := out[src]; seen || src != filepath.Base(src) || strings.HasPrefix(src, ".") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, src))
+		if err != nil || len(data) > 50<<20 {
+			continue
+		}
+		cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil {
+			continue
+		}
+		out[src] = template.Image{Data: data, Format: format, Width: cfg.Width, Height: cfg.Height}
+	}
+	return out
+}
+
+func connectStandaloneMCP(ctx context.Context, cfg *config.Config, in *template.Instance) (func(), error) {
+	var need []config.MCPServer
+	for _, n := range in.MCPServers() {
+		if m, ok := in.MCPInline(n); ok {
+			need = append(need, m)
+			continue
+		}
+		i := slices.IndexFunc(cfg.MCP, func(m config.MCPServer) bool { return m.Name == n })
+		if i < 0 {
+			return nil, i18n.E("tpl.mcp.unavailable", n)
+		}
+		need = append(need, cfg.MCP[i])
+	}
+	if len(need) == 0 {
+		return func() {}, nil
+	}
+	servers, warnings := mcp.ConnectForTemplates(ctx, need, version)
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), w)
+	}
+	byName := map[string]*mcp.Server{}
+	for _, s := range servers {
+		byName[s.Name()] = s
+	}
+	in.MCP = func(_ context.Context, server string) (template.MCPCaller, error) {
+		s := byName[server]
+		if s == nil {
+			return nil, i18n.E("tpl.mcp.unavailable", server)
+		}
+		return templateMCPCaller{s}, nil
+	}
+	return func() {
+		for _, s := range servers {
+			_ = s.Close()
+		}
+	}, nil
 }

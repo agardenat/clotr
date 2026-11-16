@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/png"
 	"io"
 	"maps"
 	"net/http"
@@ -308,7 +310,7 @@ func (ti *testInstance) Freeze()               {}
 func (ti *testInstance) Truth() starlark.Bool  { return true }
 func (ti *testInstance) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable") }
 func (ti *testInstance) AttrNames() []string {
-	return []string{"call", "cleanup", "commands", "discover", "environment", "error", "fn", "git_calls", "mcp_calls", "questions", "render", "requests", "startup", "ticket_get", "ticket_search", "tools", "tracked"}
+	return []string{"call", "cleanup", "commands", "diagram_reference", "diagram_render", "diagram_shapes", "discover", "environment", "error", "fn", "git_calls", "mcp_calls", "questions", "render", "requests", "startup", "ticket_get", "ticket_search", "tools", "tracked"}
 }
 
 func (ti *testInstance) Attr(name string) (starlark.Value, error) {
@@ -411,14 +413,81 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 	case "render":
 		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 			var d DocumentInput
-			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "markdown", &d.Markdown, "title?", &d.Title, "mode?", &d.Mode, "language?", &d.Language, "request?", &d.Request, "ticket?", &d.Ticket, "date?", &d.Date, "session?", &d.Session); err != nil {
+			var images *starlark.Dict
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "markdown", &d.Markdown, "title?", &d.Title, "mode?", &d.Mode, "language?", &d.Language, "request?", &d.Request, "ticket?", &d.Ticket, "date?", &d.Date, "session?", &d.Session, "images?", &images); err != nil {
 				return nil, err
+			}
+			if images != nil {
+				d.Images = map[string]Image{}
+				for _, k := range images.Keys() {
+					v, _, _ := images.Get(k)
+					name, ok1 := starlark.AsString(k)
+					data, ok2 := starlark.AsString(v)
+					if !ok1 || !ok2 {
+						return nil, fmt.Errorf("%s: images = {nom: octets}", b.Name())
+					}
+					im := Image{Data: []byte(data)}
+					if c, format, err := image.DecodeConfig(strings.NewReader(data)); err == nil {
+						im.Format, im.Width, im.Height = format, c.Width, c.Height
+					}
+					d.Images[name] = im
+				}
 			}
 			out, err := ti.in.RenderDocument(threadCtx(thread), d)
 			if err != nil {
 				return nil, err
 			}
 			return starlark.Bytes(out), nil
+		}), nil
+	case "diagram_reference", "diagram_shapes":
+		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			var query, cloud string
+			var err error
+			var out string
+			if name == "diagram_reference" {
+				if err = starlark.UnpackArgs(b.Name(), args, kwargs, "cloud", &cloud); err != nil {
+					return nil, err
+				}
+				out, err = ti.in.DiagramReference(threadCtx(thread), cloud)
+			} else {
+				if err = starlark.UnpackArgs(b.Name(), args, kwargs, "query", &query, "cloud", &cloud); err != nil {
+					return nil, err
+				}
+				out, err = ti.in.DiagramShapes(threadCtx(thread), query, cloud)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return starlark.String(out), nil
+		}), nil
+	case "diagram_render":
+		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			var specV starlark.Value
+			var cloud string
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "spec", &specV, "cloud", &cloud); err != nil {
+				return nil, err
+			}
+			g, err := fromStarlark(specV)
+			if err != nil {
+				return nil, err
+			}
+			spec, ok := g.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("%s: spec doit être un dict", b.Name())
+			}
+			r, err := ti.in.DiagramRender(threadCtx(thread), cloud, spec)
+			if err != nil {
+				return nil, err
+			}
+			warnings := starlark.NewList(nil)
+			for _, w := range r.Warnings {
+				_ = warnings.Append(starlark.String(w))
+			}
+			return starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
+				"drawio":   starlark.Bytes(r.Drawio),
+				"png":      starlark.Bytes(r.PNG),
+				"warnings": warnings,
+			}), nil
 		}), nil
 	case "startup":
 		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

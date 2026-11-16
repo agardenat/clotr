@@ -18,6 +18,7 @@ import (
 	"github.com/agardenat/clotr/internal/catalog"
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/cve"
+	"github.com/agardenat/clotr/internal/dat"
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/lead"
@@ -102,6 +103,7 @@ type Orchestrator struct {
 	Change          bool
 	Tickets         *ticket.Store
 	CVE             *cve.Store
+	DAT             *dat.Store
 	Journal         bool
 	OnResult        func(Result)
 	triaged         *Result
@@ -271,8 +273,111 @@ func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error)
 	if ctx.Err() != nil {
 		return &Report{Plan: plan, Results: results}, ctx.Err()
 	}
+	if o.DAT != nil && o.DAT.Renderer != nil && !o.Runner.Concluding() {
+		results = append(results, o.diagramStep(ctx, request, results))
+		if ctx.Err() != nil {
+			return &Report{Plan: plan, Results: results}, ctx.Err()
+		}
+	}
 	md, model, err := o.Synthesize(ctx, request, results)
 	return &Report{Plan: plan, Results: results, Markdown: md, Model: model}, err
+}
+
+func (o *Orchestrator) strongRole() (string, error) {
+	best := ""
+	for _, name := range o.Cfg.WorkerRoles() {
+		r := o.Cfg.Roles[name]
+		if !r.Tools {
+			continue
+		}
+		if best == "" || config.TierRank(r.Tier) > config.TierRank(o.Cfg.Roles[best].Tier) {
+			best = name
+		}
+	}
+	if best == "" {
+		return "", i18n.E("orch.direct_none")
+	}
+	return best, nil
+}
+
+func (o *Orchestrator) diagramStep(ctx context.Context, request string, results []Result) Result {
+	goal := o.DAT.DiagramGoal()
+	role, err := o.strongRole()
+	if err != nil {
+		return Result{TaskID: dat.TaskID, Goal: goal, Status: "failed", Error: err.Error()}
+	}
+	allowed := append(append(dat.ToolNames(), evidence.ToolName, evidence.SearchName), memory.ToolNames()...)
+	names := slices.DeleteFunc(o.Tools.Names(), func(n string) bool { return !slices.Contains(allowed, n) })
+	var deps []Result
+	for _, r := range results {
+		if len(r.Findings) > 0 || r.Raw != "" {
+			deps = append(deps, r)
+		}
+	}
+	t := Task{ID: dat.TaskID, Role: role, Goal: goal, Tools: names, label: i18n.T("dat.diagram_step")}
+	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: []progress.PlanItem{{ID: t.ID, Role: t.Role, Goal: t.label}}})
+	o.Audit.Log("diagram_step", map[string]any{"role": role, "inputs": len(deps)})
+	return o.runTask(ctx, request, t, deps, nil)
+}
+
+func (o *Orchestrator) coverDAT(p *Plan) {
+	if o.DAT == nil || len(o.DAT.Instances) == 0 || o.History != "" {
+		return
+	}
+	covers := func(t Task, inst string) bool {
+		return slices.ContainsFunc(t.Tools, func(n string) bool {
+			n = strings.TrimSuffix(n, "*")
+			return strings.TrimSuffix(n, "_") == inst || strings.HasPrefix(n, inst+"_")
+		})
+	}
+	role := ""
+	for _, t := range p.Tasks {
+		if r := o.Cfg.Roles[t.Role]; r.Tools && len(t.Tools) > 0 {
+			role = t.Role
+			break
+		}
+	}
+	if role == "" {
+		var err error
+		if role, err = o.DirectRole(""); err != nil {
+			return
+		}
+	}
+	var missing []string
+	for _, inst := range o.DAT.Instances {
+		if !slices.ContainsFunc(p.Tasks, func(t Task) bool { return covers(t, inst) }) {
+			missing = append(missing, inst)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	ids := map[string]bool{}
+	for _, t := range p.Tasks {
+		ids[t.ID] = true
+	}
+	next := func() string {
+		for i := len(p.Tasks) + 1; ; i++ {
+			if id := fmt.Sprintf("t%d", i); !ids[id] {
+				ids[id] = true
+				return id
+			}
+		}
+	}
+	room := o.Cfg.Limits.MaxTasks - len(p.Tasks)
+	for i, inst := range missing {
+		if room <= 1 && i < len(missing)-1 {
+			rest := missing[i:]
+			p.Tasks = append(p.Tasks, Task{ID: next(), Role: role, Goal: o.DAT.CoverGoal(strings.Join(rest, ", ")), Tools: rest})
+			break
+		}
+		if room <= 0 {
+			break
+		}
+		p.Tasks = append(p.Tasks, Task{ID: next(), Role: role, Goal: o.DAT.CoverGoal(inst), Tools: []string{inst}})
+		room--
+	}
+	o.Audit.Log("plan_covered", map[string]any{"missing": missing})
 }
 
 func (o *Orchestrator) continuations() int {
@@ -489,7 +594,7 @@ func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) 
 		var plan Plan
 		if err := ExtractJSON(out.Content, &plan); err != nil {
 			lastErr = err
-		} else if err := o.Validate(&plan); err != nil {
+		} else if err := o.validatePlan(&plan); err != nil {
 			lastErr = err
 		} else {
 			o.limitToTriage(&plan)
@@ -576,6 +681,9 @@ func (o *Orchestrator) planInput(request string) string {
 	if o.Change {
 		user += "\n\n" + changePlan
 	}
+	if o.DAT != nil {
+		user += "\n\n" + o.DAT.PlanRule()
+	}
 	if o.triaged == nil {
 		return user
 	}
@@ -596,6 +704,9 @@ const changePlan = "Demande de changement : rien n'est modifié par ce run. Le p
 
 func (o *Orchestrator) Validate(p *Plan) error {
 	if len(p.Tasks) == 0 {
+		if o.DAT != nil && o.History != "" {
+			return nil
+		}
 		return i18n.E("orch.no_task")
 	}
 	if len(p.Tasks) > o.Cfg.Limits.MaxTasks {
@@ -629,7 +740,7 @@ func (o *Orchestrator) Validate(p *Plan) error {
 			continue
 		}
 		if len(t.Tools) == 0 {
-			t.Tools = o.Tools.Names()
+			t.Tools = slices.DeleteFunc(o.Tools.Names(), isDiagramTool)
 			continue
 		}
 		expanded, err := o.Tools.Expand(t.Tools)
@@ -654,7 +765,7 @@ func (o *Orchestrator) Validate(p *Plan) error {
 				expanded = append(expanded, n)
 			}
 		}
-		t.Tools = expanded
+		t.Tools = slices.DeleteFunc(expanded, isDiagramTool)
 	}
 	for _, t := range p.Tasks {
 		for _, d := range t.DependsOn {
@@ -665,6 +776,13 @@ func (o *Orchestrator) Validate(p *Plan) error {
 	}
 	return checkCycles(p.Tasks)
 }
+
+func (o *Orchestrator) validatePlan(p *Plan) error {
+	o.coverDAT(p)
+	return o.Validate(p)
+}
+
+func isDiagramTool(n string) bool { return slices.Contains(dat.ToolNames(), n) }
 
 func pruneSameRoleDeps(p *Plan) map[string][]string {
 	roles := map[string]string{}
@@ -949,6 +1067,9 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 	if len(leads) > 0 {
 		user += "\n\nCauses et pistes signalées par les agents en cours de run (à confirmer par les preuves citées et les constats ; une piste non établie se présente comme telle):\n" + memory.Format(leads)
 	}
+	if o.DAT != nil && !o.DAT.DiagramOnly {
+		return o.synthesizeSections(ctx, user, cands)
+	}
 	model, effort := o.Runner.First(cands, config.RoleSynthesizer)
 	o.Events.Emit(progress.Event{Task: "synthesizer", Kind: "start", Model: model, Effort: effort})
 	out, err := o.Runner.Run(ctx, agent.Spec{
@@ -969,6 +1090,9 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 
 func (o *Orchestrator) reportBlocks() (map[string]string, []string, bool) {
 	switch {
+	case o.DAT != nil:
+		blocks, order := o.DAT.Blocks()
+		return blocks, order, true
 	case o.CVE != nil:
 		blocks, order := o.CVE.Blocks()
 		return blocks, order, true
@@ -1052,7 +1176,7 @@ func (o *Orchestrator) cachedAdvisories() Result {
 }
 
 func (o *Orchestrator) finalize(content string) string {
-	if o.Runner.Evidence == nil {
+	if o.Runner.Evidence == nil || o.DAT != nil && !o.DAT.CitesEvidence() {
 		return content
 	}
 	content, n := flagNoteOnlyLines(content, o.Runner.Evidence, o.noteContents())
@@ -1321,6 +1445,9 @@ func (o *Orchestrator) accessRule() string {
 
 func (o *Orchestrator) modeRule() string {
 	rule := o.incidentRule()
+	if o.DAT != nil {
+		rule += o.DAT.WorkerRule()
+	}
 	if o.Change {
 		rule += "\nMode demande de changement : tu ne modifies rien, tu établis ce qu'il faudra modifier. Établis l'état actuel de ce que la demande modifie (configuration en place, versions, ressources, valeurs) avec ses preuves, puis où se fait la modification : l'IaC d'abord (dépôt, fichier, ligne et syntaxe lus), une ressource gérée par IaC se modifiant dans l'IaC, jamais à la main ; signale tout écart entre l'IaC et l'état réel. Relève les impacts de la modification (redémarrage, interruption, dépendances, flux, certificats, droits) et comment revenir en arrière. Dans tes constats, une modification à réaliser se formule avec la valeur actuelle prouvée et la valeur cible."
 	}
@@ -1383,6 +1510,8 @@ func (o *Orchestrator) displayPath(p string) string {
 
 func (o *Orchestrator) reportMode() string {
 	switch {
+	case o.DAT != nil:
+		return o.DAT.Mode()
 	case o.CVE != nil:
 		return report.ModeCVE
 	case o.Change:
@@ -1404,11 +1533,18 @@ func (o *Orchestrator) reportModel() string {
 		o.Audit.Log("report_model_error", map[string]any{"mode": mode, "error": err.Error()})
 		m, _ = report.Model(mode, nil)
 	}
+	if o.DAT != nil {
+		p := report.Split(m)
+		m = strings.Join(append([]string{p.Preamble, p.Head}, report.ForVariant(p.Sections, o.DAT.Variant)...), "\n\n")
+	}
 	return m
 }
 
 func (o *Orchestrator) synthesizerSystem() string {
 	sys := synthesizerPrompt + o.reportModel() + synthesizerRules
+	if o.DAT != nil {
+		sys += o.DAT.SynthRule()
+	}
 	if strings.TrimSpace(o.Environment) != "" {
 		sys += "\nEnvironnement et consignes (servent à distinguer comportement attendu et anomalie):\n" + o.Environment
 	}

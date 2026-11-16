@@ -221,15 +221,20 @@ func (t *Template) validate() error {
 		} else if _, err := regexp.Compile(t.IDPattern); err != nil {
 			fail(i18n.T("tpl.spec.tickets_pattern_bad", err))
 		}
-	case KindDocument:
+	case KindDocument, KindDiagram:
 		if t.Script == "" {
 			fail(i18n.T("tpl.spec.document_script"))
 		}
-		if len(t.Tools) > 0 || len(t.Targets) > 0 || len(t.Connectors) > 0 || len(t.Companions) > 0 || len(t.Files) > 0 || len(t.Env) > 0 {
+		if len(t.Tools) > 0 || len(t.Targets) > 0 || len(t.Companions) > 0 || len(t.Files) > 0 || len(t.Env) > 0 {
 			fail(i18n.T("tpl.spec.document_only"))
 		}
+		for _, c := range t.Connectors {
+			if c.Driver != "mcp" && c.Driver != "http" {
+				fail(i18n.T("tpl.spec.document_driver", t.Kind, c.Driver))
+			}
+		}
 	default:
-		fail(i18n.T("tpl.spec.kind", t.Kind, KindStartup+", "+KindTickets+", "+KindDocument))
+		fail(i18n.T("tpl.spec.kind", t.Kind, KindStartup+", "+KindTickets+", "+KindDocument+", "+KindDiagram))
 	}
 	if t.Kind != KindTickets && t.IDPattern != "" {
 		fail(i18n.T("tpl.spec.id_pattern_kind"))
@@ -315,8 +320,30 @@ func (t *Template) Tickets() bool {
 	return t.Kind == KindTickets
 }
 
+func (t *Template) Diagram() bool {
+	return t.Kind == KindDiagram
+}
+
 func (t *Template) Special() bool {
-	return t.Startup() || t.Tickets() || t.Document()
+	return t.Startup() || t.Tickets() || t.Document() || t.Diagram()
+}
+
+func (t *Template) External() bool {
+	for _, c := range t.Connectors {
+		if c.Driver == "mcp" || c.Driver == "http" {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *Template) IaC() bool {
+	for _, tg := range t.Targets {
+		if tg["kind"] == "iac" {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *Template) sshConnector() (string, Connector, bool) {

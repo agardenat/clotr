@@ -306,3 +306,7 @@ func (l *StringList) UnmarshalJSON(data []byte) error {
 	*l = out
 	return nil
 }
+
+func (r *Registry) Groups() []string {
+	return slices.Clone(r.groups)
+}

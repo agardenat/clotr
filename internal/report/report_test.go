@@ -65,3 +65,14 @@ func TestFill(t *testing.T) {
 		t.Fatalf("rendu:\n%s", got)
 	}
 }
+
+func TestForVariantRenumbers(t *testing.T) {
+	p := Split("consigne\n\n# Titre\n\n## 1. A\n\na\n\n## 2. Écarts\n\n<!-- variant: drift -->\nx\n\n## 3. Limites\n\nl\n")
+	got := ForVariant(p.Sections, "clean")
+	if len(got) != 2 || got[1] != "## 2. Limites\n\nl" || p.Head != "# Titre" || p.Preamble != "consigne" {
+		t.Fatalf("%q %q", got, p.Head)
+	}
+	if d := ForVariant(p.Sections, "drift"); len(d) != 3 || d[1] != "## 2. Écarts\n\nx" {
+		t.Fatalf("%q", d)
+	}
+}
