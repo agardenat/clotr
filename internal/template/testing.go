@@ -422,7 +422,7 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 				for _, k := range images.Keys() {
 					v, _, _ := images.Get(k)
 					name, ok1 := starlark.AsString(k)
-					data, ok2 := starlark.AsString(v)
+					data, ok2 := asText(v)
 					if !ok1 || !ok2 {
 						return nil, fmt.Errorf("%s: images = {nom: octets}", b.Name())
 					}
