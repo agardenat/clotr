@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.74.0] - 2026-11-16
+
+### Modifié
+- Un modèle qui épuise sa limite de sortie en raisonnant, sans répondre, est relancé avec un niveau de raisonnement plus bas (`max` ou `xhigh` → `high` → `medium` → `low`) avant de passer au modèle suivant ou d'échouer (audit `output_exhausted` avec `effort` et `next_effort`) : un planner en `max` sur un modèle limité à 32 000 tokens de sortie arrêtait le run.
+
 ## [0.73.1] - 2026-11-16
 
 ### Corrigé
