@@ -1,5 +1,21 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.73.0] - 2026-11-16
+
+### Ajouté
+- `run --dat iac|drift|clean` : document d'architecture technique du périmètre de la demande, sans question. `iac` décrit l'état déclaré par les instances IaC seules ; `drift` décrit l'état réel et relève chaque écart avec l'IaC, déclaré et observé avec leurs preuves ; `clean` décrit l'état réel complété par l'IaC, sans écart, sans identifiant de preuve ni annexe, pour le client. Pas de variante par défaut.
+- `run --diagram iac|drift|clean` : schémas d'architecture seuls, avec la liste des composants, des flux et les limites.
+- Plan couvrant : une tâche par objet réunissant son IaC et ses instances réelles, une tâche ajoutée pour chaque instance du périmètre que le planner oublie (audit `plan_covered`) ; consignes d'extraction exhaustive (chaque racine de code, pile réseau, accès d'exploitation, éléments pairs, producteurs et consommateurs).
+- Étape de schéma après les tâches : spec construite par un agent à partir des constats et des preuves, un schéma par cloud, plateforme ou service partagé, rendu jusqu'à disparition des avertissements ; fichiers `architecture*.drawio` et `.png` et `diagrams.json` dans le tour.
+- Templates `kind: diagram` (`render(spec, cloud)`, `reference(cloud)`, `shapes(query, cloud)`, connecteurs `mcp` ou `http`), désignés par la section `diagram` de la configuration ; `inst.diagram_render`, `inst.diagram_reference` et `inst.diagram_shapes` dans les tests de templates.
+- Modèles de rapport `dat` (rédigé section par section en parallèle) et `diagram`, bloc `{{diagram}}` des figures, sections réservées à une variante (`<!-- variant: drift -->`) retirées et renumérotées.
+- `--export-template <nom>` : template de document de `--export` à la place de `report_export.template`.
+- Templates `kind: document` : connecteurs `mcp` et `http` facultatifs, et `doc.images`, les images du tour citées par le rapport (`data`, `format`, `width`, `height`) ; `inst.render(images=…)` dans les tests.
+
+### Modifié
+- `run -s` et `session --synthesize` reprennent le mode DAT ou schéma et sa variante ; en affinage, le plan peut être vide quand la demande ne porte que sur le rendu ou la rédaction.
+- Un template de document ou de schéma doté d'un connecteur envoie le contenu hors du poste : il est refusé en session confidentielle (export en erreur, document sans schéma).
+
 ## [0.72.0] - 2026-11-16
 
 ### Ajouté
