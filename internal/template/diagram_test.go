@@ -128,3 +128,30 @@ def render(doc):
 		t.Fatalf("%q %v", out, err)
 	}
 }
+
+func TestHarnessRenderImagesBytes(t *testing.T) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 3, 5))); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	files := map[string]string{
+		"d.yaml":      "name: d\nkind: document\nscript: d.star\n",
+		"d.star":      "def render(doc):\n    im = doc.images[\"a.png\"]\n    return \"%s %dx%d\" % (im.format, im.width, im.height)\n",
+		"d_test.star": "def test_images():\n    out = template.instance().render(markdown = \"![x](a.png)\", images = {\"a.png\": base64.decode(\"" + base64.StdEncoding.EncodeToString(buf.Bytes()) + "\")})\n    assert.eq(out, b\"png 3x5\")\n",
+	}
+	for n, c := range files {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(c), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl, _ := s.Get("d")
+	var out bytes.Buffer
+	if passed, failed, err := RunTests(context.Background(), tpl, &out); err != nil || failed != 0 || passed != 1 {
+		t.Fatalf("%d/%d %v\n%s", passed, failed, err, out.String())
+	}
+}
