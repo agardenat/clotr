@@ -68,6 +68,9 @@ func (in *Instance) Tools() []tools.Tool {
 		cached = append(cached, false)
 	}
 	for _, ts := range in.tools {
+		if ts.Kind == KindMCPTools {
+			continue
+		}
 		k := kinds[ts.Kind]
 		if !ceiling.Allows(k.level) {
 			continue
@@ -81,6 +84,58 @@ func (in *Instance) Tools() []tools.Tool {
 	}
 	return out
 }
+
+type RemoteTool interface {
+	tools.Tool
+	Remote() string
+}
+
+func (in *Instance) MCPTools(exposed func(server string) []RemoteTool) []tools.Tool {
+	if !in.offered().Allows(access.Read) {
+		return nil
+	}
+	var out []tools.Tool
+	for _, ts := range in.tools {
+		if ts.Kind != KindMCPTools {
+			continue
+		}
+		server, ok := in.mcps[ts.Connector]
+		if !ok {
+			continue
+		}
+		prefix := in.Name + "_"
+		if ts.Name != "" {
+			prefix += ts.Name + "_"
+		}
+		for _, rt := range exposed(server) {
+			desc := rt.Description()
+			if ts.Description != "" {
+				desc = ts.Description + " " + desc
+			}
+			name := prefix + remoteToolChars.ReplaceAllString(rt.Remote(), "_")
+			if len(name) > 64 {
+				name = name[:64]
+			}
+			out = append(out, activatingTool{fnTool{name: name, desc: desc, schema: string(rt.Schema()), call: rt.Call}, in, false, access.Read})
+		}
+	}
+	in.mcpTools = nil
+	for _, t := range out {
+		in.mcpTools = append(in.mcpTools, t.Name())
+	}
+	return out
+}
+
+func (in *Instance) hasMCPTools() bool {
+	for _, ts := range in.tools {
+		if _, ok := in.mcps[ts.Connector]; ok && ts.Kind == KindMCPTools {
+			return true
+		}
+	}
+	return false
+}
+
+var remoteToolChars = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 type activatingTool struct {
 	tools.Tool

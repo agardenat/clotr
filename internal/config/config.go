@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"os"
@@ -64,6 +65,8 @@ type Config struct {
 	Audit        AuditConf             `yaml:"audit"`
 	Files        *Files                `yaml:"files"`
 	MCP          []MCPServer           `yaml:"mcp"`
+	MinVersion   string                `yaml:"min_version"`
+	UpdateHint   string                `yaml:"update_hint"`
 	Templates    TemplatesConf         `yaml:"templates"`
 	Params       map[string]any        `yaml:"params"`
 	Instances    []Instance            `yaml:"instances"`
@@ -475,9 +478,73 @@ type MCPServer struct {
 	Deny      []string          `yaml:"deny"`
 	Timeout   Duration          `yaml:"timeout"`
 	Enabled   *bool             `yaml:"enabled"`
+	Servers   []MCPAlias        `yaml:"servers"`
 }
 
-const MCPAuthOAuth = "oauth"
+type MCPAlias struct {
+	Alias   string            `yaml:"alias"`
+	Name    string            `yaml:"name"`
+	Headers map[string]string `yaml:"headers"`
+	Auth    string            `yaml:"auth"`
+	Allow   []string          `yaml:"allow"`
+	Deny    []string          `yaml:"deny"`
+	Timeout Duration          `yaml:"timeout"`
+	Enabled *bool             `yaml:"enabled"`
+}
+
+const (
+	MCPAuthOAuth    = "oauth"
+	MCPAliasMarker  = "{alias}"
+	MCPSelectHeader = "x-mcp-servers"
+)
+
+func (c *Config) expandMCP() error {
+	var out []MCPServer
+	for i, m := range c.MCP {
+		if len(m.Servers) == 0 {
+			out = append(out, m)
+			continue
+		}
+		if m.URL == "" || m.Command != "" {
+			return i18n.E("config.mcp_servers_url", i)
+		}
+		for j, a := range m.Servers {
+			if a.Alias == "" {
+				return i18n.E("config.mcp_alias", i, j)
+			}
+			e := m
+			e.Servers = nil
+			e.Name = a.Name
+			if e.Name == "" {
+				e.Name = strings.ReplaceAll(a.Alias, "_", "-")
+			}
+			e.Headers = maps.Clone(m.Headers)
+			if e.Headers == nil {
+				e.Headers = map[string]string{}
+			}
+			maps.Copy(e.Headers, a.Headers)
+			if strings.Contains(m.URL, MCPAliasMarker) {
+				e.URL = strings.ReplaceAll(m.URL, MCPAliasMarker, a.Alias)
+			} else {
+				e.Headers[MCPSelectHeader] = a.Alias
+			}
+			if a.Auth != "" {
+				e.Auth = a.Auth
+			}
+			e.Allow = append(slices.Clone(m.Allow), a.Allow...)
+			e.Deny = append(slices.Clone(m.Deny), a.Deny...)
+			if a.Timeout.Duration > 0 {
+				e.Timeout = a.Timeout
+			}
+			if a.Enabled != nil {
+				e.Enabled = a.Enabled
+			}
+			out = append(out, e)
+		}
+	}
+	c.MCP = out
+	return nil
+}
 
 func (m MCPServer) IsEnabled() bool {
 	return m.Enabled == nil || *m.Enabled
@@ -523,6 +590,11 @@ func Parse(data []byte) (*Config, error) {
 }
 
 func parse(data []byte, clientsDir string) (*Config, error) {
+	if min, hint := PeekVersion(data); min != "" {
+		if err := RequireVersion("config", min, hint); err != nil {
+			return nil, err
+		}
+	}
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -536,6 +608,9 @@ func parse(data []byte, clientsDir string) (*Config, error) {
 		if err := c.loadClients(clientsDir); err != nil {
 			return nil, err
 		}
+	}
+	if err := c.expandMCP(); err != nil {
+		return nil, err
 	}
 	c.applyDefaults()
 	if err := c.validate(); err != nil {

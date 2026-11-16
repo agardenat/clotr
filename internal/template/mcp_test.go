@@ -143,7 +143,7 @@ func TestMCPConnectorRuntime(t *testing.T) {
 
 func TestMCPConnectorValidation(t *testing.T) {
 	base := "name: x\ntargets: [{kind: a}]\n"
-	if _, err := Parse([]byte(base+"connectors: {c: {driver: mcp, server: s, url: x}}\n"), "x.yaml"); err == nil || !strings.Contains(err.Error(), "url") {
+	if _, err := Parse([]byte(base+"connectors: {c: {driver: mcp, server: s, uri: x}}\n"), "x.yaml"); err == nil || !strings.Contains(err.Error(), "uri") {
 		t.Fatalf("option inconnue: %v", err)
 	}
 	tpl, err := Parse([]byte(base+"connectors: {c: {driver: mcp}}\n"), "x.yaml")

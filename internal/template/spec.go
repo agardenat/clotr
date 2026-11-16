@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/agardenat/clotr/internal/access"
+	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/i18n"
 )
@@ -35,6 +36,7 @@ type Template struct {
 	Commands    access.Rules         `yaml:"commands"`
 	Hints       string               `yaml:"hints"`
 	IDPattern   string               `yaml:"id_pattern"`
+	MinVersion  string               `yaml:"min_version"`
 
 	Source     string `yaml:"-"`
 	Raw        []byte `yaml:"-"`
@@ -62,6 +64,7 @@ type ToolSpec struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 	When        string `yaml:"when"`
+	Connector   string `yaml:"connector"`
 }
 
 var (
@@ -75,6 +78,11 @@ var (
 )
 
 func Parse(data []byte, source string) (*Template, error) {
+	if min, _ := config.PeekVersion(data); min != "" {
+		if err := config.RequireVersion("template "+filepath.Base(source), min, ""); err != nil {
+			return nil, err
+		}
+	}
 	var t Template
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -241,9 +249,25 @@ func (t *Template) validate() error {
 	}
 	seen := map[string]bool{}
 	for i, ts := range t.Tools {
+		if ts.Kind == KindMCPTools {
+			if c, ok := t.Connectors[ts.Connector]; !ok || c.Driver != "mcp" {
+				fail(i18n.T("tpl.spec.tool_mcp_conn", i, ts.Connector))
+			}
+			if ts.Name != "" && !identRe.MatchString(ts.Name) {
+				fail(i18n.T("tpl.spec.tool_name", i, ts.Name))
+			}
+			if seen["mcp:"+ts.Connector] {
+				fail(i18n.T("tpl.spec.tool_mcp_dup", i, ts.Connector))
+			}
+			seen["mcp:"+ts.Connector] = true
+			continue
+		}
+		if ts.Connector != "" {
+			fail(i18n.T("tpl.spec.tool_connector", i, ts.Kind))
+		}
 		k, ok := kinds[ts.Kind]
 		if !ok {
-			fail(i18n.T("tpl.spec.tool_kind", i, ts.Kind, strings.Join(sortedKeys(kinds), ", ")))
+			fail(i18n.T("tpl.spec.tool_kind", i, ts.Kind, strings.Join(append(sortedKeys(kinds), KindMCPTools), ", ")))
 			continue
 		}
 		if k.ssh && nssh == 0 {
@@ -278,8 +302,9 @@ func (t *Template) validate() error {
 }
 
 const (
-	KindStartup = "startup"
-	KindTickets = "tickets"
+	KindStartup  = "startup"
+	KindTickets  = "tickets"
+	KindMCPTools = "mcp"
 )
 
 func (t *Template) Startup() bool {

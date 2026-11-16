@@ -1,5 +1,17 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- `min_version` (et `update_hint` dans la configuration) : version minimale de clotr exigée par la configuration ou par un template, vérifiée avant le reste du fichier. Un clotr plus ancien affiche la version exigée, la sienne et la commande de mise à jour, au lieu d'une erreur sur un champ inconnu ; après une mise à jour au démarrage, le retour arrière l'affiche aussi.
+- Entrée `mcp` de passerelle avec `servers` : une seule URL (motif `{alias}`, ou en-tête `x-mcp-servers`) et des en-têtes communs pour plusieurs serveurs, développée en une entrée par alias avec ses propres `allow`, `deny`, `auth`, `timeout` et `enabled`.
+- Outils de template `kind: mcp` (`connector: <connecteur mcp>`, `name` et `description` optionnels) : les outils de lecture du serveur MCP du connecteur sont publiés sous le nom de l'instance, avec leur schéma, sans script.
+- Connecteur `mcp` de template avec `url`, `headers`, `allow`, `deny` et `timeout` à la place de `server` : le serveur MCP est déclaré par le template et paramétré par l'instance (site, variables des clés), sans entrée dans la section `mcp` de la configuration. Permet de rattacher à un client un serveur MCP qui lui est propre.
+- `clotr tools` liste aussi les outils écartés des serveurs MCP connectés pour un template. Une instance dont le serveur MCP n'a pas pu être connecté et qui n'a pas d'autre outil n'est pas annoncée au planner.
+
+### Corrigé
+- Connexion aux serveurs MCP HTTP sans flux SSE permanent (GET) : clotr n'utilise pas les messages spontanés du serveur, et une passerelle qui ne répond à ce GET qu'au premier keep-alive retardait chaque démarrage d'une quinzaine de secondes par serveur.
+
 ## [0.71.1] - 2026-11-15
 
 ### Corrigé

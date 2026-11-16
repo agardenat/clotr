@@ -339,7 +339,7 @@ func (in *Instance) checkToolNames() error {
 		}
 		seen[n] = true
 	}
-	if len(seen) == 0 {
+	if len(seen) == 0 && !in.hasMCPTools() {
 		return i18n.E("tpl.star.no_tool")
 	}
 	for _, c := range in.T.Companions {
@@ -379,9 +379,12 @@ func (in *Instance) toolNames(level access.Level) []string {
 		}
 	}
 	for _, ts := range in.tools {
-		if level.Allows(kinds[ts.Kind].level) {
+		if ts.Kind != KindMCPTools && level.Allows(kinds[ts.Kind].level) {
 			names = append(names, in.Name+"_"+ts.ToolName())
 		}
+	}
+	if level.Allows(access.Read) {
+		names = append(names, in.mcpTools...)
 	}
 	return names
 }
