@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.72.0] - 2026-11-16
 
 ### Ajouté
 - `min_version` (et `update_hint` dans la configuration) : version minimale de clotr exigée par la configuration ou par un template, vérifiée avant le reste du fichier. Un clotr plus ancien affiche la version exigée, la sienne et la commande de mise à jour, au lieu d'une erreur sur un champ inconnu ; après une mise à jour au démarrage, le retour arrière l'affiche aussi.
