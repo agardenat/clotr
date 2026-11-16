@@ -1,0 +1,108 @@
+package dat
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/agardenat/clotr/internal/audit"
+	"github.com/agardenat/clotr/internal/i18n"
+)
+
+type renderer struct{ warnings []string }
+
+func (renderer) Reference(context.Context, string) (string, error) { return "ref", nil }
+func (renderer) Shapes(context.Context, string, string) (string, error) {
+	return "shapes", nil
+}
+func (r renderer) Render(context.Context, string, map[string]any) (*Rendered, error) {
+	return &Rendered{Drawio: []byte("<mxfile/>"), PNG: []byte("png"), Warnings: r.warnings}, nil
+}
+
+func call(t *testing.T, s *Store, args map[string]any) string {
+	t.Helper()
+	raw, _ := json.Marshal(args)
+	out, err := renderTool{s}.Call(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestRenderWritesFilesAndRestores(t *testing.T) {
+	i18n.SetReport("fr")
+	dir := t.TempDir()
+	s := New(Drift, false, renderer{warnings: []string{"type inconnu : foo"}}, audit.Nop())
+	s.Begin(dir)
+	args := map[string]any{"name": "Cloud Azure", "cloud": "Azure", "title": "Réseau", "spec": map[string]any{"nodes": []any{}}}
+	if out := call(t, s, args); !strings.Contains(out, "avertissement") {
+		t.Fatal(out)
+	}
+	if s.Rendered() {
+		t.Fatal("un schéma avec avertissement n'est pas rendu")
+	}
+	s.Renderer = renderer{}
+	call(t, s, args)
+	ds := s.Diagrams()
+	if len(ds) != 1 || ds[0].Name != "architecture-cloud-azure" || ds[0].Cloud != "azure" || !ds[0].Clean() {
+		t.Fatalf("%+v", ds)
+	}
+	for _, f := range []string{"architecture-cloud-azure.png", "architecture-cloud-azure.drawio"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := New(Drift, false, nil, audit.Nop())
+	r.Restore(dir)
+	blocks, _ := r.Blocks()
+	if blocks["diagram"] != "![Figure 1 — Réseau](architecture-cloud-azure.png)" {
+		t.Fatalf("%q", blocks["diagram"])
+	}
+	if len(r.Tools()) != 0 {
+		t.Fatal("outils de schéma sans template de schéma")
+	}
+}
+
+func TestBlocksWithoutDiagram(t *testing.T) {
+	i18n.SetReport("fr")
+	s := New(Clean, false, nil, audit.Nop())
+	s.Skipped = "Pas de schéma : session confidentielle."
+	blocks, _ := s.Blocks()
+	if blocks["diagram"] != "*Pas de schéma : session confidentielle.*" {
+		t.Fatalf("%q", blocks["diagram"])
+	}
+}
+
+func TestPlanRuleByVariant(t *testing.T) {
+	s := New(IaC, false, nil, audit.Nop())
+	s.Instances, s.IaCOnes = []string{"code"}, []string{"code"}
+	if r := s.PlanRule(); strings.Contains(r, "instances réelles") || !strings.Contains(r, "toutes à couvrir : code") {
+		t.Fatal(r)
+	}
+	s.Variant = Drift
+	if r := s.WorkerRule(); !strings.Contains(r, DriftMark) {
+		t.Fatal(r)
+	}
+	s.Variant = Clean
+	if r := s.WorkerRule(); strings.Contains(r, DriftMark) {
+		t.Fatal(r)
+	}
+}
+
+func TestMainDiagramFirst(t *testing.T) {
+	s := New(Clean, true, renderer{}, audit.Nop())
+	s.Begin(t.TempDir())
+	for _, n := range []string{"api", "vm", "architecture", "api"} {
+		call(t, s, map[string]any{"name": n, "cloud": "azure", "title": n, "spec": map[string]any{"nodes": []any{}}})
+	}
+	var names []string
+	for _, d := range s.Diagrams() {
+		names = append(names, d.Name)
+	}
+	if strings.Join(names, " ") != "architecture architecture-api architecture-vm" {
+		t.Fatal(names)
+	}
+}

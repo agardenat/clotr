@@ -79,6 +79,7 @@ type Config struct {
 	UILang       string                `yaml:"ui_language"`
 	WebSearch    WebSearch             `yaml:"web_search"`
 	Export       ReportExport          `yaml:"report_export"`
+	Diagram      DiagramConf           `yaml:"diagram"`
 	Vault        VaultConf             `yaml:"vault"`
 	Compliance   map[string]Compliance `yaml:"compliance"`
 	CVE          CVEConf               `yaml:"cve"`
@@ -87,6 +88,11 @@ type Config struct {
 
 type Compliance struct {
 	Confidential bool `yaml:"confidential"`
+}
+
+type DiagramConf struct {
+	Template string         `yaml:"template"`
+	Params   map[string]any `yaml:"params"`
 }
 
 type ReportExport struct {
@@ -336,7 +342,7 @@ var instanceName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 var varName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
-var reservedPrefixes = []string{"fs", "mcp", "memory", "evidence", "web", "cause", "dns", "cve", "ticket"}
+var reservedPrefixes = []string{"fs", "mcp", "memory", "evidence", "web", "cause", "dns", "cve", "ticket", "diagram"}
 
 type SessionsConf struct {
 	Dir string `yaml:"dir"`

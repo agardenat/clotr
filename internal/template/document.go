@@ -3,6 +3,7 @@ package template
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,7 +15,10 @@ import (
 	"github.com/agardenat/clotr/internal/i18n"
 )
 
-const KindDocument = "document"
+const (
+	KindDocument = "document"
+	KindDiagram  = "diagram"
+)
 
 const maxAssetBytes = 100 << 20
 
@@ -36,6 +40,9 @@ func (in *Instance) documentPredeclared() starlark.StringDict {
 		if v, ok := base[n]; ok {
 			d[n] = v
 		}
+	}
+	if len(in.T.Connectors) > 0 {
+		d["mcp"], d["http"] = base["mcp"], base["http"]
 	}
 	return d
 }
@@ -63,7 +70,15 @@ func (in *Instance) builtinAsset(_ *starlark.Thread, b *starlark.Builtin, args s
 	return starlark.Bytes(data), nil
 }
 
+type Image struct {
+	Data   []byte
+	Format string
+	Width  int
+	Height int
+}
+
 type DocumentInput struct {
+	Images   map[string]Image
 	Markdown string
 	Title    string
 	Mode     string
@@ -79,7 +94,19 @@ func (d DocumentInput) value(params map[string]any) (starlark.Value, error) {
 	if err != nil {
 		return nil, err
 	}
+	images := starlark.NewDict(len(d.Images))
+	for _, k := range slices.Sorted(maps.Keys(d.Images)) {
+		im := d.Images[k]
+		_ = images.SetKey(starlark.String(k), starlarkstruct.FromStringDict(starlark.String("image"), starlark.StringDict{
+			"data":   starlark.Bytes(im.Data),
+			"format": starlark.String(im.Format),
+			"width":  starlark.MakeInt(im.Width),
+			"height": starlark.MakeInt(im.Height),
+		}))
+	}
+	images.Freeze()
 	return starlarkstruct.FromStringDict(starlark.String("document"), starlark.StringDict{
+		"images":   images,
 		"markdown": starlark.String(d.Markdown),
 		"title":    starlark.String(d.Title),
 		"mode":     starlark.String(d.Mode),

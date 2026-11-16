@@ -51,7 +51,7 @@ Chaque `run` ouvre une session au nom aléatoire, dans la langue de l'interface 
 `clotr run -s <session|last> "…"` ajoute un tour à une session existante pour l'affiner. Le nouveau tour démarre avec :
 - la mémoire de la session ;
 - les demandes précédentes et le dernier rapport, transmis au planner et au synthesizer ;
-- le mode du dernier tour lancé en mode incident (`--incident` ou `--panic`) ou demande de changement, et son ticket si la nouvelle demande n'en cite pas (message `Mode … repris du tour N`). Un mode passé explicitement (`--incident`, `--change`, `--cve`), `--ticket`, `--direct` ou `--chat` l'emporte ; un tour CVE plus récent arrête la reprise. Le journal de `--panic` n'est pas repris.
+- le mode du dernier tour lancé en mode incident (`--incident` ou `--panic`), demande de changement, DAT ou schéma d'architecture (avec sa variante), et son ticket si la nouvelle demande n'en cite pas (message `Mode … repris du tour N`). Un mode passé explicitement (`--incident`, `--change`, `--cve`), `--ticket`, `--direct` ou `--chat` l'emporte ; un tour CVE plus récent arrête la reprise. Le journal de `--panic` n'est pas repris.
 
 Le planner ne planifie que ce qui manque. Le synthesizer répond à la nouvelle demande, ou produit le rapport complet mis à jour si c'est ce qui est demandé.
 
@@ -143,7 +143,8 @@ report_export:
   params: {team: "Équipe plateforme"}
 ```
 
-- Le document est construit sur le poste, sans modèle ni service tiers : rien ne sort du poste, l'export est donc permis en session confidentielle.
+- Le document est construit sur le poste, sans modèle ni service tiers : rien ne sort du poste, l'export est donc permis en session confidentielle. Un template de document doté d'un connecteur `mcp` ou `http` envoie le rapport hors du poste : il est refusé en session confidentielle.
+- `--export-template <nom>` utilise un autre template de document que `report_export.template`, par exemple pour comparer deux rendus du même rapport ; `report_export.params` ne s'applique qu'au template configuré.
 - Le template reçoit le rapport Markdown et ses métadonnées (titre, mode, langue, demande, ticket, date, session) et rend un `.docx`.
 - Le PDF est converti depuis ce `.docx` par LibreOffice (`soffice`, cherché dans le `PATH`, puis aux emplacements d'installation habituels sous Windows et macOS), avec un profil temporaire ; les index (table des matières) et les champs (renvois de page) sont mis à jour avant la conversion. Sans LibreOffice, ou si la conversion échoue, le `.docx` est enregistré à la place (même nom, extension `.docx`) et l'erreur le signale.
 - clotr compare ensuite le texte du `.docx` au rapport : passages absents ou modifiés, passages hors de leur place, titres rendus comme texte ordinaire, syntaxe Markdown restée littérale. Les numéros placés en tête de titre (`1.`, `2.3`) sont ignorés, le document pouvant numéroter ses titres lui-même. Le rapport Markdown fait foi.
@@ -355,18 +356,30 @@ Ses paramètres reçoivent, comme une instance, les `params` globaux puis ceux d
 
 ### Templates de document
 
-Un template `kind: document` met en forme le rapport pour `--export`. Il n'a ni `tools`, ni `targets`, ni `connectors`, ni `companions`, ni `files`, ni `env`, et son script définit `render(doc)`, qui renvoie le contenu du `.docx` (`bytes`). Il est désigné par `report_export.template` ; `report_export.params` renseigne ses `params`.
+Un template `kind: document` met en forme le rapport pour `--export`. Il n'a ni `tools`, ni `targets`, ni `companions`, ni `files`, ni `env` ; ses `connectors`, facultatifs, sont de driver `mcp` ou `http` (service de génération de documents), avec `mcp.call` et `http.request` dans le script. Son script définit `render(doc)`, qui renvoie le contenu du `.docx` (`bytes`). Il est désigné par `report_export.template` ; `report_export.params` renseigne ses `params`.
 
-`doc` porte `markdown`, `title`, `mode` (`default`, `incident`, `change`, `cve`), `language` (`--lang` de l'export, sinon langue de la session, c'est-à-dire celle du run ; `auto` est résolu d'après le texte du rapport, hors blocs de code), `request`, `ticket`, `date` (`AAAA-MM-JJ`), `session` et `params`.
+`doc` porte `markdown`, `title`, `mode` (`default`, `incident`, `change`, `cve`, `dat`, `diagram`), `images` (dict `{nom: image}` des images du tour citées par le rapport, `![…](nom.png)` : `data` en `bytes`, `format` `png` ou `jpeg`, `width` et `height` en pixels), `language` (`--lang` de l'export, sinon langue de la session, c'est-à-dire celle du run ; `auto` est résolu d'après le texte du rapport, hors blocs de code), `request`, `ticket`, `date` (`AAAA-MM-JJ`), `session` et `params`.
 
-Le script n'a pas accès au réseau ni aux fichiers du poste. Il dispose des modules sans effet de bord (`json`, `yaml`, `re`, `time`, `math`, `base64`, `struct`, `sprintf`, `catch`, `jq`, `compact_json`) et de :
+Sans connecteur, le script n'a pas accès au réseau ; il n'a jamais accès aux fichiers du poste. Il dispose des modules sans effet de bord (`json`, `yaml`, `re`, `time`, `math`, `base64`, `struct`, `sprintf`, `catch`, `jq`, `compact_json`) et de :
 
 - `asset(nom)` : contenu (`bytes`) d'un fichier placé à côté du template, par exemple un `.docx` de référence (100 Mio au plus) ;
 - `zip.read(data)` : dict `{nom: bytes}` des fichiers d'une archive, dans l'ordre de l'archive ; `zip.write(fichiers)` : archive (`bytes`) des fichiers d'un dict, dans l'ordre du dict ;
 - `xml.parse(data)` : élément racine d'un document XML ; `xml.fragment(texte)` : liste des éléments d'un fragment (les préfixes d'espace de noms n'ont pas à être déclarés) ; `xml.element(tag, attrs, text)` ; `xml.encode(élément, declaration=True)` : `bytes` ; `xml.escape(texte)`. Un élément expose `tag`, `text`, `parent`, `children`, `get`, `set`, `unset`, `attrs`, `set_text`, `text_content`, `find` et `findall` (chemins etree : `w:body/w:p`, `.//w:t`, `w:p[@w:val='x']`), `append`, `prepend`, `insert`, `add_next`, `add_prev` (un élément ou une liste), `remove`, `index`, `copy` et `encode` ;
 - `markdown.blocks(texte)` (Markdown GFM : tableaux, listes de tâches, liens automatiques ; pas de barré, `~` étant courant dans les numéros de version) : liste de blocs `heading` (`level`), `para`, `quote` (`level` : profondeur), `bullet` et `numbered` (`level`, `marker`, `checked`), `table` (`header`, `rows`, `align` ; chaque cellule a `text` et `runs`), `code` (`text`, `lang`), `rule`, `image` (`src`, `alt`, `title`) et `html`. Les blocs de texte ont `text` (texte brut) et `runs` : `{text, bold, italic, code, strike, url, br}`. `markdown.inline(texte)` rend les `runs` d'un texte.
 
-Dans les tests (`clotr templates test`), `inst.render(markdown=…, title=…, mode=…, language=…, request=…, ticket=…, date=…, session=…)` appelle `render` ; `zip`, `xml` et `markdown` sont disponibles pour examiner le résultat.
+Dans les tests (`clotr templates test`), `inst.render(markdown=…, title=…, mode=…, language=…, request=…, ticket=…, date=…, session=…, images=…)` appelle `render` (`images` : dict `{nom: bytes}` d'images PNG ou JPEG) ; `zip`, `xml` et `markdown` sont disponibles pour examiner le résultat.
+
+### Templates de schéma
+
+Un template `kind: diagram` dessine les schémas d'architecture des modes `--dat` et `--diagram`, en général par un serveur de rendu de schémas. Il n'a ni `tools`, ni `targets`, ni `companions`, ni `files`, ni `env` ; ses connecteurs sont de driver `mcp` ou `http`. Il est désigné par `diagram.template` ; `diagram.params` renseigne ses `params`. Son script définit :
+
+- `render(spec, cloud)` (obligatoire) : rend la spec et renvoie un dict `{drawio, png, warnings}` : le fichier `.drawio` (`bytes` ou texte), l'image PNG (`bytes`, ou texte en base64) et la liste des avertissements (types inconnus, règles de lisibilité du template) ;
+- `reference(cloud)` : format de la spec, types de nœuds et de groupes, règles de placement pour ce cloud ou cette plateforme (texte, ou valeur convertie en JSON) ;
+- `shapes(query, cloud)` : recherche d'un type de nœud.
+
+L'étape de schéma les reçoit comme outils `diagram_reference`, `diagram_shapes` et `diagram_render(name, cloud, title, spec)`. Un rendu sans avertissement écrit `<name>.drawio` et `<name>.png` dans le tour (`name` préfixé par `architecture`). Un template doté d'un connecteur envoie le schéma hors du poste : il est refusé en session confidentielle, et le document est alors produit sans schéma.
+
+Dans les tests, `inst.diagram_reference(cloud)`, `inst.diagram_shapes(query, cloud)` et `inst.diagram_render(spec, cloud)` appellent ces fonctions ; `template.instance(mcp=…, http=…)` fournit les faux serveurs.
 
 ### Jeton OAuth2 lu dans Vault
 
@@ -584,7 +597,8 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
 | `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
 | `report_export` | `template` (template `kind: document`) et `params`. Voir Export du rapport en document. |
-| `report_models` | modèle de rapport par mode (`default`, `cve`, `incident`, `change`) : chemin d'un fichier Markdown qui remplace le modèle embarqué. Voir Modèles de rapport. |
+| `diagram` | `template` (template `kind: diagram`) et `params` : rendu des schémas des modes `--dat` et `--diagram`. Voir Templates de schéma. |
+| `report_models` | modèle de rapport par mode (`default`, `cve`, `incident`, `change`, `dat`, `diagram`) : chemin d'un fichier Markdown qui remplace le modèle embarqué. Voir Modèles de rapport. |
 | `tickets` | `template` (template `kind: tickets`), `params`, `enabled` (défaut true) : outil de tickets des modes incident et demande de changement. Voir Templates de tickets et Tickets. |
 | `cve` | `sources` : distributions interrogées en mode CVE (`redhat`, `ubuntu`, `debian` ; défaut : les trois). Voir Mode CVE. |
 | `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true ; false : connecté seulement par `-t mcp_<serveur>`), `auth` (`oauth` : connexion OAuth dans le navigateur, voir Serveurs MCP en OAuth). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. `servers` : une entrée de passerelle qui expose plusieurs serveurs (un par alias) se développe en une entrée par élément `{alias, name, headers, auth, allow, deny, timeout, enabled}` : `{alias}` de `url` est remplacé par l'alias, ou, sans `{alias}`, l'en-tête `x-mcp-servers` porte l'alias ; `name` vaut par défaut l'alias (`_` remplacé par `-`) ; `headers` complètent ceux de l'entrée, `allow`/`deny` s'y ajoutent, les autres champs les remplacent. Le `name` de l'entrée de passerelle elle-même n'est pas un serveur. |
@@ -762,6 +776,9 @@ clotr run --access exec "version de PHP dans les pods du namespace web" -t prod
 | `--raw` (`run`, `session`) | rapport en Markdown brut, sans mise en forme pour le terminal |
 | `--with-evidence` (`run`, `session`) | annexe la sortie complète de chaque preuve citée, voir Preuves |
 | `--export docx\|pdf` (`run`, `session`) | produit aussi le rapport en document avec `report_export.template`, voir Export du rapport en document |
+| `--export-template <nom>` (`run`, `session`) | template de document de `--export` à la place de `report_export.template` |
+| `--dat iac\|drift\|clean` (`run`) | document d'architecture technique du périmètre, sans question, voir Mode DAT et schéma d'architecture |
+| `--diagram iac\|drift\|clean` (`run`) | schéma d'architecture seul du périmètre, voir Mode DAT et schéma d'architecture |
 | `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |
 | `--panic` (`run`) | mode incident avec journal en direct des preuves, constats et lacunes, voir Mode panique |
 | `--cve[="<sujet>"]` (`run`) | mode CVE : fiches des CVE et GHSA de la demande, ou du sujet nommé (compromission sans CVE), statut de chaque actif en direct, élévation sur autorisation, voir Mode CVE |
@@ -860,9 +877,33 @@ Pour une compromission, le plan d'action prévoit, pour chaque actif exposé ou 
 
 `--cve` est incompatible avec `--incident`, `--panic`, `--direct` et `--chat`.
 
+### Mode DAT et schéma d'architecture
+
+`run --dat <variante>` rédige le document d'architecture technique (DAT) du périmètre de la demande, sans question : clotr connaît déjà les clients, projets et instances, IaC (templates dont une cible est de type `iac`) et réelles. `run --diagram <variante>` produit seulement les schémas d'architecture, avec la liste des composants et des flux. Rien n'est modifié ni investigué : c'est un relevé factuel.
+
+```sh
+clotr run --dat drift "DAT du projet data de acme"
+clotr run --diagram clean "schéma d'architecture de acme"
+```
+
+| Variante | Sources | Document |
+|---|---|---|
+| `iac` | instances IaC du périmètre seules (erreur s'il n'y en a pas) | état déclaré par le code |
+| `drift` | instances IaC et réelles | état réel, avec une section des écarts entre l'IaC et le réel (constats `[ÉCART]`, déclaré et observé avec leurs preuves) |
+| `clean` | instances IaC et réelles | état réel complété par l'IaC, sans écart, sans identifiant de preuve ni annexe des preuves : version à remettre au client |
+
+Il n'y a pas de variante par défaut : envoyer un document avec ou sans écarts est un choix explicite. Sans instance IaC dans le périmètre, `drift` et `clean` le signalent et décrivent l'état réel seul.
+
+- **Plan** : une tâche par objet (cluster, réseau, environnement, groupe d'hôtes) qui réunit son instance IaC et ses instances réelles ; un dépôt IaC qui couvre tout un abonnement ou plusieurs piles a ses propres tâches. clotr ajoute une tâche pour chaque instance du périmètre que le plan oublie (audit `plan_covered`). Les agents relèvent de façon exhaustive (chaque racine de code, chaque composant sur chaque élément pair, accès d'exploitation), en constats `[INFO]`.
+- **Schéma** : après les tâches, une étape dédiée, seule à disposer des outils du template de schéma (`diagram.template`), construit une spec par cloud ou plateforme, et par service partagé (stockage de fichiers, annuaire), à partir des constats et des preuves, puis la rend jusqu'à ce qu'elle ne produise plus d'avertissement. Le premier schéma s'appelle `architecture`, les suivants `architecture-<sujet>`. Sans template de schéma, le document est produit sans figure.
+- **Rédaction** : le DAT suit le modèle `dat` (introduction, architecture globale avec les figures, accès et identités, IaC, réseau, sécurité réseau, calcul, plateformes, données, secrets, exploitation, périmètre non couvert, écarts en `drift`), rédigé section par section en parallèle ; le schéma seul suit le modèle `diagram`. Une section réservée à une variante (`<!-- variant: drift -->` dans le modèle) est retirée des autres, et les sections sont renumérotées.
+- **Affinage** : `run -s` reprend le mode et la variante ; quand la demande ne porte que sur le rendu ou la rédaction, le plan peut être vide et seule l'étape de schéma puis la rédaction tournent, à partir de la mémoire et des preuves des tours précédents.
+
+`--dat` et `--diagram` sont incompatibles entre eux et avec `--incident`, `--panic`, `--change`, `--cve`, `--ticket`, `--chat` et `--direct`. Les images du tour sont passées au template de document de `--export`.
+
 ### Modèles de rapport
 
-La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour les runs sans mode, `incident` pour `--incident` et `--panic`, `change` pour `--change` et `cve` pour `--cve`. Les modèles `incident` et `change` ont les blocs `{{ticket}}` (en-tête du ticket de la demande, ou du ticket probable) et `{{tickets.related}}` (tableau des tickets liés), retirés quand il n'y a pas de ticket. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
+La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour les runs sans mode, `incident` pour `--incident` et `--panic`, `change` pour `--change`, `cve` pour `--cve`, `dat` pour `--dat` et `diagram` pour `--diagram`. Le bloc `{{diagram}}` des modèles `dat` et `diagram` reçoit les figures du tour. Les modèles `incident` et `change` ont les blocs `{{ticket}}` (en-tête du ticket de la demande, ou du ticket probable) et `{{tickets.related}}` (tableau des tickets liés), retirés quand il n'y a pas de ticket. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
 
 `report_models` remplace un modèle embarqué par un fichier, par mode :
 
@@ -974,6 +1015,7 @@ internal/access/        niveaux d'accès (read, exec, create) et motifs de comma
 internal/cve/           mode CVE : fiches, cache des fiches, statuts des actifs, blocs du rapport
 internal/cve/sources/   sources officielles des CVE : collecte, extraction des faits, empreinte, commandes de détection
 internal/report/        modèles de rapport par mode, remplissage des blocs
+internal/dat/           modes DAT et schéma d'architecture : consignes, outils de l'étape de schéma, figures du tour
 internal/driver/ssh/    SSH : commandes fixes en lecture seule, argv quoté au niveau exec, chemins autorisés, known_hosts, chaîne de rebonds
 internal/tunnel/        tunnel d'un client : rebonds SSH et proxy SOCKS5 local
 internal/creds/         identifiants : variables d'environnement, Vault ou saisie

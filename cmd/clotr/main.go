@@ -33,6 +33,7 @@ import (
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/cve"
 	"github.com/agardenat/clotr/internal/cve/sources"
+	"github.com/agardenat/clotr/internal/dat"
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/httpx"
 	"github.com/agardenat/clotr/internal/i18n"
@@ -107,6 +108,11 @@ type options struct {
 	cveFlag      string
 	cveIDs       []string
 	cveDistros   []string
+	datFlag      string
+	diagramFlag  string
+	datVariant   string
+	diagramOnly  bool
+	exportTpl    string
 }
 
 type app struct {
@@ -133,6 +139,8 @@ type app struct {
 	cves         *cve.Store
 	tickets      *ticket.Store
 	ticketSrc    *template.Instance
+	diagramSrc   *template.Instance
+	dat          *dat.Store
 	mainTicket   *template.Ticket
 	change       bool
 	journal      bool
@@ -272,6 +280,9 @@ func newRoot() *cobra.Command {
 	run.Flags().Lookup("cve").NoOptDefVal = "auto"
 	run.Flags().BoolVar(&o.panic, "panic", false, i18n.T("cli.flag.panic"))
 	run.Flags().StringVar(&o.exportFmt, "export", "", i18n.T("cli.flag.export"))
+	run.Flags().StringVar(&o.exportTpl, "export-template", "", i18n.T("cli.flag.export_template"))
+	run.Flags().StringVar(&o.datFlag, "dat", "", i18n.T("cli.flag.dat"))
+	run.Flags().StringVar(&o.diagramFlag, "diagram", "", i18n.T("cli.flag.diagram"))
 	run.Flags().StringVar(&o.accessFlag, "access", "", i18n.T("cli.flag.access"))
 
 	sessionsCmd := &cobra.Command{
@@ -884,6 +895,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		rt.close()
 		return nil, err
 	}
+	rt.setupDAT(o, warn)
 	rt.connectTemplateMCP(ctx, warn)
 	if err := rt.resolveTicket(ctx, o, warn); err != nil {
 		rt.close()
@@ -915,6 +927,9 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 			rt.tickets = ticket.New(rt.ticketSrc, rt.evidence, rt.audit)
 			rt.tickets.SetMain(rt.mainTicket)
 			rt.registry.Add(rt.tickets.Tools()...)
+		}
+		if rt.dat != nil {
+			rt.registry.Add(rt.dat.Tools()...)
 		}
 		if len(o.cveIDs) > 0 {
 			rt.cves = cve.New(o.cveIDs, rt.memory, rt.evidence, rt.audit)
@@ -1246,9 +1261,11 @@ func (rt *app) connectTemplateMCP(ctx context.Context, warn func(string)) {
 	}
 	var need []config.MCPServer
 	seen := map[string]bool{}
-	instances := rt.instances
-	if rt.ticketSrc != nil {
-		instances = append(slices.Clone(instances), rt.ticketSrc)
+	instances := slices.Clone(rt.instances)
+	for _, in := range []*template.Instance{rt.ticketSrc, rt.diagramSrc} {
+		if in != nil {
+			instances = append(instances, in)
+		}
 	}
 	for _, in := range instances {
 		for _, n := range in.MCPServers() {
@@ -1450,6 +1467,9 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 	if rt.tickets != nil {
 		rt.tickets.Events = events
 	}
+	if rt.dat != nil {
+		rt.dat.Events = events
+	}
 	if rt.cves != nil {
 		rt.cves.Events = events
 		runner.Inbox = rt.cves.Inbox
@@ -1470,6 +1490,7 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		Change:      rt.change,
 		Tickets:     rt.tickets,
 		CVE:         rt.cves,
+		DAT:         rt.dat,
 		Journal:     rt.journal,
 	}
 }
@@ -1814,6 +1835,9 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	sess.Turns[n-1].Exclude = o.exclude
 	sess.Turns[n-1].CVE = o.cveIDs
 	switch {
+	case rt.dat != nil:
+		sess.Turns[n-1].Mode, sess.Turns[n-1].DAT = rt.dat.Mode(), rt.dat.Variant
+		rt.dat.Begin(turnDir)
 	case rt.change:
 		sess.Turns[n-1].Mode = template.TicketChange
 	case rt.leads != nil:
@@ -1847,6 +1871,11 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	}
 	rt.warnFiltered(mention)
 	reg, env := rt.scope(forced, mention)
+	if reg, env, err = rt.datScope(reg, env, o); err != nil {
+		rt.audit.Log("run_end", map[string]any{"error": err.Error()})
+		rt.saveTurn(sess, n, turnDir, nil, err, nil, nil)
+		return turnOutcome{err: err, n: n, dir: turnDir}
+	}
 	if levels := accessSummary(rt.instances, reg); levels != "" {
 		sess.Turns[n-1].Access = levels
 		fmt.Fprintln(os.Stderr, i18n.T("access.line", levels))
@@ -1885,6 +1914,19 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	res := turnOutcome{report: report, err: runErr, n: n, dir: turnDir, used: used, costs: costs, info: cleaned, comment: comment}
 	if comment != "" {
 		res.info = append(res.info, i18n.T("ticket.comment_saved", filepath.Join(turnDir, "comment.txt")))
+	}
+	if rt.dat != nil {
+		for _, d := range rt.dat.Diagrams() {
+			var files []string
+			for _, f := range []string{d.PNG, d.Drawio} {
+				if f != "" {
+					files = append(files, filepath.Join(turnDir, f))
+				}
+			}
+			if len(files) > 0 {
+				res.info = append(res.info, i18n.T("dat.diagram_files", strings.Join(files, ", ")))
+			}
+		}
 	}
 	if len(used) > 0 {
 		var parts, foreign []string
@@ -2004,6 +2046,9 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if o.cveFlag != "" && (o.incident || o.chat || o.direct != "") {
 		return i18n.E("cve.modes")
 	}
+	if err := o.resolveDAT(); err != nil {
+		return err
+	}
 	if o.chat {
 		return cmdChat(ctx, o, args)
 	}
@@ -2054,6 +2099,9 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 		}
 		if rt.cves != nil {
 			doc["cve"] = map[string]any{"advisories": rt.cves.Advisories(), "findings": rt.cves.Findings()}
+		}
+		if rt.dat != nil {
+			doc["dat"] = map[string]any{"variant": rt.dat.Variant, "mode": rt.dat.Mode(), "diagrams": rt.dat.Diagrams()}
 		}
 		if rt.tickets != nil {
 			doc["tickets"] = map[string]any{"ticket": rt.tickets.Main(), "related": rt.tickets.Related()}
@@ -2251,12 +2299,16 @@ func (rt *app) budgetRefresher(events progress.Sink) func(context.Context) {
 }
 
 func (o *options) inheritMode(sess *session.Session) {
-	if o.incident || o.change || o.cveFlag != "" || o.chat || o.direct != "" {
+	if o.incident || o.change || o.cveFlag != "" || o.chat || o.direct != "" || o.datVariant != "" {
 		return
 	}
 	for i := len(sess.Turns) - 1; i >= 0; i-- {
 		t := sess.Turns[i]
 		if len(t.CVE) > 0 {
+			return
+		}
+		if o.ticketFlag == "" && o.restoreDAT(t) {
+			fmt.Fprintln(os.Stderr, i18n.T("session.mode_inherited", i18n.T("dat.mode."+t.Mode)+" ("+t.DAT+")", t.N))
 			return
 		}
 		switch t.Mode {
@@ -2476,6 +2528,8 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 		o.incident = true
 	case template.TicketChange:
 		o.change = true
+	default:
+		o.restoreDAT(sess.Turns[n-1])
 	}
 	fmt.Fprintln(os.Stderr, i18n.T("session.resynth", o.sessName(sess.Name), n, i18n.N(len(o.tools), "connector")))
 	rt, err := setup(ctx, o, true)
@@ -2490,6 +2544,10 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	rt.memory.Load(prior)
 	if rt.cves != nil {
 		rt.cves.Restore(cveFromAudit(filepath.Join(dir, "audit.jsonl")))
+	}
+	if rt.dat != nil {
+		rt.dat.Restore(dir)
+		rt.dat.Instances, rt.dat.IaCOnes = datScopeFromAudit(filepath.Join(dir, "audit.jsonl"))
 	}
 	if rt.tickets != nil {
 		main, related := ticketsFromAudit(filepath.Join(dir, "audit.jsonl"))
@@ -2564,7 +2622,7 @@ func importPriorEvidence(sess *session.Session, store *evidence.Store, turn int)
 	}
 }
 
-var internalPrefixes = []string{"memory", "cve", "ticket", "cause"}
+var internalPrefixes = []string{"memory", "cve", "ticket", "cause", "diagram"}
 
 func toolFilterFromAudit(path string) []string {
 	f, err := os.Open(path)
