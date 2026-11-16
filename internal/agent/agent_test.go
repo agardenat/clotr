@@ -961,3 +961,26 @@ func TestReasoningEffortReported(t *testing.T) {
 		t.Fatalf("Output.Effort: %q", out.Effort)
 	}
 }
+
+func TestLowerEffortWhenOutputExhausted(t *testing.T) {
+	var efforts []string
+	chat := &testutil.FakeChat{Fn: func(_ context.Context, _ string, req llm.Request) (*llm.Response, error) {
+		efforts = append(efforts, req.Model+":"+req.ReasoningEffort)
+		if req.Model == "thinker" && req.ReasoningEffort != "medium" {
+			resp := testutil.Reply("<think>long raisonnement</think>")
+			resp.Choices[0].FinishReason = "length"
+			return resp, nil
+		}
+		return testutil.Reply(`{"tasks":[]}`), nil
+	}}
+	var cur, peak int32
+	r := runner(chat, registry(&cur, &peak))
+	cands := []catalog.ModelInfo{{Provider: "p", ID: "thinker", MaxOutput: 16384, ReasoningEffort: map[string]string{"planner": "max"}}, {Provider: "p", ID: "writer", MaxOutput: 16384}}
+	out, err := r.Run(context.Background(), Spec{TaskID: "planner", Role: "planner", System: "s", User: "u", Candidates: cands})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(efforts, ",") != "thinker:max,thinker:high,thinker:medium" || out.Model != "p/thinker" || out.Effort != "medium" {
+		t.Fatalf("efforts %v, modèle %s (%s)", efforts, out.Model, out.Effort)
+	}
+}
