@@ -103,6 +103,7 @@ var msgs = map[string]msg{
 	"fallback":             {"fallback to %s (%s)", "bascule vers %s (%s)"},
 	"fallback.after":       {"after error on %s: %s", "après erreur sur %s : %s"},
 	"fallback.exhausted":   {"%s used its whole output limit without answering", "%s a épuisé sa limite de sortie sans répondre"},
+	"fallback.effort":      {"%s used its whole output limit reasoning at effort %s: retried at effort %s", "%s a épuisé sa limite de sortie en raisonnant en effort %s : relancé en effort %s"},
 	"limit":                {"%d-step limit reached, forced conclusion", "limite de %d étapes atteinte, conclusion forcée"},
 	"evidence.line":        {"evidence: %d tool outputs archived in %s (clotr session %s --evidence <id>)", "preuves : %d sorties d'outils archivées dans %s (clotr session %s --evidence <id>)"},
 	"stopped.steps":        {"step limit", "limite d'étapes"},

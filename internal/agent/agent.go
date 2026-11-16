@@ -150,18 +150,24 @@ func (r *Runner) First(cands []catalog.ModelInfo, role string) (string, string) 
 }
 
 func (s *session) effort(m catalog.ModelInfo) string {
+	if e, ok := s.efforts[m.Ref()]; ok {
+		return e
+	}
 	return m.ReasoningEffort[s.spec.Role]
 }
 
+var lowerEffort = map[string]string{"max": "high", "xhigh": "high", "high": "medium", "medium": "low"}
+
 type session struct {
-	id     string
-	r      *Runner
-	spec   Spec
-	cur    int
-	out    *Output
-	model  catalog.ModelInfo
-	shown  string
-	cancel context.CancelFunc
+	id      string
+	r       *Runner
+	spec    Spec
+	cur     int
+	out     *Output
+	model   catalog.ModelInfo
+	shown   string
+	efforts map[string]string
+	cancel  context.CancelFunc
 }
 
 func (r *Runner) Run(ctx context.Context, spec Spec) (*Output, error) {
@@ -482,6 +488,20 @@ func (s *session) switchIfOutputExhausted(ctx context.Context, step int, req llm
 	cands := s.spec.Candidates
 	tried := map[string]bool{}
 	for outputExhausted(resp) {
+		cur := cands[s.cur]
+		if low := lowerEffort[strings.ToLower(s.effort(cur))]; low != "" {
+			if s.efforts == nil {
+				s.efforts = map[string]string{}
+			}
+			s.r.Audit.Log("output_exhausted", map[string]any{"task": s.spec.TaskID, "step": step, "model": cur.Ref(), "completion_tokens": resp.Usage.CompletionTokens, "effort": s.effort(cur), "next_effort": low})
+			s.r.Events.Emit(progress.Event{Task: s.spec.TaskID, Kind: "fallback", Model: cur.Ref(), Effort: low, Detail: i18n.T("fallback.effort", cur.Ref(), s.effort(cur), low)})
+			s.efforts[cur.Ref()] = low
+			var err error
+			if resp, err = s.chat(ctx, step, req); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		from := s.model.Ref()
 		tried[from] = true
 		next := -1
@@ -548,7 +568,7 @@ func (s *session) chat(ctx context.Context, step int, req llm.Request) (*llm.Res
 			}
 			req.Model = m.ID
 			req.MaxTokens = min(m.MaxOutput, maxOutputTokens)
-			req.ReasoningEffort = m.ReasoningEffort[s.spec.Role]
+			req.ReasoningEffort = s.effort(m)
 			sent := req
 			if s.spec.OnText != nil {
 				sent.OnContent = liveText(s.spec.OnText, s.shown)
