@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.74.2] - 2026-11-17
+
+### Modifié
+- Stockage partagé : les adresses de montage de chaque service (cibles de montage, répartiteur, nom DNS) sont relevées, l'adresse montée chez un consommateur est rattachée au service dont c'est l'adresse, et un seul schéma réunit les services de stockage de fichiers ; une adresse rattachée à aucun service devient son propre nœud (un service de fichiers managé monté par adresse IP disparaissait du schéma).
+
 ## [0.74.1] - 2026-11-17
 
 ### Modifié
