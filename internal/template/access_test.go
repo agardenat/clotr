@@ -967,3 +967,45 @@ func TestConfirmUnansweredAndSharedAlways(t *testing.T) {
 		t.Fatalf("instance sans partage : %d, %v", asks, err)
 	}
 }
+
+func TestConcurrentSameCommandAskedOnce(t *testing.T) {
+	var mu sync.Mutex
+	asks := 0
+	release := make(chan struct{})
+	in := &Instance{Name: "a", Approvals: access.NewApprovals()}
+	in.Confirm = func(context.Context, string) (access.Answer, error) {
+		mu.Lock()
+		asks++
+		mu.Unlock()
+		<-release
+		return access.Always, nil
+	}
+	argv := []string{"demo-tool", "--run"}
+	var wg sync.WaitGroup
+	errs := make([]error, 8)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = in.authorizeCommand(context.Background(), fmt.Sprintf("h%d", i), argv)
+		}()
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if asks != 1 {
+		t.Fatalf("même commande demandée %d fois en parallèle", asks)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	held, _ := in.approvals().Ask(context.Background(), "k")
+	cancel()
+	if _, err := in.approvals().Ask(ctx, "k"); err == nil {
+		t.Fatal("attente non interrompue par l'annulation")
+	}
+	held()
+}
