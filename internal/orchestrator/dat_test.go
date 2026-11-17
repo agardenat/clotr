@@ -179,3 +179,46 @@ func TestDATRefineAcceptsEmptyPlan(t *testing.T) {
 		t.Fatal("consigne d'affinage absente")
 	}
 }
+
+func TestDATFixedPlanSkipsPlanner(t *testing.T) {
+	o, tl, _, _ := datOrch(t, dat.Clean, true)
+	o.DAT.Units = []dat.Unit{
+		{IaC: "code", Instances: []string{"code", "k8s"}, Objects: []string{"k8s/prod"}},
+		{Instances: []string{"k8s"}, Except: []string{"prod"}},
+	}
+	for i := 0; i < 5; i++ {
+		o.DAT.Units = append(o.DAT.Units, dat.Unit{Instances: []string{"k8s"}})
+	}
+	p, err := o.Plan(context.Background(), "schéma")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, called := tl.input["planner"]; called {
+		t.Fatal("planner appelé malgré le plan fixe")
+	}
+	if len(p.Tasks) != 7 || p.Tasks[0].ID != "t1" || p.Tasks[0].Role != "collector" {
+		t.Fatalf("plan : %+v", p.Tasks)
+	}
+	if g := p.Tasks[0].Goal; !strings.Contains(g, "l'instance IaC code") || !strings.Contains(g, "la cible prod de l'instance k8s") {
+		t.Fatalf("objectif t1 : %s", g)
+	}
+	if g := p.Tasks[1].Goal; !strings.Contains(g, "hors cibles prod") {
+		t.Fatalf("objectif t2 : %s", g)
+	}
+	if !slices.Contains(p.Tasks[0].Tools, "code_tree") || !slices.Contains(p.Tasks[0].Tools, "k8s_list") || slices.Contains(p.Tasks[0].Tools, dat.RenderTool) {
+		t.Fatalf("outils t1 : %v", p.Tasks[0].Tools)
+	}
+	again, _ := o.Plan(context.Background(), "schéma")
+	for i := range p.Tasks {
+		if again.Tasks[i].Goal != p.Tasks[i].Goal {
+			t.Fatal("plan différent d'un appel à l'autre")
+		}
+	}
+	o.History = "tour précédent"
+	if _, err := o.Plan(context.Background(), "affiner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, called := tl.input["planner"]; !called {
+		t.Fatal("affinage de session : le planner doit décider des faits nouveaux")
+	}
+}

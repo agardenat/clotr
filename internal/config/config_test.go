@@ -304,3 +304,19 @@ func TestClientTunnel(t *testing.T) {
 		}
 	}
 }
+
+func TestInstanceDescribes(t *testing.T) {
+	base := "providers:\n  - {name: p, base_url: http://x}\ninstances:\n  - {name: k8s-a, template: cluster}\n"
+	c, err := Parse([]byte(base + "  - {name: flux-a, template: gitops, describes: k8s-a/prod}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := c.Instances[1].Describes; len(d) != 1 || d[0] != "k8s-a/prod" || c.Instances[1].DescribedInstances()[0] != "k8s-a" {
+		t.Fatalf("describes : %v", d)
+	}
+	for _, bad := range []string{"inconnue", "flux-a", "k8s-a/a/b"} {
+		if _, err := Parse([]byte(base + "  - {name: flux-a, template: gitops, describes: [\"" + bad + "\"]}\n")); err == nil || !strings.Contains(err.Error(), "describes") {
+			t.Fatalf("%s : erreur attendue, obtenu %v", bad, err)
+		}
+	}
+}

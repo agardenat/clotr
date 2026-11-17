@@ -114,6 +114,7 @@ var msgs = map[string]msg{
 	"stopped.user":         {"conclusion requested", "conclusion demandée"},
 	"limit.user":           {"conclusion requested by the user", "conclusion demandée par l'utilisateur"},
 	"plan.limited":         {"cause established: tasks limited to the instances used by triage (%s); dropped: %s", "cause établie : tâches limitées aux instances du tri (%s) ; écartées : %s"},
+	"plan.fixed":           {"%s, one per instance or infrastructure-as-code repository (fixed plan, no planner)", "%s, une par instance ou dépôt IaC (plan fixe, sans planner)"},
 	"concluding":           {"conclusion requested: running tasks conclude with what they have, tasks not yet started are skipped (ctrl+c again to interrupt)", "conclusion demandée : les tâches en cours concluent avec ce qu'elles ont, celles pas encore lancées sont abandonnées (ctrl+c à nouveau pour interrompre)"},
 	"task.skipped":         {"not started: conclusion requested", "non lancée : conclusion demandée"},
 	"lead.established":     {"established cause #%d: %s", "cause établie #%d : %s"},

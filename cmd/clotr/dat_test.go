@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/dat"
 	"github.com/agardenat/clotr/internal/session"
 	"github.com/agardenat/clotr/internal/template"
@@ -101,5 +103,30 @@ func TestReportImages(t *testing.T) {
 	got := reportImages(md, dir, false)
 	if len(got) != 1 || got["architecture.png"].Width != 2 || got["architecture.png"].Format != "png" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestDATUnits(t *testing.T) {
+	cfg := []config.Instance{
+		{Name: "k8s-a"}, {Name: "cloud-a"}, {Name: "vm-a"},
+		{Name: "flux-prod-a", Describes: config.StringList{"k8s-a/prod"}},
+		{Name: "flux-rec-a", Describes: config.StringList{"k8s-a/rec"}},
+		{Name: "tf-a", Describes: config.StringList{"cloud-a"}},
+		{Name: "tf-nsg-a", Describes: config.StringList{"cloud-a"}},
+	}
+	all := []string{"k8s-a", "cloud-a", "vm-a", "flux-prod-a", "flux-rec-a", "tf-a", "tf-nsg-a"}
+	iac := []string{"flux-prod-a", "flux-rec-a", "tf-a", "tf-nsg-a"}
+	units := datUnits(cfg, dat.Clean, all, iac)
+	var got []string
+	for _, u := range units {
+		got = append(got, strings.Join(u.Instances, "+")+"|"+strings.Join(u.Except, ","))
+	}
+	want := []string{"flux-prod-a+k8s-a|", "flux-rec-a+k8s-a|", "tf-a+cloud-a|", "tf-nsg-a+cloud-a|", "k8s-a|prod,rec", "vm-a|"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("unités :\n%v\nattendu\n%v", got, want)
+	}
+	units = datUnits(cfg, dat.IaC, iac, iac)
+	if len(units) != 4 || len(units[0].Instances) != 1 || len(units[0].Objects) != 0 {
+		t.Fatalf("variante iac : %+v", units)
 	}
 }
