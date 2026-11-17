@@ -150,9 +150,6 @@ func (s *Store) SynthRule() string {
 	default:
 		b.WriteString(" Cite les preuves [Exxx].")
 	}
-	if s.Variant != Clean {
-		b.WriteString(" Dans la section du périmètre non couvert, cite aussi les sources annoncées mais illisibles, les instances sans relevé et les tâches en échec ou arrêtées par une limite.")
-	}
 	return b.String()
 }
 

@@ -647,7 +647,19 @@ func inline(n ast.Node, src []byte) string {
 				}
 			}
 			return ast.WalkSkipChildren, nil
-		case *ast.AutoLink, *ast.RawHTML, *ast.Image:
+		case *ast.RawHTML:
+			var raw strings.Builder
+			for i := 0; i < t.Segments.Len(); i++ {
+				seg := t.Segments.At(i)
+				raw.Write(seg.Value(src))
+			}
+			if br := strings.ToLower(strings.ReplaceAll(raw.String(), " ", "")); br == "<br>" || br == "<br/>" {
+				b.WriteByte(' ')
+			} else {
+				b.WriteString(raw.String())
+			}
+			return ast.WalkSkipChildren, nil
+		case *ast.AutoLink, *ast.Image:
 			return ast.WalkSkipChildren, nil
 		}
 		return ast.WalkContinue, nil

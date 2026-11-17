@@ -80,7 +80,7 @@ func Fill(md string, blocks map[string]string, order []string, missingTitle stri
 	return strings.TrimSpace(blankLines.ReplaceAllString(md, "\n\n")) + "\n", missing
 }
 
-var variantMark = regexp.MustCompile(`<!--\s*variant:\s*([a-z0-9_-]+)\s*-->\n?`)
+var variantMark = regexp.MustCompile(`<!--\s*variant:\s*([a-z0-9_, -]+?)\s*-->\n?`)
 
 type Parts struct {
 	Preamble string
@@ -126,7 +126,7 @@ var numbered = regexp.MustCompile(`^## \d+\. `)
 func ForVariant(sections []string, variant string) []string {
 	var out []string
 	for _, s := range sections {
-		if m := variantMark.FindStringSubmatch(s); m != nil && m[1] != variant {
+		if m := variantMark.FindStringSubmatch(s); m != nil && !slices.Contains(strings.FieldsFunc(m[1], func(r rune) bool { return r == ',' || r == ' ' }), variant) {
 			continue
 		}
 		s = strings.TrimSpace(variantMark.ReplaceAllString(s, ""))
