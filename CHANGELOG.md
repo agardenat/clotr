@@ -1,5 +1,13 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.76.0] - 2026-11-17
+
+### Ajouté
+- `clotr export <fichier.md|->` met en forme un fichier Markdown quelconque en `.docx` ou `.pdf` avec le template de document de `report_export.template` (ou `--export-template`), sans session, modèle ni instance : format par `-o` ou `-f`, document écrit à côté du fichier source par défaut, images citées par un chemin relatif lues dans le dossier du fichier, titre tiré de l'unique titre de niveau 1 ou du nom du fichier. Le template reçoit le mode `document`.
+
+### Corrigé
+- `markdown.blocks` garde l'ordre du contenu d'un élément de liste : un paragraphe placé après une sous-liste (ou après un bloc de code) dans le même élément était collé à la première ligne de l'élément, avant la sous-liste. Il devient un bloc `para` avec `indent` (niveau de l'élément) et `item` (`bullet` ou `numbered`), après la sous-liste.
+
 ## [0.75.0] - 2026-11-17
 
 ### Ajouté
