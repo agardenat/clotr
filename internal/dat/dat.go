@@ -66,6 +66,13 @@ type Diagram struct {
 
 func (d Diagram) Clean() bool { return d.PNG != "" && len(d.Warnings) == 0 }
 
+type Unit struct {
+	IaC       string
+	Instances []string
+	Objects   []string
+	Except    []string
+}
+
 type Store struct {
 	Variant     string
 	DiagramOnly bool
@@ -73,6 +80,7 @@ type Store struct {
 	Skipped     string
 	Instances   []string
 	IaCOnes     []string
+	Units       []Unit
 	Events      progress.Sink
 
 	audit    *audit.Logger

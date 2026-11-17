@@ -49,6 +49,35 @@ func (s *Store) CoverGoal(instance string) string {
 	return fmt.Sprintf("Relevé d'architecture complet de l'instance %s pour le %s : composants, versions, réseau, sécurité, identités, données, sauvegarde et supervision, selon ce que l'instance expose. %s", instance, s.docName(), s.sources())
 }
 
+func object(o string) string {
+	name, target, ok := strings.Cut(o, "/")
+	if !ok || target == "" {
+		return "l'instance " + name
+	}
+	return "la cible " + target + " de l'instance " + name
+}
+
+func (s *Store) UnitGoal(u Unit) string {
+	var b strings.Builder
+	switch {
+	case u.IaC != "" && len(u.Objects) > 0:
+		objs := make([]string, len(u.Objects))
+		for i, o := range u.Objects {
+			objs[i] = object(o)
+		}
+		fmt.Fprintf(&b, "Relevé exhaustif et factuel de ce que décrit l'instance IaC %s et de son état réel dans %s", u.IaC, strings.Join(objs, " et "))
+	case u.IaC != "":
+		fmt.Fprintf(&b, "Relevé exhaustif et factuel de ce que décrit l'instance IaC %s", u.IaC)
+	default:
+		fmt.Fprintf(&b, "Relevé exhaustif et factuel de l'instance %s", strings.Join(u.Instances, ", "))
+		if len(u.Except) > 0 {
+			fmt.Fprintf(&b, ", hors cibles %s (couvertes par d'autres tâches)", strings.Join(u.Except, ", "))
+		}
+	}
+	fmt.Fprintf(&b, ", pour le %s : composants, versions, regroupements (réseau, sous-réseau, cluster), points d'entrée et adresses publiées, flux et ports, sécurité, identités, données, sauvegarde et supervision, selon ce que les instances exposent. %s", s.docName(), s.sources())
+	return b.String()
+}
+
 func (s *Store) docName() string {
 	if s.DiagramOnly {
 		return "schéma d'architecture"

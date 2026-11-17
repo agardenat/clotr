@@ -52,6 +52,7 @@ type Task struct {
 type Plan struct {
 	Tasks []Task `json:"tasks"`
 	Model string `json:"model,omitempty"`
+	fixed bool
 }
 
 type Result struct {
@@ -577,7 +578,32 @@ func appendUnique(a, b []string) []string {
 	return out
 }
 
+func (o *Orchestrator) datPlan() (*Plan, error) {
+	role, err := o.DirectRole("")
+	if err != nil {
+		return nil, err
+	}
+	p := &Plan{fixed: true}
+	for i, u := range o.DAT.Units {
+		p.Tasks = append(p.Tasks, Task{ID: fmt.Sprintf("t%d", i+1), Role: role, Goal: o.DAT.UnitGoal(u), Tools: slices.Clone(u.Instances)})
+	}
+	if err := o.Validate(p); err != nil {
+		return nil, err
+	}
+	items := make([]progress.PlanItem, 0, len(p.Tasks))
+	for _, t := range p.Tasks {
+		items = append(items, progress.PlanItem{ID: t.ID, Role: t.Role, Goal: t.Goal})
+	}
+	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: items})
+	o.Audit.Log("plan", map[string]any{"fixed": true, "tasks": p.Tasks})
+	o.Events.Emit(progress.Event{Task: "planner", Kind: "done", Detail: i18n.T("plan.fixed", i18n.N(len(p.Tasks), "task"))})
+	return p, nil
+}
+
 func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) {
+	if o.DAT != nil && o.History == "" && len(o.DAT.Units) > 0 {
+		return o.datPlan()
+	}
 	cands, err := o.Router.Candidates(config.RolePlanner)
 	if err != nil {
 		return nil, err
@@ -709,7 +735,7 @@ func (o *Orchestrator) Validate(p *Plan) error {
 		}
 		return i18n.E("orch.no_task")
 	}
-	if len(p.Tasks) > o.Cfg.Limits.MaxTasks {
+	if len(p.Tasks) > o.Cfg.Limits.MaxTasks && !p.fixed {
 		return i18n.E("orch.too_many", len(p.Tasks), o.Cfg.Limits.MaxTasks)
 	}
 	workers := o.Cfg.WorkerRoles()

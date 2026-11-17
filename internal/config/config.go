@@ -162,15 +162,42 @@ type TemplatesConf struct {
 }
 
 type Instance struct {
-	Name     string         `yaml:"name"`
-	Template string         `yaml:"template"`
-	Enabled  *bool          `yaml:"enabled"`
-	Params   map[string]any `yaml:"params"`
-	SSHPaths PathRules      `yaml:"ssh_paths"`
-	Commands access.Rules   `yaml:"commands"`
-	Shell    *Shell         `yaml:"shell"`
-	Client   string         `yaml:"-"`
-	Project  string         `yaml:"-"`
+	Name      string         `yaml:"name"`
+	Template  string         `yaml:"template"`
+	Enabled   *bool          `yaml:"enabled"`
+	Params    map[string]any `yaml:"params"`
+	SSHPaths  PathRules      `yaml:"ssh_paths"`
+	Commands  access.Rules   `yaml:"commands"`
+	Shell     *Shell         `yaml:"shell"`
+	Describes StringList     `yaml:"describes"`
+	Client    string         `yaml:"-"`
+	Project   string         `yaml:"-"`
+}
+
+type StringList []string
+
+func (l *StringList) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode {
+		*l = StringList{n.Value}
+		return nil
+	}
+	var list []string
+	if err := n.Decode(&list); err != nil {
+		return err
+	}
+	*l = list
+	return nil
+}
+
+func (in Instance) DescribedInstances() []string {
+	var out []string
+	for _, d := range in.Describes {
+		name, _, _ := strings.Cut(strings.TrimSpace(d), "/")
+		if name != "" && !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 type Startup struct {
@@ -968,6 +995,14 @@ func (c *Config) validate() error {
 		instNames[in.Name] = true
 		if in.Template == "" {
 			fail(i18n.T("config.instance_template", i))
+		}
+	}
+	for _, in := range c.Instances {
+		for _, d := range in.Describes {
+			name, target, _ := strings.Cut(strings.TrimSpace(d), "/")
+			if name == "" || name == in.Name || !instNames[name] || strings.Contains(target, "/") {
+				fail(i18n.T("config.instance_describes", in.Name, d))
+			}
 		}
 	}
 	startNames := map[string]bool{}

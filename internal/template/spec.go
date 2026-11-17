@@ -19,24 +19,25 @@ import (
 )
 
 type Template struct {
-	Name        string               `yaml:"name"`
-	Kind        string               `yaml:"kind"`
-	Version     int                  `yaml:"version"`
-	Description string               `yaml:"description"`
-	Keywords    []string             `yaml:"keywords"`
-	Params      map[string]Param     `yaml:"params"`
-	Connectors  map[string]Connector `yaml:"connectors"`
-	Targets     []map[string]string  `yaml:"targets"`
-	Script      string               `yaml:"script"`
-	Files       []string             `yaml:"files"`
-	Env         []string             `yaml:"env"`
-	Tools       []ToolSpec           `yaml:"tools"`
-	Companions  []string             `yaml:"companions"`
-	SSHPaths    ssh.PathRules        `yaml:"ssh_paths"`
-	Commands    access.Rules         `yaml:"commands"`
-	Hints       string               `yaml:"hints"`
-	IDPattern   string               `yaml:"id_pattern"`
-	MinVersion  string               `yaml:"min_version"`
+	Name         string               `yaml:"name"`
+	Kind         string               `yaml:"kind"`
+	Version      int                  `yaml:"version"`
+	Description  string               `yaml:"description"`
+	Keywords     []string             `yaml:"keywords"`
+	Params       map[string]Param     `yaml:"params"`
+	Connectors   map[string]Connector `yaml:"connectors"`
+	Targets      []map[string]string  `yaml:"targets"`
+	Script       string               `yaml:"script"`
+	Files        []string             `yaml:"files"`
+	Env          []string             `yaml:"env"`
+	Tools        []ToolSpec           `yaml:"tools"`
+	Companions   []string             `yaml:"companions"`
+	SSHPaths     ssh.PathRules        `yaml:"ssh_paths"`
+	Commands     access.Rules         `yaml:"commands"`
+	Hints        string               `yaml:"hints"`
+	IDPattern    string               `yaml:"id_pattern"`
+	MinVersion   string               `yaml:"min_version"`
+	Architecture *bool                `yaml:"architecture"`
 
 	Source     string `yaml:"-"`
 	Raw        []byte `yaml:"-"`
@@ -335,6 +336,10 @@ func (t *Template) External() bool {
 		}
 	}
 	return false
+}
+
+func (t *Template) DescribesArchitecture() bool {
+	return t.Architecture == nil || *t.Architecture
 }
 
 func (t *Template) IaC() bool {

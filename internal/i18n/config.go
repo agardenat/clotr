@@ -58,6 +58,7 @@ var configMsgs = map[string]msg{
 	"config.instance_name":           {"instances[%d].name: %q is invalid ([a-z][a-z0-9-]*)", "instances[%d].name : %q invalide ([a-z][a-z0-9-]*)"},
 	"config.instance_reserved":       {"instances[%d].name: %q is reserved (%s)", "instances[%d].name : %q réservé (%s)"},
 	"config.instance_dup":            {"instances[%d].name: %q is duplicated", "instances[%d].name : %q dupliqué"},
+	"config.instance_describes":      {"instance %s: describes %q: expected <instance>[/<target>] naming another configured instance", "instance %s : describes %q : <instance>[/<cible>] attendu, d'une autre instance configurée"},
 	"config.instance_template":       {"instances[%d].template: required", "instances[%d].template : requis"},
 	"config.startup_name":            {"startup[%d].name: %q is invalid ([a-z][a-z0-9-]*)", "startup[%d].name : %q invalide ([a-z][a-z0-9-]*)"},
 	"config.startup_dup":             {"startup[%d].name: %q is duplicated", "startup[%d].name : %q dupliqué"},

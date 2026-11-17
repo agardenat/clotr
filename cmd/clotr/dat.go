@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/dat"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/session"
@@ -130,7 +131,7 @@ func (rt *app) datScope(reg *tools.Registry, env string, o *options) (*tools.Reg
 	}
 	var all, iac, other []string
 	for _, in := range rt.instances {
-		if !slices.Contains(reg.Groups(), in.ToolPrefix()) {
+		if !slices.Contains(reg.Groups(), in.ToolPrefix()) || !in.T.DescribesArchitecture() {
 			continue
 		}
 		all = append(all, in.Name)
@@ -160,7 +161,8 @@ func (rt *app) datScope(reg *tools.Registry, env string, o *options) (*tools.Reg
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("dat.warn_no_iac"))
 	}
 	rt.dat.Instances, rt.dat.IaCOnes = all, iac
-	rt.audit.Log("dat_scope", map[string]any{"variant": rt.dat.Variant, "diagram_only": rt.dat.DiagramOnly, "instances": all, "iac": iac, "renderer": rt.dat.Renderer != nil})
+	rt.dat.Units = datUnits(rt.cfg.Instances, rt.dat.Variant, all, iac)
+	rt.audit.Log("dat_scope", map[string]any{"variant": rt.dat.Variant, "diagram_only": rt.dat.DiagramOnly, "instances": all, "iac": iac, "units": len(rt.dat.Units), "renderer": rt.dat.Renderer != nil})
 	return reg, env, nil
 }
 
@@ -183,4 +185,41 @@ func datScopeFromAudit(path string) (instances, iac []string) {
 		}
 	}
 	return instances, iac
+}
+
+func datUnits(cfg []config.Instance, variant string, all, iac []string) []dat.Unit {
+	byName := map[string]config.Instance{}
+	for _, c := range cfg {
+		byName[c.Name] = c
+	}
+	covered := map[string][]string{}
+	var units []dat.Unit
+	for _, n := range all {
+		if !slices.Contains(iac, n) {
+			continue
+		}
+		u := dat.Unit{IaC: n, Instances: []string{n}}
+		if variant != dat.IaC {
+			for _, d := range byName[n].Describes {
+				d = strings.TrimSpace(d)
+				name, target, _ := strings.Cut(d, "/")
+				if !slices.Contains(all, name) || slices.Contains(iac, name) {
+					continue
+				}
+				u.Objects = append(u.Objects, d)
+				if !slices.Contains(u.Instances, name) {
+					u.Instances = append(u.Instances, name)
+				}
+				covered[name] = append(covered[name], target)
+			}
+		}
+		units = append(units, u)
+	}
+	for _, n := range all {
+		if slices.Contains(iac, n) || slices.Contains(covered[n], "") {
+			continue
+		}
+		units = append(units, dat.Unit{Instances: []string{n}, Except: covered[n]})
+	}
+	return units
 }
