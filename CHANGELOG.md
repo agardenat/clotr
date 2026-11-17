@@ -1,5 +1,13 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.75.0] - 2026-11-17
+
+### Ajouté
+- `max_requests_per_minute` par provider : au plus N requêtes sur toute fenêtre de 61 s, relances comprises, partagées par tous les agents du run ; les requêtes en trop attendent leur tour avant l'envoi au lieu de recevoir un 429 de la passerelle (limite de 30 requêtes par minute d'une clé dépassée par les agents en parallèle).
+
+### Modifié
+- Un 429 met en pause toutes les requêtes du provider, pas seulement celle de l'agent qui l'a reçu, jusqu'à la reprise annoncée (en-tête `Retry-After`, ou « Limit resets at » dans le message d'une passerelle LiteLLM), au plus 61 s : les autres agents ne renvoient plus de requête vouée au refus. La date de reprise LiteLLM sert aussi de délai avant le nouvel essai.
+
 ## [0.74.4] - 2026-11-17
 
 ### Modifié
