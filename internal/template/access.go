@@ -230,6 +230,13 @@ func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []s
 	f["not_readonly"] = roErr.Error()
 	key := strings.Join(argv, "\x00")
 	approvals := in.approvals()
+	release, err := approvals.Ask(ctx, key)
+	if err != nil {
+		f["decision"], f["error"] = "refused", err.Error()
+		in.audit("exec_decision", f)
+		return i18n.E("tpl.exec.unconfirmed", shown, err)
+	}
+	defer release()
 	if approvals.Granted(key) {
 		f["decision"] = "always"
 		in.audit("exec_decision", f)

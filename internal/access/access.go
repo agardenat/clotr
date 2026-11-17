@@ -1,6 +1,7 @@
 package access
 
 import (
+	"context"
 	"errors"
 	"regexp"
 	"slices"
@@ -239,10 +240,35 @@ type Approvals struct {
 	mu         sync.Mutex
 	granted    map[string]bool
 	unanswered map[string]bool
+	asking     map[string]chan struct{}
 }
 
 func NewApprovals() *Approvals {
-	return &Approvals{granted: map[string]bool{}, unanswered: map[string]bool{}}
+	return &Approvals{granted: map[string]bool{}, unanswered: map[string]bool{}, asking: map[string]chan struct{}{}}
+}
+
+func (a *Approvals) Ask(ctx context.Context, key string) (func(), error) {
+	for {
+		a.mu.Lock()
+		ch, busy := a.asking[key]
+		if !busy {
+			ch = make(chan struct{})
+			a.asking[key] = ch
+			a.mu.Unlock()
+			return func() {
+				a.mu.Lock()
+				delete(a.asking, key)
+				a.mu.Unlock()
+				close(ch)
+			}, nil
+		}
+		a.mu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }
 
 func (a *Approvals) Granted(key string) bool {
