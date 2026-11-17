@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.77.1] - 2026-11-17
+
+### Corrigé
+- Mot de passe refusé : clotr le redemande aussitôt et réessaie la connexion, jusqu'à trois saisies, pour SSH, les rebonds d'un tunnel, sudo et le driver shell. Auparavant l'appel en cours échouait et la question ne revenait qu'à l'appel suivant : l'agent recevait le refus et abandonnait l'instance, et les tâches parallèles échouaient de même. Un refus arrivé pendant qu'une autre connexion a déjà obtenu un nouveau mot de passe n'efface plus ce dernier.
+
 ## [0.77.0] - 2026-11-17
 
 ### Ajouté
