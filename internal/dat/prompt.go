@@ -144,11 +144,14 @@ func (s *Store) SynthRule() string {
 	b.WriteString("Le document décrit l'architecture : il ne contient ni sévérité, ni cause, ni recommandation, ni jugement sur la qualité de l'infrastructure. Chaque tableau est précédé d'une phrase qui dit ce qu'il contient. Une valeur non relevée ne s'écrit pas : « non relevé ».")
 	switch s.Variant {
 	case Clean:
-		b.WriteString(" Ce document est destiné au client : ne cite aucun identifiant de preuve [Exxx] ni de tâche, ne mentionne aucune différence entre l'IaC et l'état réel, ni les limites de la collecte autrement que par le périmètre non couvert.")
+		b.WriteString(" Ce document est destiné au client : ne cite aucun identifiant de preuve [Exxx] ni de tâche, ne mentionne aucune différence entre l'IaC et l'état réel. Il ne dit pas comment il a été établi : ni relevé, ni collecte, ni outil, ni source ou API interrogée, ni date ou moment d'un relevé, ni tâche en échec ; il décrit l'architecture telle qu'elle est, comme un document rédigé par l'équipe qui l'exploite.")
 	case Drift:
 		b.WriteString(" Les constats marqués " + DriftMark + " ne vont que dans la section des écarts ; ailleurs, décris l'état réel. Cite les preuves [Exxx].")
 	default:
 		b.WriteString(" Cite les preuves [Exxx].")
+	}
+	if s.Variant != Clean {
+		b.WriteString(" Dans la section du périmètre non couvert, cite aussi les sources annoncées mais illisibles, les instances sans relevé et les tâches en échec ou arrêtées par une limite.")
 	}
 	return b.String()
 }

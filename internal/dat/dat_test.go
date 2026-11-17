@@ -121,3 +121,13 @@ func TestDiagramGoalEntryPoint(t *testing.T) {
 		t.Fatal("règle de preuve par lien absente")
 	}
 }
+
+func TestSynthRuleClientVariant(t *testing.T) {
+	clean := New(Clean, false, nil, nil).SynthRule()
+	if !strings.Contains(clean, "ne dit pas comment il a été établi") || strings.Contains(clean, "tâches en échec ou arrêtées") {
+		t.Fatalf("variante client : %s", clean)
+	}
+	if drift := New(Drift, false, nil, nil).SynthRule(); !strings.Contains(drift, "tâches en échec ou arrêtées") || strings.Contains(drift, "ne dit pas comment") {
+		t.Fatalf("variante drift : %s", drift)
+	}
+}
