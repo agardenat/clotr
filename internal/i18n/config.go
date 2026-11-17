@@ -17,6 +17,7 @@ var configMsgs = map[string]msg{
 	"config.provider_dup":            {"providers[%d].name: %q is duplicated", "providers[%d].name : %q dupliqué"},
 	"config.api_key_env":             {"providers[%d].api_key_env: expects an environment variable name, not a key (use api_key for a plain key or ${VAR})", "providers[%d].api_key_env : attend un nom de variable d'environnement, pas une clé (utiliser api_key pour une clé en clair ou ${VAR})"},
 	"config.provider_budget":         {"providers[%d].budget: min_remaining/max_run_cost >= 0 and info_path starting with /", "providers[%d].budget : min_remaining/max_run_cost >= 0 et info_path commençant par /"},
+	"config.provider_rpm":            {"providers[%d].max_requests_per_minute: must be >= 0 (0: no limit)", "providers[%d].max_requests_per_minute : doit être >= 0 (0 : pas de limite)"},
 	"config.api_key_both":            {"providers[%d]: api_key and api_key_env are mutually exclusive", "providers[%d] : api_key et api_key_env sont exclusifs"},
 	"config.base_url":                {"providers[%d].base_url: invalid URL %q", "providers[%d].base_url : URL invalide %q"},
 	"config.profile_match":           {"profiles[%d].match: required", "profiles[%d].match : requis"},

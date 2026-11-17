@@ -13,6 +13,7 @@ providers:
     weight: 20
     sovereign: true
     budget: unlimited
+    max_requests_per_minute: 30
   - name: opencode-go
     base_url: https://opencode.ai/zen/go/v1
     api_key: ${OPENCODE_API_KEY}
