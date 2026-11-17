@@ -1,5 +1,11 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.77.0] - 2026-11-17
+
+### Ajouté
+- Module `drawio` des templates : `drawio.route` retrace les liens d'un fichier `.drawio` à angles droits en contournant icônes, libellés et bordures, avec un écart entre liens parallèles et un tronc commun pour les liens de même libellé vers une même cible ; il écarte au préalable les éléments (`spread_x`, `spread_y`). `drawio.png` rend le fichier en PNG sur le poste, en Go, sans draw.io ni autre programme. Les liens d'un schéma rendu par un serveur qui ne les trace pas (lignes superposées, collées aux bordures, traversant icônes et libellés) deviennent lisibles.
+- `render` d'un template de schéma peut renvoyer `notes` : affichées à l'utilisateur et consignées dans l'audit, sans être renvoyées au modèle comme les avertissements.
+
 ## [0.76.0] - 2026-11-17
 
 ### Ajouté
