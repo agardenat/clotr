@@ -4,7 +4,7 @@ Rédige le document d'architecture technique en Markdown selon le modèle ci-des
 
 ## 1. Introduction
 
-<!-- Objet du document et périmètre couvert : plateforme, environnements, clouds ou hébergements, en un paragraphe. Puis un tableau « Source | Nature | Contenu » des sources du relevé : dépôts de code (nom, branche ou commit lu), plateformes et comptes interrogés, groupes d'hôtes, sans identifiant de preuve. Dire la date du relevé. -->
+<!-- Objet du document et périmètre couvert : plateforme, environnements, clouds ou hébergements, en un paragraphe. -->
 
 ## 2. Architecture globale
 
@@ -50,7 +50,7 @@ Rédige le document d'architecture technique en Markdown selon le modèle ci-des
 
 ## 12. Périmètre non couvert et limites
 
-<!-- Une puce par point, le sujet en gras : sources annoncées mais illisibles, instances ou objets sans relevé, tâches en échec ou arrêtées par une limite, informations absentes des sources. Ce sont des limites du relevé, pas des constats sur l'infrastructure. -->
+<!-- Une puce par point, le sujet en gras : élément du périmètre que ce document ne décrit pas, ou ne décrit qu'en partie, et la raison (information non disponible, composant arrêté ou injoignable). Ce ne sont pas des constats sur l'infrastructure. -->
 
 ## 13. Écarts entre l'IaC et l'état réel
 
