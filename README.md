@@ -27,6 +27,7 @@ Chaque modèle porte aussi un indicateur souverain : `sovereign` du provider, su
 
 Cette liste ordonnée sert aussi de chaîne de fallback :
 - sur 408/425/429/5xx ou une erreur réseau, le même modèle est retenté une fois (backoff, ou `Retry-After` plafonné à 30 s), puis l'appel bascule sur le suivant. Le modèle reste candidat pour les appels suivants, y compris en cas de 429 quota. Si tous les candidats sont en échec temporaire, un second tour a lieu après 30 s ; avec `persistent_retry: true` sur le provider d'un modèle qui a échoué ainsi, les tours continuent jusqu'à une réponse ou une interruption (Ctrl-C), avec une pause doublée à chaque tour de 30 s à 5 min (`Retry-After` respecté dans cette limite) ;
+- débit d'un provider : `max_requests_per_minute: N` retient chaque requête (relances comprises) tant que N requêtes sont parties dans les 61 dernières secondes, pour tous les agents du run. Un 429 met toutes les requêtes du provider en attente jusqu'à la reprise indiquée (`Retry-After`, ou « Limit resets at » d'une passerelle LiteLLM), plafonnée à 61 s. Cette attente compte dans `queue_ms` de l'audit ;
 - sur 400/404/422, on bascule directement ;
 - sur 401/403, l'exécution s'arrête ;
 - sur 403 lié au quota ou au budget (corps contenant quota, budget ou insufficient), la bascule est immédiate ;
@@ -577,7 +578,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 
 | Section | Rôle |
 |---|---|
-| `providers` | endpoints OpenAI-compatibles : `name`, `base_url` (jusqu'à `/v1`), `api_key` (clé en clair ou `${VAR}`) ou `api_key_env` (nom de variable), `weight`, `sovereign`, `budget`, `session_header`, `stream` (défaut true), `max_concurrency`, `model_info`, `headers`, `persistent_retry` (erreurs temporaires retentées sans limite de tours, voir Routage) |
+| `providers` | endpoints OpenAI-compatibles : `name`, `base_url` (jusqu'à `/v1`), `api_key` (clé en clair ou `${VAR}`) ou `api_key_env` (nom de variable), `weight`, `sovereign`, `budget`, `session_header`, `stream` (défaut true), `max_concurrency` (appels simultanés, défaut 4), `max_requests_per_minute` (requêtes par minute, 0 ou absent : pas de limite, voir Routage), `model_info`, `headers`, `persistent_retry` (erreurs temporaires retentées sans limite de tours, voir Routage) |
 | `profiles` | `match` (glob), `tier`, `context`, `tools`, `priority`, `sovereign`, `exclude`, `reasoning_effort` (niveau de raisonnement par rôle pour ce modèle, par exemple `{planner: max}`, envoyé tel quel au provider ; rôle absent : paramètre omis, le modèle garde son défaut ; ignoré pour un modèle forcé par `-m` ; un appel qui épuise la limite de sortie en raisonnant est relancé sur le même modèle en `high`, puis `medium`, puis `low`, avant le modèle suivant) |
 | `routing` | `sovereign` : `any`, `prefer` ou `require` |
 | `roles` | `tier`, `tools`, `min_context`, `sovereign`, `description`. `planner` et `synthesizer` obligatoires, plus au moins un rôle de travail. Défauts : `collector` (fast, outils) et `analyst` (balanced, outils, 32k) |

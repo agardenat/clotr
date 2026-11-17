@@ -359,19 +359,20 @@ func ValidSovereignPolicy(p string) bool {
 }
 
 type Provider struct {
-	Name            string            `yaml:"name"`
-	BaseURL         string            `yaml:"base_url"`
-	Key             string            `yaml:"api_key"`
-	Weight          int               `yaml:"weight"`
-	Sovereign       bool              `yaml:"sovereign"`
-	Budget          *Budget           `yaml:"budget"`
-	SessionHeader   string            `yaml:"session_header"`
-	Stream          *bool             `yaml:"stream"`
-	APIKeyEnv       string            `yaml:"api_key_env"`
-	MaxConcurrency  int               `yaml:"max_concurrency"`
-	PersistentRetry bool              `yaml:"persistent_retry"`
-	ModelInfo       bool              `yaml:"model_info"`
-	Headers         map[string]string `yaml:"headers"`
+	Name                 string            `yaml:"name"`
+	BaseURL              string            `yaml:"base_url"`
+	Key                  string            `yaml:"api_key"`
+	Weight               int               `yaml:"weight"`
+	Sovereign            bool              `yaml:"sovereign"`
+	Budget               *Budget           `yaml:"budget"`
+	SessionHeader        string            `yaml:"session_header"`
+	Stream               *bool             `yaml:"stream"`
+	APIKeyEnv            string            `yaml:"api_key_env"`
+	MaxConcurrency       int               `yaml:"max_concurrency"`
+	MaxRequestsPerMinute int               `yaml:"max_requests_per_minute"`
+	PersistentRetry      bool              `yaml:"persistent_retry"`
+	ModelInfo            bool              `yaml:"model_info"`
+	Headers              map[string]string `yaml:"headers"`
 }
 
 type Budget struct {
@@ -823,6 +824,9 @@ func (c *Config) validate() error {
 		}
 		if b := p.Budget; b.Limited() && (b.MinRemaining < 0 || b.MaxRunCost < 0 || !strings.HasPrefix(b.InfoPath, "/")) {
 			fail(i18n.T("config.provider_budget", i))
+		}
+		if p.MaxRequestsPerMinute < 0 {
+			fail(i18n.T("config.provider_rpm", i))
 		}
 		if p.APIKeyEnv != "" && p.Key != "" {
 			fail(i18n.T("config.api_key_both", i))

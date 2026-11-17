@@ -317,7 +317,11 @@ func (c *Client) newRequest(ctx context.Context, req Request) (*http.Request, er
 
 func apiError(resp *http.Response) error {
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	return &APIError{Status: resp.StatusCode, Body: httpx.Snippet(data, 500), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
+	ra := parseRetryAfter(resp.Header.Get("Retry-After"))
+	if ra == 0 && resp.StatusCode == http.StatusTooManyRequests {
+		ra = parseLimitReset(string(data), time.Now().UTC())
+	}
+	return &APIError{Status: resp.StatusCode, Body: httpx.Snippet(data, 500), RetryAfter: ra}
 }
 
 func (c *Client) Chat(ctx context.Context, req Request) (*Response, error) {
@@ -550,13 +554,15 @@ type Chatter interface {
 type Pool struct {
 	clients map[string]*Client
 	sems    map[string]*semaphore.Weighted
+	gates   map[string]*rateGate
 }
 
 func NewPool(cfg *config.Config, hc *http.Client) *Pool {
-	p := &Pool{clients: map[string]*Client{}, sems: map[string]*semaphore.Weighted{}}
+	p := &Pool{clients: map[string]*Client{}, sems: map[string]*semaphore.Weighted{}, gates: map[string]*rateGate{}}
 	for _, prov := range cfg.Providers {
 		p.clients[prov.Name] = NewClient(prov, cfg.Limits, hc)
 		p.sems[prov.Name] = semaphore.NewWeighted(int64(prov.MaxConcurrency))
+		p.gates[prov.Name] = newRateGate(prov.MaxRequestsPerMinute)
 	}
 	return p
 }
@@ -572,8 +578,17 @@ func (p *Pool) Chat(ctx context.Context, provider string, req Request) (*Respons
 		return nil, err
 	}
 	defer sem.Release(1)
+	gate := p.gates[provider]
+	if err := gate.wait(ctx); err != nil {
+		return nil, err
+	}
 	if req.Timing != nil {
 		req.Timing.Queue = time.Since(t0)
 	}
-	return c.Chat(ctx, req)
+	resp, err := c.Chat(ctx, req)
+	var api *APIError
+	if errors.As(err, &api) && api.Status == http.StatusTooManyRequests {
+		gate.block(api.RetryAfter)
+	}
+	return resp, err
 }
