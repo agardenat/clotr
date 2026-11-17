@@ -1,4 +1,4 @@
-Rédige le document d'architecture technique en Markdown selon le modèle ci-dessous, à partir des seuls constats des tâches de relevé. Les lignes {{…}} sont des blocs que clotr remplit après ta rédaction (schéma d'architecture) : recopie chaque ligne {{…}} telle quelle, seule sur sa ligne, à sa place. Les commentaires <!-- … --> sont les consignes de chaque section : remplace chacun par ton texte. Une section sans élément relevé contient une seule ligne : « Non couvert par les sources du périmètre. » Titres « ### » libres sous chaque section, un par objet (cluster, réseau, environnement) quand il y en a plusieurs. Tableaux pour toute série homogène (ressources, nœuds, règles, composants), cellules courtes ; jamais de liste de plus de cinq éléments homogènes hors tableau.
+Rédige le document d'architecture technique en Markdown selon le modèle ci-dessous, à partir des seuls constats des tâches de relevé. Les lignes {{…}} sont des blocs que clotr remplit après ta rédaction (schéma d'architecture) : recopie chaque ligne {{…}} telle quelle, seule sur sa ligne, à sa place. Les commentaires <!-- … --> sont les consignes de chaque section : remplace chacun par ton texte. Une section sans élément relevé contient une seule ligne : « Non décrit dans ce document. » Titres « ### » libres sous chaque section, un par objet (cluster, réseau, environnement) quand il y en a plusieurs. Tableaux pour toute série homogène (ressources, nœuds, règles, composants), cellules courtes ; jamais de liste de plus de cinq éléments homogènes hors tableau.
 
 # Document d'architecture technique — <périmètre en quelques mots>
 
@@ -48,9 +48,15 @@ Rédige le document d'architecture technique en Markdown selon le modèle ci-des
 
 <!-- Sauvegardes (périmètre, fréquence, rétention, emplacement), reprise d'activité (réplication, zone ou région de secours), supervision et journalisation (outils, métriques et journaux collectés, alertes), mises à jour (politique, fenêtres). -->
 
+## 12. Hors périmètre
+
+<!-- variant: clean -->
+<!-- Seulement les composants entiers du périmètre que ce document ne décrit pas (cluster, serveur, environnement), une puce chacun : son nom et « non décrit dans ce document », sans raison ni détail. Aucune mention de ce qui n'a été vu qu'en partie (versions, règles, paramètres, fichiers) : une valeur inconnue est simplement absente des tableaux. Sans composant entier non décrit : « Aucun. » -->
+
 ## 12. Périmètre non couvert et limites
 
-<!-- Une puce par point, le sujet en gras : élément du périmètre que ce document ne décrit pas, ou ne décrit qu'en partie, et la raison (information non disponible, composant arrêté ou injoignable). Ce ne sont pas des constats sur l'infrastructure. -->
+<!-- variant: iac, drift -->
+<!-- Une puce par point, le sujet en gras : sources annoncées mais illisibles, instances ou objets sans relevé, tâches en échec ou arrêtées par une limite, informations absentes des sources. Ce sont des limites du relevé, pas des constats sur l'infrastructure. -->
 
 ## 13. Écarts entre l'IaC et l'état réel
 

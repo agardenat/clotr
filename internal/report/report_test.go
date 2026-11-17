@@ -76,3 +76,12 @@ func TestForVariantRenumbers(t *testing.T) {
 		t.Fatalf("%q", d)
 	}
 }
+
+func TestForVariantList(t *testing.T) {
+	secs := []string{"## A\n\na", "## B\n\n<!-- variant: clean -->\nb", "## C\n\n<!-- variant: iac, drift -->\nc"}
+	for v, want := range map[string]string{"clean": "## A\n\na|## B\n\nb", "drift": "## A\n\na|## C\n\nc", "iac": "## A\n\na|## C\n\nc"} {
+		if got := strings.Join(ForVariant(secs, v), "|"); got != want {
+			t.Fatalf("%s : %q, attendu %q", v, got, want)
+		}
+	}
+}

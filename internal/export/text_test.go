@@ -195,3 +195,15 @@ func TestShortCodeLines(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestSegmentsKeepInlinePlaceholder(t *testing.T) {
+	segs := Segments("# T\n\n## S\n\n| Identité | Portée |\n|---|---|\n| app_<env>_id (une par cluster) | groupe |\n\nLigne un<br>ligne deux.\n")
+	var texts []string
+	for _, s := range segs {
+		texts = append(texts, s.Text)
+	}
+	joined := strings.Join(texts, "|")
+	if !strings.Contains(joined, "app_<env>_id (une par cluster)") || !strings.Contains(joined, "Ligne un ligne deux.") {
+		t.Fatalf("segments : %q", texts)
+	}
+}
