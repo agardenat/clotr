@@ -1,5 +1,11 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.78.3] - 2026-11-17
+
+### Corrigé
+- Schéma d'architecture : un acteur (utilisateurs, exploitation par VPN) est relié à son point d'entrée établi par les preuves (jumpbox, bastion ou rebond ; répartiteur, ingress ou passerelle), puis ce point d'entrée à ce qu'il atteint. La consigne demandait de relier l'acteur au groupe atteint : l'exploitation pouvait arriver sur tout un sous-réseau au lieu de la jumpbox établie par le relevé.
+- Schéma d'architecture : un lien relie les éléments qui échangent, et ne remonte au groupe que pour un même flux d'une source vers trois nœuds ou plus de ce groupe (les consignes poussaient à relier des groupes « de préférence », ce qui perdait la précision du relevé). Chaque lien doit reposer sur une preuve de ce couple précis, sans extension d'un composant à ses voisins. Pour un service partagé, une seule règle : un lien par couple consommateur → service établi (la consigne demandait aussi un lien par groupe consommateur).
+
 ## [0.78.2] - 2026-11-17
 
 ### Corrigé
