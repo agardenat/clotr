@@ -56,3 +56,25 @@ func TestExportTitle(t *testing.T) {
 		t.Fatalf("demande: %q", got)
 	}
 }
+
+func TestImagePath(t *testing.T) {
+	for _, c := range []struct {
+		src    string
+		nested bool
+		want   bool
+	}{
+		{"schema.png", false, true},
+		{"img/schema.png", false, false},
+		{"img/schema.png", true, true},
+		{"./img/schema.png", true, true},
+		{"../schema.png", true, false},
+		{"img/../../schema.png", true, false},
+		{"/etc/schema.png", true, false},
+		{"https://example.org/a.png", true, false},
+		{".hidden.png", false, false},
+	} {
+		if got := imagePath(c.src, c.nested); got != c.want {
+			t.Errorf("imagePath(%q, %v) = %v", c.src, c.nested, got)
+		}
+	}
+}

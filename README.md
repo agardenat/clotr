@@ -138,6 +138,19 @@ Les agents doivent rester factuels : chaque affirmation repose sur une preuve `[
 clotr session last -o rapport.pdf
 ```
 
+Un fichier Markdown quelconque se met en forme de la même façon, sans session, modèle ni instance :
+
+```sh
+clotr export procedure.md
+clotr export procedure.md -o procedure.pdf
+cat notes.md | clotr export - -o notes.docx
+```
+
+- Le format vient de `-o` (`.docx` ou `.pdf`), sinon de `-f docx|pdf` (`docx` par défaut) ; sans `-o`, le document est écrit à côté du fichier source, sous le même nom. `-` lit le Markdown sur stdin et exige `-o`.
+- Le titre est l'unique titre de niveau 1, sinon le nom du fichier ; la date est celle du jour ; la langue est `--lang`, sinon déduite du texte. Le template reçoit le mode `document`.
+- Les images citées par un chemin relatif (`![Figure 1](img/schema.png)`) sont lues à partir du dossier du fichier source, sans en sortir (`..`, chemin absolu et URL ignorés).
+- `--export-template` et `--confidential` s'appliquent comme pour une session.
+
 ```yaml
 report_export:
   template: rapport-doc
@@ -359,14 +372,14 @@ Ses paramètres reçoivent, comme une instance, les `params` globaux puis ceux d
 
 Un template `kind: document` met en forme le rapport pour `--export`. Il n'a ni `tools`, ni `targets`, ni `companions`, ni `files`, ni `env` ; ses `connectors`, facultatifs, sont de driver `mcp` ou `http` (service de génération de documents), avec `mcp.call` et `http.request` dans le script. Son script définit `render(doc)`, qui renvoie le contenu du `.docx` (`bytes`). Il est désigné par `report_export.template` ; `report_export.params` renseigne ses `params`.
 
-`doc` porte `markdown`, `title`, `mode` (`default`, `incident`, `change`, `cve`, `dat`, `diagram`), `images` (dict `{nom: image}` des images du tour citées par le rapport, `![…](nom.png)` : `data` en `bytes`, `format` `png` ou `jpeg`, `width` et `height` en pixels), `language` (`--lang` de l'export, sinon langue de la session, c'est-à-dire celle du run ; `auto` est résolu d'après le texte du rapport, hors blocs de code), `request`, `ticket`, `date` (`AAAA-MM-JJ`), `session` et `params`.
+`doc` porte `markdown`, `title`, `mode` (`default`, `incident`, `change`, `cve`, `dat`, `diagram`, ou `document` pour `clotr export`), `images` (dict `{nom: image}` des images du tour citées par le rapport, `![…](nom.png)` : `data` en `bytes`, `format` `png` ou `jpeg`, `width` et `height` en pixels), `language` (`--lang` de l'export, sinon langue de la session, c'est-à-dire celle du run ; `auto` est résolu d'après le texte du rapport, hors blocs de code), `request`, `ticket`, `date` (`AAAA-MM-JJ`), `session` et `params`.
 
 Sans connecteur, le script n'a pas accès au réseau ; il n'a jamais accès aux fichiers du poste. Il dispose des modules sans effet de bord (`json`, `yaml`, `re`, `time`, `math`, `base64`, `struct`, `sprintf`, `catch`, `jq`, `compact_json`) et de :
 
 - `asset(nom)` : contenu (`bytes`) d'un fichier placé à côté du template, par exemple un `.docx` de référence (100 Mio au plus) ;
 - `zip.read(data)` : dict `{nom: bytes}` des fichiers d'une archive, dans l'ordre de l'archive ; `zip.write(fichiers)` : archive (`bytes`) des fichiers d'un dict, dans l'ordre du dict ;
 - `xml.parse(data)` : élément racine d'un document XML ; `xml.fragment(texte)` : liste des éléments d'un fragment (les préfixes d'espace de noms n'ont pas à être déclarés) ; `xml.element(tag, attrs, text)` ; `xml.encode(élément, declaration=True)` : `bytes` ; `xml.escape(texte)`. Un élément expose `tag`, `text`, `parent`, `children`, `get`, `set`, `unset`, `attrs`, `set_text`, `text_content`, `find` et `findall` (chemins etree : `w:body/w:p`, `.//w:t`, `w:p[@w:val='x']`), `append`, `prepend`, `insert`, `add_next`, `add_prev` (un élément ou une liste), `remove`, `index`, `copy` et `encode` ;
-- `markdown.blocks(texte)` (Markdown GFM : tableaux, listes de tâches, liens automatiques ; pas de barré, `~` étant courant dans les numéros de version) : liste de blocs `heading` (`level`), `para`, `quote` (`level` : profondeur), `bullet` et `numbered` (`level`, `marker`, `checked`), `table` (`header`, `rows`, `align` ; chaque cellule a `text` et `runs`), `code` (`text`, `lang`), `rule`, `image` (`src`, `alt`, `title`) et `html`. Les blocs de texte ont `text` (texte brut) et `runs` : `{text, bold, italic, code, strike, url, br}`. `markdown.inline(texte)` rend les `runs` d'un texte.
+- `markdown.blocks(texte)` (Markdown GFM : tableaux, listes de tâches, liens automatiques ; pas de barré, `~` étant courant dans les numéros de version) : liste de blocs `heading` (`level`), `para` (`indent` et `item` pour un paragraphe qui suit une sous-liste dans un élément de liste : niveau et type de la liste, `0` et `""` sinon), `quote` (`level` : profondeur), `bullet` et `numbered` (`level`, `marker`, `checked`), `table` (`header`, `rows`, `align` ; chaque cellule a `text` et `runs`), `code` (`text`, `lang`), `rule`, `image` (`src`, `alt`, `title`) et `html`. Les blocs de texte ont `text` (texte brut) et `runs` : `{text, bold, italic, code, strike, url, br}`. `markdown.inline(texte)` rend les `runs` d'un texte.
 
 Dans les tests (`clotr templates test`), `inst.render(markdown=…, title=…, mode=…, language=…, request=…, ticket=…, date=…, session=…, images=…)` appelle `render` (`images` : dict `{nom: bytes}` d'images PNG ou JPEG) ; `zip`, `xml` et `markdown` sont disponibles pour examiner le résultat.
 
@@ -777,7 +790,7 @@ clotr run --access exec "version de PHP dans les pods du namespace web" -t prod
 | `--raw` (`run`, `session`) | rapport en Markdown brut, sans mise en forme pour le terminal |
 | `--with-evidence` (`run`, `session`) | annexe la sortie complète de chaque preuve citée, voir Preuves |
 | `--export docx\|pdf` (`run`, `session`) | produit aussi le rapport en document avec `report_export.template`, voir Export du rapport en document |
-| `--export-template <nom>` (`run`, `session`) | template de document de `--export` à la place de `report_export.template` |
+| `--export-template <nom>` (`run`, `session`, `export`) | template de document de `--export` à la place de `report_export.template` |
 | `--dat iac\|drift\|clean` (`run`) | document d'architecture technique du périmètre, sans question, voir Mode DAT et schéma d'architecture |
 | `--diagram iac\|drift\|clean` (`run`) | schéma d'architecture seul du périmètre, voir Mode DAT et schéma d'architecture |
 | `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |

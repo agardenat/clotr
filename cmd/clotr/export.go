@@ -8,11 +8,14 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/agardenat/clotr/internal/config"
@@ -102,7 +105,87 @@ func reportLanguage(lang, md string) string {
 	return "fr"
 }
 
+type exportJob struct {
+	input        template.DocumentInput
+	keepDir      string
+	confidential bool
+}
+
 func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *session.Session, n int, md string) error {
+	turn := sess.Turns[n-1]
+	mode := turn.Mode
+	if mode == "" && len(turn.CVE) > 0 {
+		mode = report.ModeCVE
+	}
+	if mode == "" {
+		mode = report.ModeDefault
+	}
+	return renderExport(ctx, o, cfg, exportJob{
+		input: template.DocumentInput{
+			Images:   reportImages(md, sess.TurnDir(n), false),
+			Markdown: md,
+			Title:    exportTitle(md, turn.Request),
+			Mode:     mode,
+			Language: reportLanguage(cmp.Or(o.langFlag, sess.Language), md),
+			Request:  turn.Request,
+			Ticket:   turn.Ticket,
+			Date:     turn.Time.Local().Format("2006-01-02"),
+			Session:  sess.Name,
+		},
+		keepDir:      sess.TurnDir(n),
+		confidential: sess.Confidential,
+	})
+}
+
+func cmdExport(ctx context.Context, o *options, src string) error {
+	var md []byte
+	var err error
+	dir := "."
+	if src == "-" {
+		md, err = io.ReadAll(os.Stdin)
+	} else {
+		md, err = os.ReadFile(src)
+		dir = filepath.Dir(src)
+	}
+	if err != nil {
+		return err
+	}
+	if o.output == "" {
+		if src == "-" {
+			return i18n.E("cli.err.export_stdin")
+		}
+		o.output = strings.TrimSuffix(src, filepath.Ext(src)) + "." + cmp.Or(o.exportFmt, "docx")
+	}
+	if err := o.resolveExport(); err != nil {
+		return err
+	}
+	if o.exportFmt == "" {
+		return i18n.E("cli.err.export_target", o.output, strings.Join(config.ExportFormats, "|"))
+	}
+	cfg, err := loadConfig(o)
+	if err != nil {
+		return err
+	}
+	text := strings.TrimSpace(string(md))
+	name := ""
+	if src != "-" {
+		name = strings.TrimSuffix(filepath.Base(src), filepath.Ext(src))
+	}
+	return renderExport(ctx, o, cfg, exportJob{
+		input: template.DocumentInput{
+			Images:   reportImages(text, dir, true),
+			Markdown: text,
+			Title:    exportTitle(text, name),
+			Mode:     report.ModeDocument,
+			Language: reportLanguage(o.langFlag, text),
+			Date:     time.Now().Format("2006-01-02"),
+		},
+		confidential: o.confidential,
+	})
+}
+
+func renderExport(ctx context.Context, o *options, cfg *config.Config, job exportJob) error {
+	md := job.input.Markdown
 	name := cmp.Or(o.exportTpl, cfg.Export.Template)
 	if name == "" {
 		return i18n.E("export.no_template")
@@ -123,7 +206,7 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	if !t.Document() {
 		return i18n.E("export.template_kind", t.Name, t.Kind)
 	}
-	if sess.Confidential && t.External() {
+	if job.confidential && t.External() {
 		return i18n.E("export.template_external", t.Name)
 	}
 	params := cfg.Export.Params
@@ -139,26 +222,8 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	} else {
 		defer closeMCP()
 	}
-	turn := sess.Turns[n-1]
-	mode := turn.Mode
-	if mode == "" && len(turn.CVE) > 0 {
-		mode = report.ModeCVE
-	}
-	if mode == "" {
-		mode = report.ModeDefault
-	}
 	fmt.Fprintln(os.Stderr, i18n.T("export.start", o.exportFmt, t.Name))
-	data, err := in.RenderDocument(ctx, template.DocumentInput{
-		Images:   reportImages(md, sess.TurnDir(n)),
-		Markdown: md,
-		Title:    exportTitle(md, turn.Request),
-		Mode:     mode,
-		Language: reportLanguage(cmp.Or(o.langFlag, sess.Language), md),
-		Request:  turn.Request,
-		Ticket:   turn.Ticket,
-		Date:     turn.Time.Local().Format("2006-01-02"),
-		Session:  sess.Name,
-	})
+	data, err := in.RenderDocument(ctx, job.input)
 	if err != nil {
 		return i18n.E("export.failed", err)
 	}
@@ -169,9 +234,12 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	if o.exportFmt == "pdf" {
 		pdf, err := export.PDF(ctx, data)
 		if err != nil {
-			path := filepath.Join(sess.TurnDir(n), "report.docx")
-			if werr := os.WriteFile(path, data, 0o600); werr != nil {
-				return err
+			path := ""
+			if job.keepDir != "" {
+				path = filepath.Join(job.keepDir, "report.docx")
+				if werr := os.WriteFile(path, data, 0o600); werr != nil {
+					return err
+				}
 			}
 			if o.exportPath != "" {
 				alt := strings.TrimSuffix(o.exportPath, filepath.Ext(o.exportPath)) + ".docx"
@@ -179,13 +247,19 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 					path = alt
 				}
 			}
+			if path == "" {
+				return err
+			}
 			return i18n.E("export.pdf_fallback", err, path)
 		}
 		data = pdf
 	}
-	path := filepath.Join(sess.TurnDir(n), "report."+o.exportFmt)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
+	path := ""
+	if job.keepDir != "" {
+		path = filepath.Join(job.keepDir, "report."+o.exportFmt)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			return err
+		}
 	}
 	if o.exportPath != "" {
 		if err := os.WriteFile(o.exportPath, data, 0o644); err != nil {
@@ -225,14 +299,14 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 
 var imageRef = regexp.MustCompile(`!\[[^\]]*\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)`)
 
-func reportImages(md, dir string) map[string]template.Image {
+func reportImages(md, dir string, nested bool) map[string]template.Image {
 	out := map[string]template.Image{}
 	for _, m := range imageRef.FindAllStringSubmatch(md, -1) {
 		src := m[1]
-		if _, seen := out[src]; seen || src != filepath.Base(src) || strings.HasPrefix(src, ".") {
+		if _, seen := out[src]; seen || !imagePath(src, nested) {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, src))
+		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src)))
 		if err != nil || len(data) > 50<<20 {
 			continue
 		}
@@ -243,6 +317,20 @@ func reportImages(md, dir string) map[string]template.Image {
 		out[src] = template.Image{Data: data, Format: format, Width: cfg.Width, Height: cfg.Height}
 	}
 	return out
+}
+
+func imagePath(src string, nested bool) bool {
+	if strings.Contains(src, "://") || strings.HasPrefix(src, "data:") {
+		return false
+	}
+	if !nested {
+		return src == filepath.Base(src) && !strings.HasPrefix(src, ".")
+	}
+	if path.IsAbs(src) || filepath.IsAbs(src) {
+		return false
+	}
+	clean := path.Clean(strings.TrimPrefix(src, "./"))
+	return clean != "." && clean != ".." && !strings.HasPrefix(clean, "../")
 }
 
 func connectStandaloneMCP(ctx context.Context, cfg *config.Config, in *template.Instance) (func(), error) {
