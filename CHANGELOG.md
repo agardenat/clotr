@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.78.2] - 2026-11-17
+
+### Corrigé
+- Rendu PNG des schémas : les liens gardent une épaisseur régulière. Les segments d'un lien se recouvraient à leurs jonctions et les bords lissés des recouvrements s'additionnaient : traits épaissis au départ de chaque lien et dans les coins.
+
 ## [0.78.1] - 2026-11-17
 
 ### Corrigé
