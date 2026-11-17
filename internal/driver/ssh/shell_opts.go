@@ -16,7 +16,7 @@ type ShellOptions struct {
 	Ask         func(ctx context.Context, question string) (string, error)
 	User        string
 	Login       func(ctx context.Context, host string) (user, pass string, err error)
-	Forget      func(user, host, reason string)
+	Forget      func(user, pass, host, reason string)
 }
 
 var (

@@ -39,7 +39,10 @@ type Endpoint struct {
 	KeyPath  string
 	KeyVault string
 	Password func(ctx context.Context) (string, error)
+	Refused  func(pass string)
 }
+
+const passwordAttempts = 3
 
 var ErrAuth error = i18n.Key("ssh.auth")
 
@@ -241,7 +244,7 @@ func (p *Pool) client(ctx context.Context, e Endpoint) (*gossh.Client, error) {
 			return nil, err
 		}
 	}
-	if c == nil {
+	for attempt := 1; c == nil; attempt++ {
 		pw, err := e.Password(ctx)
 		if err != nil {
 			return nil, err
@@ -256,6 +259,10 @@ func (p *Pool) client(ctx context.Context, e Endpoint) (*gossh.Client, error) {
 			return out, nil
 		}
 		c, err = p.connect(ctx, e, hk, gossh.Password(pw), gossh.KeyboardInteractive(answer))
+		if err != nil && errors.Is(err, ErrAuth) && e.Refused != nil && attempt < passwordAttempts && ctx.Err() == nil {
+			e.Refused(pw)
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}

@@ -321,15 +321,18 @@ func (ss *shellSession) handshake(ctx context.Context, o ShellOptions, label str
 	}
 }
 
+const shellPasswordAttempts = 3
+
 func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label string, deadline *time.Time, hop bool) error {
 	var seen []byte
 	var quiet <-chan time.Time
 	total, asked := 0, -1
 	login := hop && o.Login != nil
-	user, sent := "", false
+	user, sent, tries := "", false, 0
+	var answer string
 	forget := func(exited bool) {
 		if sent && o.Forget != nil {
-			o.Forget(user, ss.host, refusalReason(seen, exited))
+			o.Forget(user, answer, ss.host, refusalReason(seen, exited))
 		}
 	}
 	for {
@@ -372,15 +375,17 @@ func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label str
 		}
 		if sent {
 			forget(false)
-			return i18n.E("ssh.shell_auth", ss.host, label, lastLines(seen))
+			if tries >= shellPasswordAttempts {
+				return i18n.E("ssh.shell_auth", ss.host, label, lastLines(seen))
+			}
 		}
 		asked = total
 		t0 := time.Now()
-		var answer string
 		var err error
 		if login {
 			user, answer, err = o.Login(ctx, ss.host)
 			sent = err == nil
+			tries++
 		} else {
 			answer, err = o.Ask(ctx, i18n.T("ssh.shell_prompt", ss.host, strings.TrimSpace(line)))
 		}
