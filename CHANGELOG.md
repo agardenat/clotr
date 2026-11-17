@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.78.1] - 2026-11-17
+
+### Corrigé
+- Plan fixe des modes `--dat` et `--diagram` : la ligne du planner s'affiche en tête du tableau avec une durée nulle, au lieu de la dernière place avec une durée aberrante (2562047h…). Une ligne terminée sans début reçoit désormais l'heure de fin comme début.
+
 ## [0.78.0] - 2026-11-17
 
 ### Modifié
