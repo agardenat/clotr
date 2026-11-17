@@ -106,3 +106,18 @@ func TestMainDiagramFirst(t *testing.T) {
 		t.Fatal(names)
 	}
 }
+
+func TestDiagramGoalEntryPoint(t *testing.T) {
+	g := New(Clean, true, nil, nil).DiagramGoal()
+	if !strings.Contains(g, "relié à son point d'entrée") || !strings.Contains(g, "la jumpbox, le bastion ou le rebond pour l'exploitation") || strings.Contains(g, "relié au groupe qu'il atteint, avec") {
+		t.Fatalf("consigne des points d'entrée : %s", g)
+	}
+	for _, gone := range []string{"de préférence deux groupes", "relié une seule fois au groupe qui les contient", "un lien par groupe consommateur"} {
+		if strings.Contains(g, gone) {
+			t.Fatalf("consigne retirée encore présente : %q", gone)
+		}
+	}
+	if !strings.Contains(g, "Chaque lien repose sur une preuve qui établit ce couple précis") {
+		t.Fatal("règle de preuve par lien absente")
+	}
+}
