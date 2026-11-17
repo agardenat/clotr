@@ -323,12 +323,18 @@ func (b *board) apply(e Event) {
 		r.detail = e.Detail
 	case "done":
 		r.status, r.end, r.detail = statusDone, now, e.Detail
+		if r.start.IsZero() {
+			r.start = now
+		}
 		if e.Step > 0 {
 			r.step = e.Step
 		}
 		r.cost = e.Cost
 	case "failed":
 		r.status, r.end, r.detail = statusFailed, now, e.Detail
+		if r.start.IsZero() {
+			r.start = now
+		}
 	case "skipped":
 		r.status, r.detail = statusSkipped, e.Detail
 	}

@@ -594,6 +594,7 @@ func (o *Orchestrator) datPlan() (*Plan, error) {
 	for _, t := range p.Tasks {
 		items = append(items, progress.PlanItem{ID: t.ID, Role: t.Role, Goal: t.Goal})
 	}
+	o.Events.Emit(progress.Event{Task: "planner", Kind: "start"})
 	o.Events.Emit(progress.Event{Task: "planner", Kind: "plan", Plan: items})
 	o.Audit.Log("plan", map[string]any{"fixed": true, "tasks": p.Tasks})
 	o.Events.Emit(progress.Event{Task: "planner", Kind: "done", Detail: i18n.T("plan.fixed", i18n.N(len(p.Tasks), "task"))})
