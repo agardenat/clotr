@@ -115,19 +115,67 @@ func (c *canvas) stroke(col color.Color, width float64, path []pt, dash []float6
 		segs = dashed(segs, dash)
 	}
 	hw := width / 2
-	c.fill(col, func(r *vector.Rasterizer) {
-		for _, s := range segs {
-			a, b := s[0], s[1]
-			dx, dy := b.x-a.x, b.y-a.y
-			l := math.Hypot(dx, dy)
-			if l == 0 {
-				continue
-			}
-			nx, ny := -dy/l*hw, dx/l*hw
-			ex, ey := dx/l*hw, dy/l*hw
-			c.polygon(r, []pt{{a.x + nx - ex, a.y + ny - ey}, {b.x + nx + ex, b.y + ny + ey}, {b.x - nx + ex, b.y - ny + ey}, {a.x - nx - ex, a.y - ny - ey}})
+	bounds := c.img.Bounds()
+	var area image.Rectangle
+	var quads [][]pt
+	for _, s := range segs {
+		a, b := s[0], s[1]
+		dx, dy := b.x-a.x, b.y-a.y
+		l := math.Hypot(dx, dy)
+		if l == 0 {
+			continue
 		}
-	})
+		nx, ny := -dy/l*hw, dx/l*hw
+		ex, ey := dx/l*hw, dy/l*hw
+		q := []pt{{a.x + nx - ex, a.y + ny - ey}, {b.x + nx + ex, b.y + ny + ey}, {b.x - nx + ex, b.y - ny + ey}, {a.x - nx - ex, a.y - ny - ey}}
+		quads = append(quads, q)
+		area = area.Union(c.pixelBox(q))
+	}
+	area = area.Intersect(bounds)
+	if area.Empty() {
+		return
+	}
+	mask := image.NewAlpha(area)
+	for _, q := range quads {
+		box := c.pixelBox(q).Intersect(area)
+		if box.Empty() {
+			continue
+		}
+		r := vector.NewRasterizer(box.Dx(), box.Dy())
+		x, y := c.px(q[0])
+		r.MoveTo(x-float32(box.Min.X), y-float32(box.Min.Y))
+		for _, p := range q[1:] {
+			x, y := c.px(p)
+			r.LineTo(x-float32(box.Min.X), y-float32(box.Min.Y))
+		}
+		r.ClosePath()
+		tmp := image.NewAlpha(image.Rect(0, 0, box.Dx(), box.Dy()))
+		r.Draw(tmp, tmp.Bounds(), image.Opaque, image.Point{})
+		for yy := 0; yy < box.Dy(); yy++ {
+			for xx := 0; xx < box.Dx(); xx++ {
+				v := tmp.AlphaAt(xx, yy).A
+				if v == 0 {
+					continue
+				}
+				pt := image.Point{box.Min.X + xx, box.Min.Y + yy}
+				if v > mask.AlphaAt(pt.X, pt.Y).A {
+					mask.SetAlpha(pt.X, pt.Y, color.Alpha{A: v})
+				}
+			}
+		}
+	}
+	stddraw.DrawMask(c.img, area, image.NewUniform(col), image.Point{}, mask, area.Min, stddraw.Over)
+}
+
+func (c *canvas) pixelBox(q []pt) image.Rectangle {
+	minX, minY := math.Inf(1), math.Inf(1)
+	maxX, maxY := math.Inf(-1), math.Inf(-1)
+	for _, p := range q {
+		x, y := c.px(p)
+		minX, minY = math.Min(minX, float64(x)), math.Min(minY, float64(y))
+		maxX, maxY = math.Max(maxX, float64(x)), math.Max(maxY, float64(y))
+	}
+	return image.Rect(int(math.Floor(minX))-1, int(math.Floor(minY))-1, int(math.Ceil(maxX))+2, int(math.Ceil(maxY))+2)
 }
 
 func dashed(segs [][2]pt, pattern []float64) [][2]pt {
@@ -586,6 +634,10 @@ func smooth(path []pt, radius float64) []pt {
 	if len(path) < 3 {
 		return path
 	}
+	path = straight(path)
+	if len(path) < 3 {
+		return path
+	}
 	out := []pt{path[0]}
 	for i := 1; i+1 < len(path); i++ {
 		a, b, c := path[i-1], path[i], path[i+1]
@@ -603,4 +655,23 @@ func smooth(path []pt, radius float64) []pt {
 		}
 	}
 	return append(out, path[len(path)-1])
+}
+
+func straight(path []pt) []pt {
+	out := []pt{path[0]}
+	for i := 1; i < len(path); i++ {
+		p := path[i]
+		if p == out[len(out)-1] {
+			continue
+		}
+		if len(out) >= 2 && i+1 <= len(path) {
+			a, b := out[len(out)-2], out[len(out)-1]
+			if math.Abs((b.x-a.x)*(p.y-b.y)-(b.y-a.y)*(p.x-b.x)) < 1e-6 && (b.x-a.x)*(p.x-b.x)+(b.y-a.y)*(p.y-b.y) >= 0 {
+				out[len(out)-1] = p
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	return out
 }
