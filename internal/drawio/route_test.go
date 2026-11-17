@@ -5,6 +5,8 @@ import (
 	"compress/flate"
 	"encoding/base64"
 	"image"
+	"image/color"
+	stddraw "image/draw"
 	"image/png"
 	"net/url"
 	"strconv"
@@ -230,4 +232,24 @@ func tinyPNG(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+func TestStrokeOverlapNoHole(t *testing.T) {
+	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, 40, 20)), scale: 1}
+	cv.stroke(color.RGBA{0, 0, 255, 255}, 4, []pt{{2, 10}, {30, 10}, {10, 10}}, nil)
+	if _, _, b, _ := cv.img.At(20, 10).RGBA(); b>>8 < 200 {
+		t.Fatalf("segments superposés en sens opposés : trou au milieu (bleu %d)", b>>8)
+	}
+}
+
+func TestStrokeEvenWidth(t *testing.T) {
+	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, 60, 20)), scale: 1}
+	stddraw.Draw(cv.img, cv.img.Bounds(), image.White, image.Point{}, stddraw.Src)
+	cv.stroke(color.RGBA{0, 0, 255, 255}, 1.5, smooth([]pt{{2, 10.3}, {20, 10.3}, {40, 10.3}, {58, 10.3}}, 4), nil)
+	ref := cv.img.RGBAAt(10, 11)
+	for x := 5; x < 55; x++ {
+		if got := cv.img.RGBAAt(x, 11); got != ref {
+			t.Fatalf("épaisseur irrégulière en x=%d : %v au lieu de %v", x, got, ref)
+		}
+	}
 }
