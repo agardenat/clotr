@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.78.4] - 2026-11-17
+
+### Modifié
+- DAT destiné au client (`--dat clean`) : le document ne dit plus comment il a été établi. L'introduction ne présente que l'objet et le périmètre, sans tableau des sources interrogées ni date de relevé, et le texte ne parle ni de relevé, ni de collecte, ni d'outils, ni de tâches. La section du périmètre non couvert dit ce que le document ne décrit pas et pourquoi ; les variantes `iac` et `drift` y gardent les sources illisibles et les tâches en échec.
+
 ## [0.78.3] - 2026-11-17
 
 ### Corrigé
