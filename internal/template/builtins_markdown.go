@@ -148,13 +148,7 @@ func (c *mdConv) block(n ast.Node, quote int) {
 			c.emit("image", starlark.StringDict{"src": starlark.String(img.Destination), "title": starlark.String(img.Title), "alt": starlark.String(plainText(c.inlines(img, mdStyle{})))})
 			return
 		}
-		f := c.textFields(c.inlines(n, mdStyle{}))
-		if quote > 0 {
-			f["level"] = starlark.MakeInt(quote)
-			c.emit("quote", f)
-			return
-		}
-		c.emit("para", f)
+		c.paragraph(n, quote, 0, "")
 	case *ast.Blockquote:
 		for k := n.FirstChild(); k != nil; k = k.NextSibling() {
 			c.block(k, quote+1)
@@ -204,6 +198,18 @@ func (c *mdConv) soleImage(n ast.Node) (*ast.Image, bool) {
 	return img, true
 }
 
+func (c *mdConv) paragraph(n ast.Node, quote, indent int, item string) {
+	f := c.textFields(c.inlines(n, mdStyle{}))
+	f["indent"] = starlark.MakeInt(indent)
+	f["item"] = starlark.String(item)
+	if quote > 0 {
+		f["level"] = starlark.MakeInt(quote)
+		c.emit("quote", f)
+		return
+	}
+	c.emit("para", f)
+}
+
 func (c *mdConv) list(l *ast.List, level, quote int) {
 	kind := "bullet"
 	if l.IsOrdered() {
@@ -212,24 +218,21 @@ func (c *mdConv) list(l *ast.List, level, quote int) {
 	num := l.Start
 	for item := l.FirstChild(); item != nil; item = item.NextSibling() {
 		var runs []mdRun
-		var rest []ast.Node
-		var nested []*ast.List
 		checked := starlark.Value(starlark.None)
-		for k := item.FirstChild(); k != nil; k = k.NextSibling() {
-			switch t := k.(type) {
-			case *ast.Paragraph, *ast.TextBlock:
-				if box, ok := k.FirstChild().(*east.TaskCheckBox); ok {
-					checked = starlark.Bool(box.IsChecked)
+		k := item.FirstChild()
+		for ; k != nil; k = k.NextSibling() {
+			if _, ok := k.(*ast.Paragraph); !ok {
+				if _, ok := k.(*ast.TextBlock); !ok {
+					break
 				}
-				if len(runs) > 0 {
-					runs = append(runs, mdRun{br: true})
-				}
-				runs = append(runs, c.inlines(k, mdStyle{})...)
-			case *ast.List:
-				nested = append(nested, t)
-			default:
-				rest = append(rest, k)
 			}
+			if box, ok := k.FirstChild().(*east.TaskCheckBox); ok && len(runs) == 0 {
+				checked = starlark.Bool(box.IsChecked)
+			}
+			if len(runs) > 0 {
+				runs = append(runs, mdRun{br: true})
+			}
+			runs = append(runs, c.inlines(k, mdStyle{})...)
 		}
 		f := c.textFields(runs)
 		f["level"] = starlark.MakeInt(level)
@@ -242,11 +245,19 @@ func (c *mdConv) list(l *ast.List, level, quote int) {
 		}
 		f["marker"] = starlark.String(marker)
 		c.emit(kind, f)
-		for _, k := range rest {
-			c.block(k, quote)
-		}
-		for _, sub := range nested {
-			c.list(sub, level+1, quote)
+		for ; k != nil; k = k.NextSibling() {
+			switch t := k.(type) {
+			case *ast.List:
+				c.list(t, level+1, quote)
+			case *ast.Paragraph, *ast.TextBlock:
+				if _, img := c.soleImage(k); img {
+					c.block(k, quote)
+					continue
+				}
+				c.paragraph(k, quote, level, kind)
+			default:
+				c.block(k, quote)
+			}
 		}
 	}
 }

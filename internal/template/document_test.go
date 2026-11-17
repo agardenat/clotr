@@ -100,6 +100,22 @@ def render(doc):
 	}
 }
 
+func TestMarkdownListOrder(t *testing.T) {
+	md := "- **A.** Intro :\n  - a1 ;\n  - a2.\n\n  Suite de A.\n\n  ```sh\n  ls\n  ```\n- B.\n\n1. Un.\n\n   Suite de un.\n"
+	star := `
+def render(doc):
+    return json.encode([[b.type, getattr(b, "text", ""), getattr(b, "level", 0), getattr(b, "indent", 0), getattr(b, "item", "")] for b in markdown.blocks(doc.markdown)])
+`
+	data, err := renderDoc(t, star, nil, DocumentInput{Markdown: md})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[["bullet","A. Intro :",1,0,""],["bullet","a1 ;",2,0,""],["bullet","a2.",2,0,""],["para","Suite de A.",0,1,"bullet"],["code","ls",0,0,""],["bullet","B.",1,0,""],["numbered","Un.\nSuite de un.",1,0,""]]`
+	if string(data) != want {
+		t.Fatalf("blocs :\n%s\nattendu\n%s", data, want)
+	}
+}
+
 func testZip(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer

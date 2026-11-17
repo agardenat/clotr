@@ -317,6 +317,19 @@ func newRoot() *cobra.Command {
 	sessionCmd.Flags().BoolVarP(&o.quiet, "quiet", "q", false, i18n.T("cli.flag.quiet"))
 	sessionCmd.Flags().BoolVar(&o.plain, "plain", false, i18n.T("cli.flag.plain"))
 
+	exportCmd := &cobra.Command{
+		Use:   i18n.T("cli.export.use"),
+		Short: i18n.T("cli.export.short"),
+		Long:  i18n.T("cli.export.long"),
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmdExport(cmd.Context(), o, args[0])
+		},
+	}
+	exportCmd.Flags().StringVarP(&o.output, "output", "o", "", i18n.T("cli.flag.export_output"))
+	exportCmd.Flags().StringVarP(&o.exportFmt, "format", "f", "", i18n.T("cli.flag.export_fmt"))
+	exportCmd.Flags().StringVar(&o.exportTpl, "export-template", "", i18n.T("cli.flag.export_template"))
+
 	toolsCmd := &cobra.Command{
 		Use:   "tools",
 		Short: i18n.T("cli.tools.short"),
@@ -366,7 +379,7 @@ func newRoot() *cobra.Command {
 		},
 	}
 
-	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, toolsCmd, templatesCmd, syncCmd, ver)
+	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, exportCmd, toolsCmd, templatesCmd, syncCmd, ver)
 	localizeCobra(root)
 	return root
 }

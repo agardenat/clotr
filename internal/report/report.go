@@ -16,6 +16,7 @@ const (
 	ModeChange   = "change"
 	ModeDAT      = "dat"
 	ModeDiagram  = "diagram"
+	ModeDocument = "document"
 )
 
 var Modes = []string{ModeDefault, ModeCVE, ModeIncident, ModeChange, ModeDAT, ModeDiagram}

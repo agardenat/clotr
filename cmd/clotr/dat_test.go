@@ -98,7 +98,7 @@ func TestReportImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	md := "![Figure 1 — Réseau](architecture.png)\n\n![x](../secret.png) ![y](absent.png)"
-	got := reportImages(md, dir)
+	got := reportImages(md, dir, false)
 	if len(got) != 1 || got["architecture.png"].Width != 2 || got["architecture.png"].Format != "png" {
 		t.Fatalf("%+v", got)
 	}
