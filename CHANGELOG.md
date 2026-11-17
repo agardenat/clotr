@@ -1,5 +1,11 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.74.1] - 2026-11-17
+
+### Modifié
+- Schéma d'un service partagé : la liste des couples consommateur → serveur ou volume monté est dressée depuis les résultats avant la spec, et chaque couple a son lien (un consommateur de deux serveurs de fichiers n'était relié qu'à l'un).
+- Type des nœuds : un nœud qui porte des services prend l'icône de son service principal trouvée dans le jeu d'icônes, un type générique seulement à défaut ; un acteur externe sans icône dans le jeu d'une plateforme se dessine sur le schéma du cloud porteur.
+
 ## [0.74.0] - 2026-11-16
 
 ### Modifié
