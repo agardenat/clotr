@@ -387,11 +387,16 @@ Dans les tests (`clotr templates test`), `inst.render(markdown=…, title=…, m
 
 Un template `kind: diagram` dessine les schémas d'architecture des modes `--dat` et `--diagram`, en général par un serveur de rendu de schémas. Il n'a ni `tools`, ni `targets`, ni `companions`, ni `files`, ni `env` ; ses connecteurs sont de driver `mcp` ou `http`. Il est désigné par `diagram.template` ; `diagram.params` renseigne ses `params`. Son script définit :
 
-- `render(spec, cloud)` (obligatoire) : rend la spec et renvoie un dict `{drawio, png, warnings}` : le fichier `.drawio` (`bytes` ou texte), l'image PNG (`bytes`, ou texte en base64) et la liste des avertissements (types inconnus, règles de lisibilité du template) ;
+- `render(spec, cloud)` (obligatoire) : rend la spec et renvoie un dict `{drawio, png, warnings, notes}` : le fichier `.drawio` (`bytes` ou texte), l'image PNG (`bytes`, ou texte en base64), la liste des avertissements renvoyés au modèle pour qu'il corrige la spec (types inconnus, règles de lisibilité du template) et des notes affichées à l'utilisateur et consignées dans l'audit, sans être renvoyées au modèle (rendu dégradé, par exemple) ;
 - `reference(cloud)` : format de la spec, types de nœuds et de groupes, règles de placement pour ce cloud ou cette plateforme (texte, ou valeur convertie en JSON) ;
 - `shapes(query, cloud)` : recherche d'un type de nœud.
 
 L'étape de schéma les reçoit comme outils `diagram_reference`, `diagram_shapes` et `diagram_render(name, cloud, title, spec)`. Un rendu sans avertissement écrit `<name>.drawio` et `<name>.png` dans le tour (`name` préfixé par `architecture`). Un template doté d'un connecteur envoie le schéma hors du poste : il est refusé en session confidentielle, et le document est alors produit sans schéma.
+
+Le module `drawio` des scripts retrace et rend un fichier `.drawio` sur le poste, sans programme externe :
+
+- `drawio.route(xml, spread_x=1, spread_y=1)` écarte les éléments (positions et tailles des conteneurs multipliées par `spread_x` et `spread_y`, tailles des icônes conservées) puis trace chaque lien à angles droits, en points de passage : il contourne les icônes et leurs libellés, ne longe pas les bordures des conteneurs, s'écarte des autres liens, et les liens de même libellé vers une même cible (ou depuis une même source) partagent un tronc, libellé une seule fois. Les libellés de liens vont sur un segment libre. Renvoie `{xml, edges, failed}` (`failed` : liens sans passage libre, laissés sans tracé) ;
+- `drawio.png(xml, scale=2)` dessine le fichier en PNG : conteneurs (arrondis, pointillés, remplissage, titre), icônes embarquées (PNG ou JPEG en `data:`), libellés, liens avec flèche et libellé sur fond. Les cellules masquées sont ignorées.
 
 Dans les tests, `inst.diagram_reference(cloud)`, `inst.diagram_shapes(query, cloud)` et `inst.diagram_render(spec, cloud)` appellent ces fonctions ; `template.instance(mcp=…, http=…)` fournit les faux serveurs.
 

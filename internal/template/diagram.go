@@ -16,6 +16,7 @@ type DiagramResult struct {
 	Drawio   []byte
 	PNG      []byte
 	Warnings []string
+	Notes    []string
 }
 
 func (in *Instance) diagramFn(name string) (starlark.Callable, error) {
@@ -129,24 +130,32 @@ func decodeDiagram(v starlark.Value) (*DiagramResult, error) {
 	if r.PNG, err = bytesOf("png"); err != nil {
 		return nil, err
 	}
-	w, err := field("warnings")
-	if err != nil {
-		return nil, err
-	}
-	if w != nil && w != starlark.None {
+	strs := func(name string) ([]string, error) {
+		w, err := field(name)
+		if err != nil || w == nil || w == starlark.None {
+			return nil, err
+		}
 		g, err := fromStarlark(w)
 		if err != nil {
 			return nil, err
 		}
 		list, ok := g.([]any)
 		if !ok {
-			return nil, i18n.E("diagram.result", "render.warnings", w.Type())
+			return nil, i18n.E("diagram.result", "render."+name, w.Type())
 		}
+		var out []string
 		for _, x := range list {
 			if s := strings.TrimSpace(fmt.Sprint(x)); s != "" {
-				r.Warnings = append(r.Warnings, s)
+				out = append(out, s)
 			}
 		}
+		return out, nil
+	}
+	if r.Warnings, err = strs("warnings"); err != nil {
+		return nil, err
+	}
+	if r.Notes, err = strs("notes"); err != nil {
+		return nil, err
 	}
 	return r, nil
 }

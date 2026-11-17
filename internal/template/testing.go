@@ -479,14 +479,18 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 			if err != nil {
 				return nil, err
 			}
-			warnings := starlark.NewList(nil)
-			for _, w := range r.Warnings {
-				_ = warnings.Append(starlark.String(w))
+			list := func(xs []string) *starlark.List {
+				out := starlark.NewList(nil)
+				for _, x := range xs {
+					_ = out.Append(starlark.String(x))
+				}
+				return out
 			}
 			return starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
 				"drawio":   starlark.Bytes(r.Drawio),
 				"png":      starlark.Bytes(r.PNG),
-				"warnings": warnings,
+				"warnings": list(r.Warnings),
+				"notes":    list(r.Notes),
 			}), nil
 		}), nil
 	case "startup":
