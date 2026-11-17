@@ -1,5 +1,14 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.78.0] - 2026-11-17
+
+### Modifié
+- Modes `--dat` et `--diagram` : clotr construit le plan sans planner, identique d'un run à l'autre et immédiat : une tâche par instance IaC réunie avec ce qu'elle décrit, puis une par instance réelle restante, hors cibles déjà décrites. Le planner découpait différemment à chaque run, oubliait des instances et prenait de 45 s à 9 min. Il reste utilisé en affinage de session.
+
+### Ajouté
+- `describes` sur une instance : ce que décrit un dépôt IaC (`<instance>` ou `<instance>/<cible>`, une valeur ou une liste), vérifié au chargement.
+- `architecture: false` dans un template : ses instances (alertes, tickets) n'ont pas de tâche dans le plan des modes `--dat` et `--diagram`.
+
 ## [0.77.1] - 2026-11-17
 
 ### Corrigé
