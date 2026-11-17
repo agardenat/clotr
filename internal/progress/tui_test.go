@@ -277,3 +277,17 @@ func TestBoardShowsReasoningEffort(t *testing.T) {
 		t.Errorf("cellule: %q", got)
 	}
 }
+
+func TestBoardDoneWithoutStart(t *testing.T) {
+	clock := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	b := newBoard(10)
+	b.now = func() time.Time { return clock }
+	b.start = clock
+	b.width = 160
+	b.apply(Event{Task: "planner", Kind: "plan", Plan: []PlanItem{{ID: "t1", Role: "collector", Goal: "g"}}})
+	b.apply(Event{Task: "planner", Kind: "done", Detail: "1 tâche"})
+	out := b.render()
+	if strings.Contains(out, "h47m") || strings.Contains(out, "2562047") {
+		t.Fatalf("durée d'une ligne terminée sans début :\n%s", out)
+	}
+}
