@@ -1,5 +1,13 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.74.4] - 2026-11-17
+
+### Modifié
+- Schéma d'un service partagé : chaque consommateur reste dans son propre réseau, sous-réseau ou cluster, jamais dans le sous-réseau du service.
+
+### Corrigé
+- Une même commande à confirmer, lancée en parallèle sur plusieurs hôtes, n'est plus demandée une fois par hôte : les demandes identiques attendent la réponse à la première, et une réponse « toujours » vaut pour toutes (la même question pouvait revenir une dizaine de fois de suite).
+
 ## [0.74.3] - 2026-11-17
 
 ### Modifié
