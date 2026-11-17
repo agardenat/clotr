@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.74.3] - 2026-11-17
+
+### Modifié
+- Les extraits de réponse HTTP affichés dans les erreurs (limite de débit 429 d'une passerelle, erreurs de catalogue ou de jeton) raccourcissent toute chaîne opaque de 32 caractères ou plus en ses 4 premiers et 4 derniers caractères : une clé d'API renvoyée par le serveur n'apparaît plus en entier et le message reste court.
+
 ## [0.74.2] - 2026-11-17
 
 ### Modifié
