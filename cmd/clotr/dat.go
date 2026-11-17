@@ -69,7 +69,7 @@ func (r diagramRenderer) Render(ctx context.Context, cloud string, spec map[stri
 	if err != nil {
 		return nil, err
 	}
-	return &dat.Rendered{Drawio: res.Drawio, PNG: res.PNG, Warnings: res.Warnings}, nil
+	return &dat.Rendered{Drawio: res.Drawio, PNG: res.PNG, Warnings: res.Warnings, Notes: res.Notes}, nil
 }
 
 func (rt *app) setupDAT(o *options, warn func(string)) {

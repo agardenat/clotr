@@ -46,6 +46,7 @@ type Rendered struct {
 	Drawio   []byte
 	PNG      []byte
 	Warnings []string
+	Notes    []string
 }
 
 type Renderer interface {
@@ -316,7 +317,10 @@ func (t renderTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 		return "", err
 	}
 	c := tools.CallerFrom(ctx)
-	t.s.audit.Log("diagram", map[string]any{"task": c.Task, "name": d.Name, "cloud": cloud, "warnings": r.Warnings, "png": len(r.PNG), "drawio": len(r.Drawio)})
+	t.s.audit.Log("diagram", map[string]any{"task": c.Task, "name": d.Name, "cloud": cloud, "warnings": r.Warnings, "notes": r.Notes, "png": len(r.PNG), "drawio": len(r.Drawio)})
+	for _, n := range r.Notes {
+		t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "step", Model: c.Model, Effort: c.Effort, Detail: i18n.T("dat.diagram_note", d.Name, n)})
+	}
 	if len(r.Warnings) > 0 {
 		t.s.Events.Emit(progress.Event{Task: c.Task, Kind: "step", Model: c.Model, Effort: c.Effort, Detail: i18n.T("dat.diagram_warnings", d.Name, len(r.Warnings))})
 		return fmt.Sprintf("schéma %s rendu avec %d avertissement(s) : corrige la spec et rappelle %s avec name %q.\n- %s", d.Name, len(r.Warnings), RenderTool, d.Name, strings.Join(r.Warnings, "\n- ")), nil

@@ -24,6 +24,7 @@ var datMsgs = map[string]msg{
 	"dat.diagram_step":          {"architecture diagram", "schéma d'architecture"},
 	"dat.diagram_done":          {"diagram %s rendered", "schéma %s rendu"},
 	"dat.diagram_warnings":      {"diagram %s: %d warning(s), spec to fix", "schéma %s : %d avertissement(s), spec à corriger"},
+	"dat.diagram_note":          {"diagram %s: %s", "schéma %s : %s"},
 	"dat.diagram_files":         {"diagram: %s", "schéma : %s"},
 	"dat.model_empty":           {"document model without any ## section", "modèle de document sans aucune section ##"},
 	"diagram.not":               {"template %s is not of kind diagram", "le template %s n'est pas de kind diagram"},
