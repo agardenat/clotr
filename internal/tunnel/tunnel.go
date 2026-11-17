@@ -151,6 +151,12 @@ func (t *Tunnel) connect(ctx context.Context) (*ssh.Chain, error) {
 	hops := make([]ssh.Endpoint, len(t.hops))
 	for i, h := range t.hops {
 		h.User, h.KeyPath, h.KeyVault, h.Password = user, config.ExpandHome(t.cfg.KeyPath), t.cfg.KeyVault, password
+		if password != nil {
+			host := h.Host
+			h.Refused = func(pass string) {
+				creds.Reject(t.label, user, pass, i18n.T("creds.refused_ssh", user, host))
+			}
+		}
 		hops[i] = h
 	}
 	ch, err := ssh.NewChain(hops, t.opts)

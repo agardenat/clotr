@@ -99,3 +99,26 @@ func TestResolveSecret(t *testing.T) {
 		t.Fatalf("jeton absent: %v", err)
 	}
 }
+
+func TestRejectKeepsNewerPassword(t *testing.T) {
+	mu.Lock()
+	cache[userKey("lbl", "ops")] = Pair{User: "ops", Pass: "nouveau"}
+	mu.Unlock()
+	Reject("lbl", "ops", "ancien", "refusé")
+	mu.Lock()
+	_, kept := cache[userKey("lbl", "ops")]
+	mu.Unlock()
+	if !kept {
+		t.Fatal("refus d'un ancien mot de passe : le nouveau a été oublié")
+	}
+	Reject("lbl", "ops", "nouveau", "refusé")
+	mu.Lock()
+	_, kept = cache[userKey("lbl", "ops")]
+	reason := refusals["lbl"]
+	delete(refusals, "lbl")
+	delete(skipVault, "lbl")
+	mu.Unlock()
+	if kept || reason != "refusé" {
+		t.Fatalf("refus du mot de passe courant : gardé %v, motif %q", kept, reason)
+	}
+}

@@ -48,6 +48,21 @@ func Refused(label, user, reason string) {
 	}
 }
 
+func Reject(label, user, pass, reason string) {
+	mu.Lock()
+	cur, ok := cache[userKey(label, user)]
+	if !ok {
+		if c, found := cache[label]; found && c.User == user {
+			cur, ok = c, true
+		}
+	}
+	mu.Unlock()
+	if ok && cur.Pass != pass {
+		return
+	}
+	Refused(label, user, reason)
+}
+
 var ReadVault = vault.Secret
 
 type Console struct {

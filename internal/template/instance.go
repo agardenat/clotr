@@ -737,8 +737,8 @@ func newShellPool(name string, o options) (*ssh.Shell, error) {
 			}
 			return p.User, p.Pass, err
 		}
-		so.Forget = func(user, host, reason string) {
-			creds.Refused(label, user, i18n.T("creds.refused_shell", user, host, defaultStr(reason, "?")))
+		so.Forget = func(user, pass, host, reason string) {
+			creds.Reject(label, user, pass, i18n.T("creds.refused_shell", user, host, defaultStr(reason, "?")))
 		}
 	}
 	return ssh.NewShell(so)
@@ -785,6 +785,13 @@ func (l *sshLogin) forget() {
 	creds.Refused(l.label, l.user, i18n.T("creds.refused_ssh", l.user, l.host))
 }
 
+func (l *sshLogin) reject(pass string) {
+	if _, fixed := l.in.creds[l.in.sshName]; fixed {
+		return
+	}
+	creds.Reject(l.label, l.user, pass, i18n.T("creds.refused_ssh", l.user, l.host))
+}
+
 func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.Endpoint, *sshLogin, error) {
 	if in.local {
 		return ssh.Endpoint{Host: "localhost"}, nil, nil
@@ -826,6 +833,7 @@ func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.En
 		ep.User, l.user = p.User, p.User
 	}
 	ep.Password = l.password
+	ep.Refused = l.reject
 	return ep, l, nil
 }
 

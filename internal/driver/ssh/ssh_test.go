@@ -290,6 +290,40 @@ func TestPoolPasswordFallbackAndStdin(t *testing.T) {
 	}
 }
 
+func TestPoolPasswordRetype(t *testing.T) {
+	dir := t.TempDir()
+	hostKey, _ := testutil.NewSSHKey(t)
+	other, _ := testutil.NewSSHKey(t)
+	srv := testutil.StartSSHServerConfig(t, testutil.SSHServerConfig{ClientKey: other.PublicKey(), Password: "s3cret", HostKey: hostKey, Reply: func(cmd, stdin string) (string, int) {
+		return "ok", 0
+	}})
+	h, p, _ := net.SplitHostPort(srv.Addr)
+	port, _ := strconv.Atoi(p)
+	pool, _ := NewPool(Options{KnownHosts: filepath.Join(dir, "kh"), HostKey: AcceptNew})
+	defer pool.Close()
+	typed := []string{"faux", "s3cret"}
+	var refused []string
+	ep := Endpoint{Host: h, Port: port, User: "ops",
+		Password: func(context.Context) (string, error) {
+			pw := typed[0]
+			typed = typed[1:]
+			return pw, nil
+		},
+		Refused: func(pw string) { refused = append(refused, pw) },
+	}
+	res, err := pool.Exec(context.Background(), ep, "true", 100)
+	if err != nil || res.Stdout != "ok" || len(refused) != 1 || refused[0] != "faux" {
+		t.Fatalf("seconde saisie : %+v %v, refusés %v", res, err, refused)
+	}
+	typed = []string{"a", "b", "c", "d"}
+	refused = nil
+	pool2, _ := NewPool(Options{KnownHosts: filepath.Join(dir, "kh"), HostKey: AcceptNew})
+	defer pool2.Close()
+	if _, err := pool2.Exec(context.Background(), ep, "true", 100); !errors.Is(err, ErrAuth) || len(refused) != passwordAttempts-1 || len(typed) != 4-passwordAttempts {
+		t.Fatalf("échec après %d saisies attendu : %v, refusés %v, restants %v", passwordAttempts, err, refused, typed)
+	}
+}
+
 func TestSudoWithPassword(t *testing.T) {
 	got := SudoWithPassword(Builder{}.Tail("/var/log/x", 5))
 	want := `sudo -S -p '' -- sh -c 'exec </dev/null; tail -n 5 -- '"'"'/var/log/x'"'"''`

@@ -154,7 +154,7 @@ func TestShellThenHopFailure(t *testing.T) {
 			logins++
 			return "ops", "secret", nil
 		},
-		Forget: func(string, string, string) { forgot = true },
+		Forget: func(string, string, string, string) { forgot = true },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ func TestShellThenLogin(t *testing.T) {
 			logins++
 			return "ops", pass, nil
 		},
-		Forget: func(user, host, r string) { forgot, forgotHost, reason = user, host, r },
+		Forget: func(user, _, host, r string) { forgot, forgotHost, reason = user, host, r },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +209,35 @@ func TestShellThenLogin(t *testing.T) {
 	if len(hosts) == 0 || hosts[0] != "vm1.example.test" || hosts[len(hosts)-1] != "vm2" {
 		t.Fatalf("hôtes transmis à Login : %v", hosts)
 	}
-	if logins != 4 {
-		t.Fatalf("appels Login : %d", logins)
+	if logins != 6 {
+		t.Fatalf("appels Login : %d (compte puis trois saisies sur vm2 attendus)", logins)
+	}
+}
+
+func TestShellLoginRetype(t *testing.T) {
+	hop := `exec sh -c 'while :; do printf "%u@%h password: "; stty -echo; read p; stty echo; echo; [ "$p" = deux ] && break; echo "Permission denied, please try again."; done; HOP=%u@%s PS1="[u@vm ~]$ " exec sh -i'`
+	typed := []string{"compte", "faux", "deux"}
+	var refused []string
+	s, err := NewShell(ShellOptions{
+		Command:     []string{"sh", "-c", "PS1='[u@jump ~]$ ' exec sh -i"},
+		Then:        []string{hop},
+		OpenTimeout: 20 * time.Second,
+		Login: func(context.Context, string) (string, string, error) {
+			p := typed[0]
+			typed = typed[1:]
+			return "ops", p, nil
+		},
+		Forget: func(_, pass, _, _ string) { refused = append(refused, pass) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	res, err := s.ExecInput(context.Background(), Endpoint{Host: "vm1"}, "echo $HOP", "", 1024)
+	if err != nil || res.Stdout != "ops@vm1\n" {
+		t.Fatalf("seconde saisie non tentée : %+v %v", res, err)
+	}
+	if len(refused) != 1 || refused[0] != "faux" || len(typed) != 0 {
+		t.Fatalf("refusés %v, restants %v", refused, typed)
 	}
 }

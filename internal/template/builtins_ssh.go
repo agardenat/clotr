@@ -38,17 +38,24 @@ func (in *Instance) remote(ctx context.Context, tool string, t *Target, h *Host,
 		}
 		in.setSudoNeedsPassword(ep)
 	}
-	pw, err := login.password(ctx)
-	if err != nil {
-		return ssh.Result{}, err
+	for attempt := 1; ; attempt++ {
+		pw, err := login.password(ctx)
+		if err != nil {
+			return ssh.Result{}, err
+		}
+		res, err := in.exec(ctx, pool, tool, t, ep, login, ssh.SudoWithPassword(build(ssh.Builder{})), pw+"\n", maxBytes)
+		if err != nil || res.Exit == 0 || !ssh.SudoPasswordRejected(res.Stderr) {
+			return res, err
+		}
+		if _, fixed := in.creds[in.sshName]; fixed || attempt >= sudoAttempts || ctx.Err() != nil {
+			login.forget()
+			return ssh.Result{}, i18n.E("tpl.ssh.sudo_password", ep.User, ep.Host)
+		}
+		login.reject(pw)
 	}
-	res, err := in.exec(ctx, pool, tool, t, ep, login, ssh.SudoWithPassword(build(ssh.Builder{})), pw+"\n", maxBytes)
-	if err == nil && res.Exit != 0 && ssh.SudoPasswordRejected(res.Stderr) {
-		login.forget()
-		return ssh.Result{}, i18n.E("tpl.ssh.sudo_password", ep.User, ep.Host)
-	}
-	return res, err
 }
+
+const sudoAttempts = 3
 
 func (in *Instance) remoteExec(ctx context.Context, tool string, t *Target, h *Host, argv []string, maxBytes int, prefix ...string) (ssh.Result, error) {
 	if !in.allowed(ctx, access.Exec) {
