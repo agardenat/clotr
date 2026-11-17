@@ -1,5 +1,14 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.78.5] - 2026-11-17
+
+### Modifié
+- DAT destiné au client (`--dat clean`) : la section « Hors périmètre » ne cite que les composants entiers non décrits, sans raison ni détail ; ce qui n'a été vu qu'en partie n'y figure plus (une valeur inconnue est absente des tableaux). Les variantes `iac` et `drift` gardent la section détaillée « Périmètre non couvert et limites ». Une section vide porte « Non décrit dans ce document. »
+- Modèles de rapport : une section peut viser plusieurs variantes (`<!-- variant: iac, drift -->`).
+
+### Corrigé
+- Contrôle de fidélité de l'export : un texte entre chevrons dans le rapport (`app_<env>_id`) n'est plus signalé comme absent du document ; le contrôle l'ignorait alors que le document le reproduit.
+
 ## [0.78.4] - 2026-11-17
 
 ### Modifié
