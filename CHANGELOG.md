@@ -1,5 +1,14 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.81.0] - 2026-11-18
+
+### Ajouté
+- Suivi en direct : `run --watch` (alias `--suivi`) observe une action pendant qu'elle se produit. Une tâche de préparation déclare les sources liées à l'action avec l'outil `watch_source` (fichier de log en SSH, journal systemd ou du noyau, relevé de mémoire, CPU ou connexions, outil suivable d'une instance) ; clotr se met en attente et lit ces sources en boucle sans modèle de langage, à partir de leur état au début de l'attente (rotation des fichiers suivie), affiche en direct les lignes retenues par le filtre de chaque source et archive toutes les lignes (une preuve par source, copie au fil de l'eau dans `turns/NNN/watch/`). Le premier Ctrl-C (ou `--watch-for`) arrête l'attente et lance l'analyse des captures ; le rapport suit le nouveau modèle `watch` (capture, chronologie de l'action, cause, résolution). `--watch-every` règle le délai entre deux lectures (5 s par défaut). Le mode est enregistré dans la session, repris par `run -s` et par `session --synthesize`.
+- Templates : `follow = fn(args, cursor)` sur un outil de script de niveau `read` le rend suivable par le mode suivi (curseur libre rendu à chaque appel) ; `inst.follow(outil, args, cursor)` dans les tests ; `modes.watch` pour les consignes propres au suivi.
+
+### Modifié
+- Ctrl-C : le crochet d'interruption peut rester armé ; en mode suivi, le premier Ctrl-C arrête l'attente, le suivant demande la conclusion de l'analyse, le troisième coupe tout.
+
 ## [0.80.2] - 2026-11-18
 
 ### Corrigé
