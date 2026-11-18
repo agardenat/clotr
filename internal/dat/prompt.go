@@ -75,6 +75,12 @@ func (s *Store) UnitGoal(u Unit) string {
 		}
 	}
 	fmt.Fprintf(&b, ", pour le %s : composants, versions, regroupements (réseau, sous-réseau, cluster), points d'entrée et adresses publiées, flux et ports, sécurité, identités, données, sauvegarde et supervision, selon ce que les instances exposent. %s", s.docName(), s.sources())
+	if len(u.Checklist) > 0 {
+		b.WriteString("\nÀ établir avant de conclure, chaque point par un constat ou par une ligne gaps qui dit pourquoi il ne l'est pas :")
+		for _, c := range u.Checklist {
+			b.WriteString("\n- " + c)
+		}
+	}
 	return b.String()
 }
 
@@ -115,7 +121,7 @@ func (s *Store) DiagramGoal() string {
 	b.WriteString("Points d'entrée : les utilisateurs et l'exploitation (VPN, avec les plages sources lues) figurent chacun en acteur, relié à son point d'entrée établi par les preuves avec protocole et port : la jumpbox, le bastion ou le rebond pour l'exploitation, le répartiteur, l'ingress ou la passerelle pour les utilisateurs ; le point d'entrée est un nœud, et ce qu'il atteint ensuite est un second lien. Un acteur ne se relie au groupe qu'il atteint que si aucune preuve ne nomme son point d'entrée.\n")
 	b.WriteString("Lisibilité, prioritaire sur l'exhaustivité (le détail va dans les tableaux du document, pas sur le schéma) :\n")
 	b.WriteString("- flux : une quinzaine au plus par schéma, seulement les flux principaux (entrée des utilisateurs, chaîne applicative, accès aux données, authentification) ; un lien relie les éléments qui échangent (nœud, ou groupe quand c'est le groupe entier qui échange) ; un même flux d'une source vers trois nœuds ou plus d'un même groupe se dessine une seule fois vers le groupe ; aucun flux transverse de supervision, de sauvegarde ou de tirage d'images (il traverse tout le schéma) : le citer dans la notice ;\n")
-	b.WriteString("- nœuds : au-delà de trois ressources de même type dans un même groupe, un seul nœud « <catégorie> (×N) » ; une adresse IP publique ou un point d'entrée se met dans le libellé du répartiteur ou de l'ingress qu'il sert, pas en nœud séparé ; trois acteurs externes au plus ;\n")
+	b.WriteString("- nœuds : un composant nommé et distinct par son rôle (cluster, base, serveur applicatif, service) est un nœud à lui seul, même quand il y en a beaucoup ; seuls des éléments interchangeables (nœuds d'un même pool, réplicas, machines d'un même rôle) se regroupent en un nœud « <rôle> (×N) » ; jamais un même composant en deux nœuds ; une adresse IP publique ou un point d'entrée se met dans le libellé du répartiteur ou de l'ingress qu'il sert, pas en nœud séparé ; trois acteurs externes au plus ;\n")
 	b.WriteString("- groupes : aucun groupe vide ou traversé seulement par des flux ; un groupe de sécurité seulement s'il enveloppe les nœuds qu'il protège ;\n")
 	b.WriteString("- un flux déjà dessiné sur un autre schéma ne se répète pas ;\n")
 	b.WriteString("- un composant du cloud dessiné en détail sur un autre schéma garde ici son groupe (parent), il n'est jamais un acteur externe ;\n")

@@ -131,3 +131,18 @@ func TestSynthRuleClientVariant(t *testing.T) {
 		t.Fatalf("variante drift : %s", drift)
 	}
 }
+
+func TestUnitGoalChecklist(t *testing.T) {
+	s := New(Clean, false, nil, nil)
+	g := s.UnitGoal(Unit{Instances: []string{"cloud-a"}, Checklist: []string{"cloud-a : appairages ; passerelles"}})
+	if !strings.Contains(g, "À établir avant de conclure") || !strings.Contains(g, "- cloud-a : appairages ; passerelles") {
+		t.Fatalf("objectif : %s", g)
+	}
+	if g := s.UnitGoal(Unit{Instances: []string{"cloud-a"}}); strings.Contains(g, "À établir") {
+		t.Fatalf("liste vide annoncée : %s", g)
+	}
+	d := s.DiagramGoal()
+	if !strings.Contains(d, "seuls des éléments interchangeables") || strings.Contains(d, "au-delà de trois ressources de même type") {
+		t.Fatal("règle de regroupement des nœuds")
+	}
+}

@@ -130,3 +130,10 @@ func TestDATUnits(t *testing.T) {
 		t.Fatalf("variante iac : %+v", units)
 	}
 }
+
+func TestWithChecklists(t *testing.T) {
+	units := withChecklists([]dat.Unit{{IaC: "tf-a", Instances: []string{"tf-a", "cloud-a"}}, {Instances: []string{"vm-a"}}}, map[string][]string{"tf-a": {"racines"}, "cloud-a": {"appairages", "passerelles"}})
+	if got := strings.Join(units[0].Checklist, "|"); got != "tf-a : racines|cloud-a : appairages ; passerelles" || len(units[1].Checklist) != 0 {
+		t.Fatalf("listes : %v / %v", units[0].Checklist, units[1].Checklist)
+	}
+}

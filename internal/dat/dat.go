@@ -71,6 +71,7 @@ type Unit struct {
 	Instances []string
 	Objects   []string
 	Except    []string
+	Checklist []string
 }
 
 type Store struct {

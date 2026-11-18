@@ -38,6 +38,7 @@ type Template struct {
 	IDPattern    string               `yaml:"id_pattern"`
 	MinVersion   string               `yaml:"min_version"`
 	Architecture *bool                `yaml:"architecture"`
+	Checklist    []string             `yaml:"checklist"`
 
 	Source     string `yaml:"-"`
 	Raw        []byte `yaml:"-"`

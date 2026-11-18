@@ -91,6 +91,7 @@ type Orchestrator struct {
 	Tools           *tools.Registry
 	Audit           *audit.Logger
 	Events          progress.Sink
+	PrepareTools    func(ctx context.Context, tools []string)
 	Environment     string
 	EvidenceDisplay func(string) string
 	Memory          *memory.Store
@@ -260,6 +261,13 @@ func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error)
 		var err error
 		if plan, err = o.Plan(ctx, request); err != nil {
 			return nil, err
+		}
+		if o.PrepareTools != nil {
+			var names []string
+			for _, t := range plan.Tasks {
+				names = append(names, t.Tools...)
+			}
+			o.PrepareTools(ctx, names)
 		}
 		results = append(results, o.Execute(ctx, request, plan)...)
 	}

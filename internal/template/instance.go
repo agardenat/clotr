@@ -359,6 +359,39 @@ func (in *Instance) Prepare(ctx context.Context) error {
 	return nil
 }
 
+func (in *Instance) PrepareCredentials(ctx context.Context) error {
+	if err := in.Prepare(ctx); err != nil {
+		return err
+	}
+	if in.sshName == "" || in.local {
+		return nil
+	}
+	o := in.conns[in.sshName]
+	a := o.sub("auth")
+	if len(a) == 0 {
+		return nil
+	}
+	if _, ok := in.creds[in.sshName]; ok {
+		return nil
+	}
+	var label, user string
+	if in.shell {
+		label, user = defaultStr(a.str("label"), in.Name+" (SSH)"), a.str("user")
+	} else {
+		if o.str("key") != "" || o.str("key_vault") != "" {
+			return nil
+		}
+		label, user = in.Name+" ("+defaultStr(a.str("label"), "SSH")+")", o.str("user")
+	}
+	var err error
+	if user != "" {
+		_, err = creds.ResolveUser(ctx, user, a.str("password_env"), a.str("password_vault"), label)
+	} else {
+		_, err = creds.Resolve(ctx, a.str("user_env"), a.str("password_env"), a.str("password_vault"), label)
+	}
+	return err
+}
+
 func (in *Instance) Defer(ctx context.Context, cacheDir string, ttl time.Duration, refresh bool) error {
 	var inv *Inventory
 	if cacheDir != "" && !refresh {
