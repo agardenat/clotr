@@ -80,6 +80,11 @@ limits: {max_agents: 8, max_tasks: 5}
 			tl.input["planner"] = user
 			tl.mu.Unlock()
 			return testutil.Reply(p), nil
+		case strings.Contains(sys, "cadrage commun"):
+			tl.mu.Lock()
+			tl.input["frame"] = user
+			tl.mu.Unlock()
+			return testutil.Reply("- Variante retenue : progressive"), nil
 		case strings.Contains(sys, "réponse finale"):
 			tl.mu.Lock()
 			tl.input["synthesizer"], tl.system["synthesizer"] = user, sys

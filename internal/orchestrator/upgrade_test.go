@@ -46,6 +46,12 @@ func TestUpgradeReadsDocumentationBeforePlan(t *testing.T) {
 	if rule := o.modeRule(); !strings.Contains(rule, "Mode opératoire de mise à jour : tu ne modifies rien") {
 		t.Fatalf("consigne des tâches : %q", rule)
 	}
+	if !strings.Contains(tl.input["frame"], "procedure vu") || !strings.Contains(tl.input["synthesizer"], "Cadrage commun du mode opératoire") || !strings.Contains(tl.input["synthesizer"], "Variante retenue : progressive") {
+		t.Fatalf("cadrage absent : %q", tl.input["synthesizer"])
+	}
+	if !strings.Contains(tl.input[procedureID], "Ne mêle jamais deux variantes") {
+		t.Fatal("consigne des variantes absente de l'étape procedure")
+	}
 	if !strings.Contains(rep.Markdown, "# Rapport") || strings.Count(rep.Markdown, "# Rapport") != 11 {
 		t.Fatalf("rédaction section par section attendue (11 sections) :\n%s", rep.Markdown)
 	}

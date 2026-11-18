@@ -9,5 +9,6 @@ var upgradeMsgs = map[string]msg{
 	"cli.err.upgrade_modes": {"--upgrade/--modop: incompatible with --incident, --panic, --change, --cve, --ticket, --dat, --diagram, --chat and --direct", "--upgrade/--modop : incompatible avec --incident, --panic, --change, --cve, --ticket, --dat, --diagram, --chat et --direct"},
 	"upgrade.mode":          {"upgrade preparation", "préparation de mise à jour"},
 	"upgrade.step":          {"Upgrade documentation", "Documentation de mise à jour"},
+	"upgrade.frame":         {"common frame: retained procedure variant", "cadrage commun : variante de procédure retenue"},
 	"upgrade.no_web":        {"upgrade procedure without web search: the official documentation will not be read, every step will remain to be confirmed", "mode opératoire sans recherche web : la documentation officielle ne sera pas lue, chaque étape restera à confirmer"},
 }

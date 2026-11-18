@@ -1,5 +1,11 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.80.1] - 2026-11-18
+
+### Corrigé
+- Mode opératoire de mise à jour : quand la documentation propose plusieurs variantes de procédure (progressive sans interruption, classique avec arrêt…), le document suit la variante retenue au lieu de mêler leurs prérequis. L'étape `procedure` relève chaque variante avec ses conditions d'application, ses prérequis et son interruption ; les tâches mesurent ces conditions ; un cadrage commun, fixé avant la rédaction section par section, retient pour chaque composant la variante dont toutes les conditions sont mesurées, en préférant celle qui interrompt le moins, et toutes les sections le suivent (l'autre variante n'apparaît que comme repli). Auparavant, les arrêts et l'indisponibilité d'une procédure classique pouvaient figurer dans le document alors que la variante progressive s'appliquait.
+- Une version absente d'une page de documentation n'est plus traitée comme indisponible : c'est un point à confirmer par la liste des versions que propose l'outil de mise à jour.
+
 ## [0.80.0] - 2026-11-18
 
 ### Ajouté
