@@ -26,7 +26,10 @@ func (o *Orchestrator) synthesizeSections(ctx context.Context, user string, cand
 	if len(sections) == 0 {
 		return "", "", i18n.E("dat.model_empty")
 	}
-	system := synthesizerPrompt + p.Preamble + "\n" + sectionRule + synthesizerRules + o.DAT.SynthRule()
+	system := synthesizerPrompt + p.Preamble + "\n" + sectionRule + synthesizerRules
+	if o.DAT != nil {
+		system += o.DAT.SynthRule()
+	}
 	if env := strings.TrimSpace(o.Environment); env != "" {
 		system += "\nEnvironnement et consignes:\n" + env
 	}

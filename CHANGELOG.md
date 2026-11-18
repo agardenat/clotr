@@ -1,5 +1,14 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.80.0] - 2026-11-18
+
+### Ajouté
+- Mode opératoire de mise à jour : `run --upgrade` (alias `--modop`) prépare la montée de version des composants de la demande, avec un phasage éventuel (composants reportés à une phase ultérieure), sans rien modifier. Une étape `procedure` lit la documentation officielle de la version cible avant la planification (recherche web, preuves et mémoire seulement) ; les tâches établissent l'état actuel et mesurent chaque prérequis ; le rapport suit le nouveau modèle `upgrade`, rédigé section par section : état actuel, compatibilité et chemin de mise à jour, prérequis, sauvegardes, étapes numérotées avec commandes et points go/no-go, vérifications, retour arrière, impacts, phases suivantes. Une commande n'y figure que si une page lue ou une preuve la donne. Le mode est enregistré dans la session, repris par `run -s` et par `session --synthesize`.
+- Templates : champ `modes` (`hints` et `checklist` par mode, `upgrade` pour l'instant), présenté aux agents seulement quand le run est dans ce mode.
+
+### Modifié
+- Affinage d'une session sans aucune tâche planifiée : le rapport est réécrit à partir de la session au lieu d'échouer sur « toutes les tâches ont échoué ».
+
 ## [0.79.5] - 2026-11-18
 
 ### Corrigé

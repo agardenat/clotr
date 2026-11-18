@@ -99,6 +99,7 @@ type Instance struct {
 	Approvals  *access.Approvals
 	Highlight  func(string) string
 
+	Mode         string
 	Client       string
 	ClientTerms  []string
 	Project      string
@@ -1047,6 +1048,16 @@ func (in *Instance) EnvironmentLines() []string {
 			lines = append(lines, "  "+strings.TrimSpace(l))
 		}
 	}
+	if m, ok := in.T.Modes[in.Mode]; ok {
+		for _, l := range strings.Split(strings.TrimSpace(m.Hints), "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				lines = append(lines, "  "+l)
+			}
+		}
+		if len(m.Checklist) > 0 {
+			lines = append(lines, "  "+modeChecklistHint+strings.Join(m.Checklist, " ; ")+".")
+		}
+	}
 	return append(lines, "  "+CommonHint)
 }
 
@@ -1055,6 +1066,8 @@ const (
 	accessGatedHint  = "Instance au niveau d'accès %s : les outils %s dépassent ce niveau ; ils restent utilisables, mais chaque appel est soumis à l'autorisation de l'utilisateur, qui peut refuser. Ne les appeler que si la vérification l'exige vraiment (aucun outil de lecture ne suffit), et en cas de refus, signaler le point comme indéterminé."
 	accessCreateHint = "Niveau d'accès create : les outils de création lancent des ressources éphémères propres à clotr (ex. un pod avec une image donnée), libres d'usage et supprimées automatiquement en fin de run."
 )
+
+const modeChecklistHint = "Points à relever pour ce mode sur cette instance, chacun avec sa preuve ou signalé comme non relevé : "
 
 const CommonHint = "Règle commune à tous les templates : rester factuel et ne jamais supposer le comportement, les valeurs par défaut ou la signification des messages des produits de cette plateforme ; en cas de doute, chercher dans la documentation officielle de l'éditeur (recherche web si elle est disponible), sinon le noter comme non vérifié."
 

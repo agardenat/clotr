@@ -24,6 +24,11 @@ func TestChangeAndTicketIncompatibleModes(t *testing.T) {
 		{&options{change: true, direct: directAuto}, "--change"},
 		{&options{ticketFlag: "auto", chat: true}, "--ticket"},
 		{&options{ticketFlag: "TCK-1", cveFlag: "auto"}, "--ticket"},
+		{&options{upgrade: true, change: true}, "--upgrade"},
+		{&options{upgrade: true, panic: true}, "--upgrade"},
+		{&options{upgrade: true, ticketFlag: "auto"}, "--upgrade"},
+		{&options{upgrade: true, datFlag: "clean"}, "--upgrade"},
+		{&options{upgrade: true, chat: true}, "--upgrade"},
 	} {
 		if err := cmdRun(context.Background(), tc.o, []string{"x"}, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%+v: %v", tc.o, err)
@@ -144,5 +149,21 @@ func TestResolveTicketErrors(t *testing.T) {
 	}
 	if err := rt2.setupTickets(&options{incident: true}, func(string) {}); err != nil || rt2.ticketSrc != nil {
 		t.Fatalf("incident sans outil de tickets: %v", err)
+	}
+}
+
+func TestUpgradeFlagAliases(t *testing.T) {
+	for _, flag := range []string{"--upgrade", "--modop"} {
+		root := newRoot()
+		run, _, err := root.Find([]string{"run"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := run.ParseFlags([]string{flag}); err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := run.Flags().GetBool("upgrade"); !v {
+			t.Fatalf("%s ne positionne pas le mode upgrade", flag)
+		}
 	}
 }

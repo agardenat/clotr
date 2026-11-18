@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/agardenat/clotr/internal/report"
 	"github.com/agardenat/clotr/internal/session"
 	"github.com/agardenat/clotr/internal/template"
 )
@@ -46,5 +47,31 @@ func TestResolveTicketPrevious(t *testing.T) {
 	}
 	if rt.mainTicket == nil || rt.mainTicket.ID != "TCK-7" {
 		t.Fatalf("ticket %+v", rt.mainTicket)
+	}
+}
+
+func TestInheritUpgradeMode(t *testing.T) {
+	upgrade := session.Turn{N: 1, Mode: report.ModeUpgrade}
+	plain := session.Turn{N: 2}
+	for _, tc := range []struct {
+		name    string
+		turns   []session.Turn
+		in      options
+		upgrade bool
+	}{
+		{"repris", []session.Turn{upgrade}, options{}, true},
+		{"après un tour sans mode", []session.Turn{upgrade, plain}, options{}, true},
+		{"mode explicite", []session.Turn{upgrade}, options{change: true}, false},
+		{"ticket explicite", []session.Turn{upgrade}, options{ticketFlag: "TCK-1"}, false},
+		{"chat", []session.Turn{upgrade}, options{chat: true}, false},
+	} {
+		o := tc.in
+		o.inheritMode(&session.Session{Turns: tc.turns})
+		if o.upgrade != tc.upgrade || o.incident {
+			t.Errorf("%s : upgrade %v, incident %v", tc.name, o.upgrade, o.incident)
+		}
+		if tc.upgrade && o.mode() != report.ModeUpgrade {
+			t.Errorf("%s : mode %q", tc.name, o.mode())
+		}
 	}
 }

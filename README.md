@@ -52,7 +52,7 @@ Chaque `run` ouvre une session au nom aléatoire, dans la langue de l'interface 
 `clotr run -s <session|last> "…"` ajoute un tour à une session existante pour l'affiner. Le nouveau tour démarre avec :
 - la mémoire de la session ;
 - les demandes précédentes et le dernier rapport, transmis au planner et au synthesizer ;
-- le mode du dernier tour lancé en mode incident (`--incident` ou `--panic`), demande de changement, DAT ou schéma d'architecture (avec sa variante), et son ticket si la nouvelle demande n'en cite pas (message `Mode … repris du tour N`). Un mode passé explicitement (`--incident`, `--change`, `--cve`), `--ticket`, `--direct` ou `--chat` l'emporte ; un tour CVE plus récent arrête la reprise. Le journal de `--panic` n'est pas repris.
+- le mode du dernier tour lancé en mode incident (`--incident` ou `--panic`), demande de changement, mode opératoire de mise à jour, DAT ou schéma d'architecture (avec sa variante), et son ticket si la nouvelle demande n'en cite pas (message `Mode … repris du tour N`). Un mode passé explicitement (`--incident`, `--change`, `--upgrade`, `--cve`), `--ticket`, `--direct` ou `--chat` l'emporte ; un tour CVE plus récent arrête la reprise. Le journal de `--panic` n'est pas repris.
 
 Le planner ne planifie que ce qui manque. Le synthesizer répond à la nouvelle demande, ou produit le rapport complet mis à jour si c'est ce qui est demandé.
 
@@ -182,6 +182,7 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
 ### Format
 
 - `checklist` : liste des faits d'architecture que l'instance permet d'établir (ex. appairages, passerelles, objets nommés des règles de filtrage) ; en `--dat` et `--diagram`, l'objectif de chaque tâche reprend la liste de ses instances, et l'agent doit établir chaque point par un constat ou dire dans ses manques pourquoi il ne l'est pas ;
+- `modes` : consignes propres à un mode du run, par nom de mode (`upgrade` seul pour l'instant) : `hints` (texte ajouté aux `hints` de l'instance) et `checklist` (points à relever, chacun établi par un constat ou signalé comme non relevé), présentés aux agents seulement quand le run est dans ce mode, par exemple les pages de documentation de mise à jour du produit et les versions à relever pour `--upgrade` ; un mode inconnu est refusé ;
 - `architecture` : `false` pour une source qui ne décrit pas l'architecture (alertes, tickets) : ses instances n'ont pas de tâche dans le plan des modes `--dat` et `--diagram` (défaut true) ;
 - `min_version` : version minimale de clotr (`X.Y.Z`), vérifiée avant le reste du fichier : un clotr plus ancien ignore le template avec un avertissement explicite au lieu d'une erreur sur un champ inconnu (les builds hors release, `dev` ou `vX.Y.Z-…`, ne sont pas contrôlés) ;
 - `keywords` : termes qui, présents dans une demande, font proposer l'instance aux agents (en plus du nom de l'instance, du template et des cibles), voir Activation d'une instance ;
@@ -862,6 +863,21 @@ Hors terminal ou avec `--plain`, ces éléments sont des lignes `preuve`, `const
 
 `--change` est incompatible avec `--incident`, `--panic`, `--cve`, `--direct` et `--chat`.
 
+### Mode opératoire de mise à jour
+
+`run --upgrade` (alias `--modop`) prépare la montée de version de composants sans rien modifier, et rédige le mode opératoire pas à pas. La demande dit quels composants passent à quelle version dans cette phase, et lesquels sont reportés à une phase ultérieure, par exemple :
+
+```sh
+clotr run --upgrade "mode opératoire de mise à jour du cluster prod vers 2.4, le cluster recette suivra plus tard"
+```
+
+- étape `procedure`, avant la planification : un agent qui n'a que la recherche web, les preuves et la mémoire lit la documentation officielle de l'éditeur pour la version cible (chemins de mise à jour supportés, ordre entre composants, prérequis, sauvegardes, étapes et leurs commandes, durée et interruption, retour arrière, coexistence des versions, problèmes connus) ; son résultat est transmis au planner et à chaque tâche. Sans recherche web pour le run, l'étape est sautée et le rapport le signale : chaque étape reste alors à confirmer ;
+- le planner établit l'état actuel des composants de la phase, de leurs dépendances et des composants reportés (versions de chaque couche, santé, sauvegardes, personnalisations) et la mesure de chaque prérequis ; les `modes.upgrade` des templates des instances concernées donnent aux agents les pages de documentation et les points à relever propres au produit ;
+- le rapport suit le modèle `upgrade`, rédigé section par section : synthèse, périmètre et état actuel, compatibilité et chemin de mise à jour, prérequis (contrôle, attendu, constaté, état OK/KO/à vérifier, preuve), sauvegardes, mode opératoire (étapes numérotées, commandes, résultat attendu, points go/no-go), vérifications après mise à jour, retour arrière, impacts et communication, phases suivantes, points à confirmer. Une commande n'y figure que si une page lue ou une preuve la donne ; sinon l'action est décrite sans syntaxe et ajoutée aux points à confirmer ;
+- en affinage (`run -s`), la documentation n'est pas relue : les faits des tours précédents sont dans la mémoire et les preuves, et un plan vide est accepté quand la demande ne porte que sur la rédaction.
+
+`--upgrade` est incompatible avec `--incident`, `--panic`, `--change`, `--cve`, `--ticket`, `--dat`, `--diagram`, `--direct` et `--chat`.
+
 ### Tickets
 
 Avec un outil de tickets configuré (`tickets`, template `kind: tickets`), les modes incident et demande de changement s'appuient sur les tickets :
@@ -926,7 +942,7 @@ Il n'y a pas de variante par défaut : envoyer un document avec ou sans écarts 
 
 ### Modèles de rapport
 
-La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour les runs sans mode, `incident` pour `--incident` et `--panic`, `change` pour `--change`, `cve` pour `--cve`, `dat` pour `--dat` et `diagram` pour `--diagram`. Le bloc `{{diagram}}` des modèles `dat` et `diagram` reçoit les figures du tour. Les modèles `incident` et `change` ont les blocs `{{ticket}}` (en-tête du ticket de la demande, ou du ticket probable) et `{{tickets.related}}` (tableau des tickets liés), retirés quand il n'y a pas de ticket. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
+La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour les runs sans mode, `incident` pour `--incident` et `--panic`, `change` pour `--change`, `upgrade` pour `--upgrade`, `cve` pour `--cve`, `dat` pour `--dat` et `diagram` pour `--diagram`. Le bloc `{{diagram}}` des modèles `dat` et `diagram` reçoit les figures du tour. Les modèles `incident` et `change` ont les blocs `{{ticket}}` (en-tête du ticket de la demande, ou du ticket probable) et `{{tickets.related}}` (tableau des tickets liés), retirés quand il n'y a pas de ticket. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
 
 `report_models` remplace un modèle embarqué par un fichier, par mode :
 
