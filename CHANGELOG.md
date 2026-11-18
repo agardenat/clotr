@@ -1,5 +1,11 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.79.3] - 2026-11-18
+
+### Modifié
+- Schéma : un acteur est relié à chacun de ses points d'entrée établis par les preuves, un lien par accès (par exemple HTTPS vers les ingress et SSH vers les edges pour les mêmes utilisateurs) ; la consigne n'en demandait qu'un. Un namespace ou un tenant n'est jamais dessiné comme un cluster.
+- Schéma : le libellé d'un lien se place de préférence sur un segment qu'aucun autre trait ne longe ni ne croise, pour qu'on sache à quel trait il appartient.
+
 ## [0.79.2] - 2026-11-18
 
 ### Modifié
