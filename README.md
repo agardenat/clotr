@@ -52,7 +52,7 @@ Chaque `run` ouvre une session au nom aléatoire, dans la langue de l'interface 
 `clotr run -s <session|last> "…"` ajoute un tour à une session existante pour l'affiner. Le nouveau tour démarre avec :
 - la mémoire de la session ;
 - les demandes précédentes et le dernier rapport, transmis au planner et au synthesizer ;
-- le mode du dernier tour lancé en mode incident (`--incident` ou `--panic`), demande de changement, mode opératoire de mise à jour, DAT ou schéma d'architecture (avec sa variante), et son ticket si la nouvelle demande n'en cite pas (message `Mode … repris du tour N`). Un mode passé explicitement (`--incident`, `--change`, `--upgrade`, `--cve`), `--ticket`, `--direct` ou `--chat` l'emporte ; un tour CVE plus récent arrête la reprise. Le journal de `--panic` n'est pas repris.
+- le mode du dernier tour lancé en mode incident (`--incident` ou `--panic`), demande de changement, mode opératoire de mise à jour, suivi en direct, DAT ou schéma d'architecture (avec sa variante), et son ticket si la nouvelle demande n'en cite pas (message `Mode … repris du tour N`). Un mode passé explicitement (`--incident`, `--change`, `--upgrade`, `--watch`, `--cve`), `--ticket`, `--direct` ou `--chat` l'emporte ; un tour CVE plus récent arrête la reprise. Le journal de `--panic` n'est pas repris.
 
 Le planner ne planifie que ce qui manque. Le synthesizer répond à la nouvelle demande, ou produit le rapport complet mis à jour si c'est ce qui est demandé.
 
@@ -182,7 +182,7 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
 ### Format
 
 - `checklist` : liste des faits d'architecture que l'instance permet d'établir (ex. appairages, passerelles, objets nommés des règles de filtrage) ; en `--dat` et `--diagram`, l'objectif de chaque tâche reprend la liste de ses instances, et l'agent doit établir chaque point par un constat ou dire dans ses manques pourquoi il ne l'est pas ;
-- `modes` : consignes propres à un mode du run, par nom de mode (`upgrade` seul pour l'instant) : `hints` (texte ajouté aux `hints` de l'instance) et `checklist` (points à relever, chacun établi par un constat ou signalé comme non relevé), présentés aux agents seulement quand le run est dans ce mode, par exemple les pages de documentation de mise à jour du produit et les versions à relever pour `--upgrade` ; un mode inconnu est refusé ;
+- `modes` : consignes propres à un mode du run, par nom de mode (`upgrade`, `watch`) : `hints` (texte ajouté aux `hints` de l'instance) et `checklist` (points à relever, chacun établi par un constat ou signalé comme non relevé), présentés aux agents seulement quand le run est dans ce mode, par exemple les pages de documentation de mise à jour du produit et les versions à relever pour `--upgrade`, ou l'emplacement des logs de chaque maillon pour `--watch` ; un mode inconnu est refusé ;
 - `architecture` : `false` pour une source qui ne décrit pas l'architecture (alertes, tickets) : ses instances n'ont pas de tâche dans le plan des modes `--dat` et `--diagram` (défaut true) ;
 - `min_version` : version minimale de clotr (`X.Y.Z`), vérifiée avant le reste du fichier : un clotr plus ancien ignore le template avec un avertissement explicite au lieu d'une erreur sur un champ inconnu (les builds hors release, `dev` ou `vX.Y.Z-…`, ne sont pas contrôlés) ;
 - `keywords` : termes qui, présents dans une demande, font proposer l'instance aux agents (en plus du nom de l'instance, du template et des cibles), voir Activation d'une instance ;
@@ -275,6 +275,8 @@ tool(
 
 `description` peut être une fonction, appelée après la découverte. `access = "exec"` ou `access = "create"` réserve l'outil à ce niveau d'accès : en dessous, il n'est pas proposé aux agents. Un outil renvoie un texte, ou une valeur convertie en JSON. `fail()` renvoie une erreur à l'agent.
 
+`follow = fn(args, cursor)` rend un outil de niveau `read` suivable par le mode suivi (`run --watch`) : clotr l'appelle en boucle pendant l'attente avec les arguments de l'outil et le curseur rendu par l'appel précédent. Le premier appel reçoit `cursor = None` et fixe le point de départ (ses lignes sont ignorées) ; chaque appel renvoie `{"lines": [...], "cursor": valeur}`, les lignes arrivées depuis le curseur et le curseur suivant (valeur JSON libre : horodatage, identifiants déjà vus…).
+
 | Primitive | Rôle |
 |---|---|
 | `http.request(conn, method, path, base=, query=, json=, body=, headers=, jq=, max_bytes=, tls=, proxy=)` | requête via un connecteur `http` ; renvoie `status`, `headers`, `body`, `url` et `data` (résultats de `jq`). `base` remplace `base_url`, `proxy` le proxy du connecteur, `tls` (`ca`, `cert`, `key` en PEM, `insecure`) l'autorité de certification et ajoute un certificat client, pour cet appel. `track` : chemin de l'objet créé par un POST de `levels.create`, voir Niveaux d'accès |
@@ -306,7 +308,7 @@ tool(
 
 `clotr templates test <nom> [--dir <répertoire>]` exécute les fonctions `test_*` de `<script>_test.star`, sans réseau :
 - `template.instance(params=, http=, ssh=, env=, files=, creds=, vault=, now=, access=, confirm=)` crée une instance avec un faux serveur HTTP (dict `"MÉTHODE /chemin"` → réponse, ou fonction ; une réponse avec `messages` répond à `http.stream`) et un faux SSH (fonction `(hôte, commande)`) ; `access` fixe le niveau d'accès (défaut `read`), `confirm` la réponse aux confirmations de commandes (`yes`, `always`, défaut : refus), `vault` les secrets lus par `vault.secret` et `vault.read` (dict `"chemin#champ"` → valeur) ; `sleep` n'attend pas ;
-- `inst.discover()`, `inst.call(outil, args)`, `inst.error(outil, args)`, `inst.environment()`, `inst.tools()`, `inst.requests()` (requêtes reçues, avec `proxy` et `tls` passés à l'appel), `inst.commands()`, `inst.questions()` (confirmations demandées), `inst.tracked()` (objets suivis), `inst.cleanup()`, `inst.fn(nom, *args)` ;
+- `inst.discover()`, `inst.call(outil, args)`, `inst.error(outil, args)`, `inst.follow(outil, args, cursor=None)` (appel de `follow`, renvoie `lines` et `cursor`), `inst.environment()`, `inst.tools()`, `inst.requests()` (requêtes reçues, avec `proxy` et `tls` passés à l'appel), `inst.commands()`, `inst.questions()` (confirmations demandées), `inst.tracked()` (objets suivis), `inst.cleanup()`, `inst.fn(nom, *args)` ;
 - `assert.eq`, `assert.true`, `assert.contains`, `assert.not_contains`, `assert.fails`.
 
 ### Activation d'une instance
@@ -878,6 +880,21 @@ clotr run --upgrade "mode opératoire de mise à jour du cluster prod vers 2.4, 
 
 `--upgrade` est incompatible avec `--incident`, `--panic`, `--change`, `--cve`, `--ticket`, `--dat`, `--diagram`, `--direct` et `--chat`.
 
+### Suivi en direct
+
+`run --watch` (alias `--suivi`) observe une action pendant qu'elle se produit : une connexion qui échoue depuis un client, un accès SSH refusé, un traitement qui consomme trop de mémoire. La demande décrit l'action et cible le client et le template concernés, par exemple :
+
+```sh
+clotr run --suivi "connexion Impala refusée depuis Tableau Server, tableau et cdp du client acme"
+```
+
+- préparation (tâche `watch`) : un agent repère la chaîne de l'action dans le périmètre (client, point d'entrée, service, dépendances), vérifie les sources où elle laissera une trace et les déclare avec l'outil `watch_source` : fichier de log d'un hôte en SSH (`file`, chemin autorisé par `ssh_paths`), journal systemd d'une unité ou du noyau (`journal`), relevé périodique de mémoire, CPU ou connexions (`sample`), outil suivable d'une instance (`tool`, par exemple les logs d'un pod ou les événements d'un cluster Kubernetes). Chaque source a un `filter` (lignes affichées en direct) ; les `modes.watch` des templates donnent l'emplacement des logs propres au produit ;
+- attente (tâche `capture`, sans modèle de langage) : clotr affiche `en attente : reproduisez l'action maintenant`, lit chaque source toutes les 5 s (`--watch-every`) à partir de son état au début de l'attente (fichier lu par octet, rotation suivie, curseur du journal, curseur de l'outil), et affiche en direct chaque ligne retenue par le filtre. Toutes les lignes sont archivées, une preuve par source, chaque ligne précédée de l'heure de réception ; elles s'écrivent aussi au fil de l'eau dans `turns/NNN/watch/<source>.log`. Une source en échec de lecture est signalée sur sa ligne et la capture continue sur les autres ;
+- le premier Ctrl-C arrête l'attente (`--watch-for 10m` l'arrête après une durée), puis le planner organise l'analyse des captures : ce que l'action a produit à chaque maillon, chronologie de bout en bout, cause ; un Ctrl-C pendant l'analyse demande la conclusion, le suivant coupe tout ;
+- le rapport suit le modèle `watch` : synthèse, capture (fenêtre, sources, lignes captées), chronologie de l'action, cause, constats annexes, résolution, points non vérifiés.
+
+Une ligne écrite dans un fichier juste avant sa rotation, entre deux lectures, peut manquer : la capture le note à l'endroit de la rotation. `--watch` est incompatible avec `--incident`, `--panic`, `--change`, `--upgrade`, `--cve`, `--ticket`, `--dat`, `--diagram`, `--direct` et `--chat`.
+
 ### Tickets
 
 Avec un outil de tickets configuré (`tickets`, template `kind: tickets`), les modes incident et demande de changement s'appuient sur les tickets :
@@ -942,7 +959,7 @@ Il n'y a pas de variante par défaut : envoyer un document avec ou sans écarts 
 
 ### Modèles de rapport
 
-La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour les runs sans mode, `incident` pour `--incident` et `--panic`, `change` pour `--change`, `upgrade` pour `--upgrade`, `cve` pour `--cve`, `dat` pour `--dat` et `diagram` pour `--diagram`. Le bloc `{{diagram}}` des modèles `dat` et `diagram` reçoit les figures du tour. Les modèles `incident` et `change` ont les blocs `{{ticket}}` (en-tête du ticket de la demande, ou du ticket probable) et `{{tickets.related}}` (tableau des tickets liés), retirés quand il n'y a pas de ticket. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
+La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour les runs sans mode, `incident` pour `--incident` et `--panic`, `change` pour `--change`, `upgrade` pour `--upgrade`, `watch` pour `--watch`, `cve` pour `--cve`, `dat` pour `--dat` et `diagram` pour `--diagram`. Le bloc `{{diagram}}` des modèles `dat` et `diagram` reçoit les figures du tour. Les modèles `incident` et `change` ont les blocs `{{ticket}}` (en-tête du ticket de la demande, ou du ticket probable) et `{{tickets.related}}` (tableau des tickets liés), retirés quand il n'y a pas de ticket. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
 
 `report_models` remplace un modèle embarqué par un fichier, par mode :
 

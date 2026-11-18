@@ -54,6 +54,7 @@ import (
 	"github.com/agardenat/clotr/internal/tools/mcp"
 	"github.com/agardenat/clotr/internal/tunnel"
 	"github.com/agardenat/clotr/internal/vault"
+	"github.com/agardenat/clotr/internal/watch"
 	"github.com/agardenat/clotr/internal/websearch"
 )
 
@@ -97,6 +98,9 @@ type options struct {
 	incident     bool
 	change       bool
 	upgrade      bool
+	watch        bool
+	watchFor     time.Duration
+	watchEvery   time.Duration
 	ticketFlag   string
 	prevTicket   string
 	request      string
@@ -146,6 +150,8 @@ type app struct {
 	mainTicket   *template.Ticket
 	change       bool
 	upgrade      bool
+	watch        *watch.Store
+	watchFor     time.Duration
 	journal      bool
 	filtered     []*template.Instance
 	closers      []func()
@@ -173,9 +179,9 @@ func main() {
 	}
 }
 
-var interruptHook atomic.Pointer[func()]
+var interruptHook atomic.Pointer[func() bool]
 
-func watchInterrupts(ctx context.Context, cancel context.CancelFunc, sigs <-chan os.Signal, hook *atomic.Pointer[func()]) {
+func watchInterrupts(ctx context.Context, cancel context.CancelFunc, sigs <-chan os.Signal, hook *atomic.Pointer[func() bool]) {
 	hooked := false
 	for {
 		select {
@@ -183,8 +189,7 @@ func watchInterrupts(ctx context.Context, cancel context.CancelFunc, sigs <-chan
 			return
 		case sig := <-sigs:
 			if f := hook.Load(); f != nil && !hooked && sig == os.Interrupt {
-				hooked = true
-				(*f)()
+				hooked = !(*f)()
 				continue
 			}
 			cancel()
@@ -284,6 +289,15 @@ func newRoot() *cobra.Command {
 	} else {
 		_ = run.Flags().MarkHidden("modop")
 	}
+	run.Flags().BoolVar(&o.watch, "watch", false, i18n.T("cli.flag.watch"))
+	run.Flags().BoolVar(&o.watch, "suivi", false, i18n.T("cli.flag.watch"))
+	if i18n.UI() == "fr" {
+		_ = run.Flags().MarkHidden("watch")
+	} else {
+		_ = run.Flags().MarkHidden("suivi")
+	}
+	run.Flags().DurationVar(&o.watchFor, "watch-for", 0, i18n.T("cli.flag.watch_for"))
+	run.Flags().DurationVar(&o.watchEvery, "watch-every", 0, i18n.T("cli.flag.watch_every"))
 	run.Flags().StringVar(&o.ticketFlag, "ticket", "", i18n.T("cli.flag.ticket"))
 	run.Flags().Lookup("ticket").NoOptDefVal = "auto"
 	run.Flags().StringVar(&o.cveFlag, "cve", "", i18n.T("cli.flag.cve"))
@@ -947,6 +961,14 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		}
 		rt.change = o.change && len(o.cveIDs) == 0
 		rt.upgrade = o.upgrade
+		if o.watch {
+			rt.watch = watch.New(rt.watchInstance, rt.evidence, rt.audit)
+			if o.watchEvery > 0 {
+				rt.watch.Interval = o.watchEvery
+			}
+			rt.watchFor = o.watchFor
+			rt.registry.Add(rt.watch.Tool())
+		}
 		if rt.ticketSrc != nil && (o.incident || o.change) {
 			rt.tickets = ticket.New(rt.ticketSrc, rt.evidence, rt.audit)
 			rt.tickets.SetMain(rt.mainTicket)
@@ -1514,6 +1536,8 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		Incident:    rt.leads != nil,
 		Change:      rt.change,
 		Upgrade:     rt.upgrade,
+		Watch:       rt.watch,
+		WatchFor:    rt.watchFor,
 		Tickets:     rt.tickets,
 		CVE:         rt.cves,
 		DAT:         rt.dat,
@@ -1894,6 +1918,9 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		sess.Turns[n-1].Mode = template.TicketChange
 	case rt.upgrade:
 		sess.Turns[n-1].Mode = report.ModeUpgrade
+	case rt.watch != nil:
+		sess.Turns[n-1].Mode = report.ModeWatch
+		rt.watch.Dir = filepath.Join(turnDir, "watch")
 	case rt.leads != nil:
 		sess.Turns[n-1].Mode = template.TicketIncident
 	}
@@ -1935,6 +1962,10 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		fmt.Fprintln(os.Stderr, i18n.T("access.line", levels))
 		rt.audit.Log("access", map[string]any{"levels": levels})
 	}
+	if rt.watch != nil {
+		rt.watch.Events = events
+		rt.watch.Scope(watchScope(rt.instances, reg))
+	}
 	orch := rt.orchestrator(events, reg, env)
 	orch.History, orch.Turn = history, n
 	orch.AfterTask = rt.budgetRefresher(events)
@@ -1950,7 +1981,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	if o.direct != "" {
 		report, runErr = orch.Direct(ctx, request, o.directRole())
 	} else {
-		conclude := orch.ConcludeNow
+		conclude := orch.Interrupt
 		interruptHook.Store(&conclude)
 		orch.OnResult = rt.resultSaver(sess, turnDir)
 		report, runErr = orch.Run(ctx, request)
@@ -2099,6 +2130,12 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	}
 	if o.upgrade && (o.incident || o.change || o.cveFlag != "" || o.ticketFlag != "" || o.chat || o.direct != "" || o.datFlag != "" || o.diagramFlag != "") {
 		return i18n.E("cli.err.upgrade_modes")
+	}
+	if o.watch && (o.incident || o.change || o.upgrade || o.cveFlag != "" || o.ticketFlag != "" || o.chat || o.direct != "" || o.datFlag != "" || o.diagramFlag != "") {
+		return i18n.E("cli.err.watch_modes")
+	}
+	if !o.watch && (o.watchFor != 0 || o.watchEvery != 0) || o.watchFor < 0 || o.watchEvery < 0 {
+		return i18n.E("cli.err.watch_for")
 	}
 	if o.cveFlag != "" && (o.incident || o.chat || o.direct != "") {
 		return i18n.E("cve.modes")
@@ -2366,11 +2403,14 @@ func (o *options) mode() string {
 	if o.upgrade {
 		return report.ModeUpgrade
 	}
+	if o.watch {
+		return report.ModeWatch
+	}
 	return ""
 }
 
 func (o *options) inheritMode(sess *session.Session) {
-	if o.incident || o.change || o.upgrade || o.cveFlag != "" || o.chat || o.direct != "" || o.datVariant != "" {
+	if o.incident || o.change || o.upgrade || o.watch || o.cveFlag != "" || o.chat || o.direct != "" || o.datVariant != "" {
 		return
 	}
 	for i := len(sess.Turns) - 1; i >= 0; i-- {
@@ -2391,6 +2431,12 @@ func (o *options) inheritMode(sess *session.Session) {
 			if o.ticketFlag == "" {
 				o.upgrade = true
 				fmt.Fprintln(os.Stderr, i18n.T("session.mode_inherited", i18n.T("upgrade.mode"), t.N))
+			}
+			return
+		case report.ModeWatch:
+			if o.ticketFlag == "" {
+				o.watch = true
+				fmt.Fprintln(os.Stderr, i18n.T("session.mode_inherited", i18n.T("watch.mode"), t.N))
 			}
 			return
 		default:
@@ -2607,6 +2653,8 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 		o.change = true
 	case report.ModeUpgrade:
 		o.upgrade = true
+	case report.ModeWatch:
+		o.watch = true
 	default:
 		o.restoreDAT(sess.Turns[n-1])
 	}
@@ -2701,7 +2749,7 @@ func importPriorEvidence(sess *session.Session, store *evidence.Store, turn int)
 	}
 }
 
-var internalPrefixes = []string{"memory", "cve", "ticket", "cause", "diagram"}
+var internalPrefixes = []string{"memory", "cve", "ticket", "cause", "diagram", "watch"}
 
 func toolFilterFromAudit(path string) []string {
 	f, err := os.Open(path)

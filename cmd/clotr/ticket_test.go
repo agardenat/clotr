@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agardenat/clotr/internal/audit"
 	"github.com/agardenat/clotr/internal/config"
@@ -29,6 +30,13 @@ func TestChangeAndTicketIncompatibleModes(t *testing.T) {
 		{&options{upgrade: true, ticketFlag: "auto"}, "--upgrade"},
 		{&options{upgrade: true, datFlag: "clean"}, "--upgrade"},
 		{&options{upgrade: true, chat: true}, "--upgrade"},
+		{&options{watch: true, incident: true}, "--watch"},
+		{&options{watch: true, panic: true}, "--watch"},
+		{&options{watch: true, ticketFlag: "auto"}, "--watch"},
+		{&options{watch: true, datFlag: "clean"}, "--watch"},
+		{&options{watch: true, direct: directAuto}, "--watch"},
+		{&options{watchFor: time.Minute}, "--watch-for"},
+		{&options{watch: true, watchEvery: -time.Second}, "--watch-for"},
 	} {
 		if err := cmdRun(context.Background(), tc.o, []string{"x"}, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%+v: %v", tc.o, err)
@@ -51,6 +59,24 @@ func TestChangeFlagAliases(t *testing.T) {
 		}
 		if v, _ := run.Flags().GetString("ticket"); v != "auto" {
 			t.Fatalf("--ticket sans valeur: %q", v)
+		}
+	}
+}
+
+func TestWatchFlagAliases(t *testing.T) {
+	for _, flag := range []string{"--watch", "--suivi"} {
+		run, _, err := newRoot().Find([]string{"run"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := run.ParseFlags([]string{flag, "--watch-for", "2m"}); err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := run.Flags().GetBool("watch"); !v {
+			t.Fatalf("%s ne positionne pas le mode suivi", flag)
+		}
+		if d, _ := run.Flags().GetDuration("watch-for"); d != 2*time.Minute {
+			t.Fatalf("--watch-for : %s", d)
 		}
 	}
 }

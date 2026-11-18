@@ -297,3 +297,44 @@ func Redact(s string) string {
 	s = xmlSecret.ReplaceAllString(s, "${1}[REDACTED]${3}")
 	return kvSecret.ReplaceAllString(s, "${1}[REDACTED]")
 }
+
+func (b Builder) Stat(file string) string {
+	return fmt.Sprintf("%sstat -L -c '%%s %%i' -- %s", b.prefix(), Quote(file))
+}
+
+func (b Builder) Follow(file string, offset int64, maxBytes int) string {
+	p, q := b.prefix(), Quote(file)
+	return fmt.Sprintf("st=$(%sstat -L -c '%%s %%i' -- %s) || exit $?; set -- $st; echo \"$1 $2\"; n=$(($1-%d)); if [ $n -gt %d ]; then n=%d; fi; if [ $n -gt 0 ]; then %stail -c +%d -- %s | head -c $n; fi", p, q, offset, maxBytes, maxBytes, p, offset+1, q)
+}
+
+func (b Builder) Journal(unit string, kernel bool, cursor string, since int64) string {
+	var sel string
+	switch {
+	case kernel:
+		sel = " -k"
+	case unit != "":
+		sel = " -u " + Quote(unit)
+	}
+	switch {
+	case cursor != "":
+		return fmt.Sprintf("%sjournalctl --no-pager -q -o short-iso --show-cursor%s --after-cursor=%s", b.prefix(), sel, Quote(cursor))
+	case since > 0:
+		return fmt.Sprintf("%sjournalctl --no-pager -q -o short-iso --show-cursor%s --since=@%d", b.prefix(), sel, since)
+	}
+	return fmt.Sprintf("date +%%s; %sjournalctl --no-pager -q -o short-iso --show-cursor%s -n 1", b.prefix(), sel)
+}
+
+var probes = map[string]string{
+	"memory":      "free -m && ps -eo pid,user,rss,vsz,pcpu,etime,args --sort=-rss | head -n 25",
+	"cpu":         "uptime && ps -eo pid,user,pcpu,rss,etime,args --sort=-pcpu | head -n 25",
+	"connections": "ss -s && ss -tan",
+}
+
+func Probes() []string {
+	return []string{"memory", "cpu", "connections"}
+}
+
+func Probe(name string) (string, bool) {
+	cmd, ok := probes[name]
+	return cmd, ok
+}

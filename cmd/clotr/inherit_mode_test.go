@@ -75,3 +75,25 @@ func TestInheritUpgradeMode(t *testing.T) {
 		}
 	}
 }
+
+func TestInheritWatchMode(t *testing.T) {
+	w := session.Turn{N: 1, Mode: report.ModeWatch}
+	for _, tc := range []struct {
+		name  string
+		in    options
+		watch bool
+	}{
+		{"repris", options{}, true},
+		{"mode explicite", options{upgrade: true}, false},
+		{"ticket explicite", options{ticketFlag: "TCK-1"}, false},
+	} {
+		o := tc.in
+		o.inheritMode(&session.Session{Turns: []session.Turn{w, {N: 2}}})
+		if o.watch != tc.watch {
+			t.Errorf("%s : watch %v", tc.name, o.watch)
+		}
+		if tc.watch && o.mode() != report.ModeWatch {
+			t.Errorf("%s : mode %q", tc.name, o.mode())
+		}
+	}
+}

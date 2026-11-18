@@ -143,6 +143,12 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return b, b.println(line)
 		case "activation":
 			return b, b.println(stActive.Render(ansi.Wrap(m.Detail, max(b.width-1, 20), "")))
+		case "captured":
+			return b, b.println(stLead.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
+		case "source":
+			return b, b.println(stActive.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
+		case "waiting":
+			return b, b.println(stWarn.Bold(true).Render(ansi.Wrap(m.Detail, max(b.width-1, 20), "")))
 		case "evidence":
 			return b, b.println(stFaint.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
 		case "finding", "gap":

@@ -28,6 +28,7 @@ import (
 	"github.com/agardenat/clotr/internal/ticket"
 	"github.com/agardenat/clotr/internal/tools"
 	"github.com/agardenat/clotr/internal/tools/dns"
+	"github.com/agardenat/clotr/internal/watch"
 	"github.com/agardenat/clotr/internal/websearch"
 )
 
@@ -104,6 +105,8 @@ type Orchestrator struct {
 	Incident        bool
 	Change          bool
 	Upgrade         bool
+	Watch           *watch.Store
+	WatchFor        time.Duration
 	Tickets         *ticket.Store
 	CVE             *cve.Store
 	DAT             *dat.Store
@@ -111,6 +114,8 @@ type Orchestrator struct {
 	OnResult        func(Result)
 	triaged         *Result
 	procedure       *Result
+	watchPrep       *Result
+	capture         *Result
 	stopVerify      atomic.Pointer[context.CancelFunc]
 }
 
@@ -264,6 +269,22 @@ func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error)
 		o.procedure = &t
 		if ctx.Err() != nil {
 			return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
+		}
+	}
+	if o.Watch != nil {
+		t := o.watchStep(ctx, request)
+		results = append(results, t)
+		o.watchPrep = &t
+		if ctx.Err() != nil {
+			return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
+		}
+		if !o.Runner.Concluding() {
+			c := o.captureStep(ctx)
+			results = append(results, c)
+			o.capture = &c
+			if ctx.Err() != nil {
+				return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
+			}
 		}
 	}
 	plan := &Plan{}
@@ -738,6 +759,9 @@ func (o *Orchestrator) planInput(request string) string {
 	if o.DAT != nil {
 		user += "\n\n" + o.DAT.PlanRule()
 	}
+	if o.Watch != nil {
+		user += o.watchInput()
+	}
 	if o.triaged == nil {
 		return user
 	}
@@ -779,7 +803,10 @@ func (o *Orchestrator) Validate(p *Plan) error {
 		if o.procedure != nil && t.ID == procedureID {
 			return i18n.E("orch.task_reserved_id", i, procedureID)
 		}
-		if o.triaged != nil || o.procedure != nil {
+		if o.Watch != nil && (t.ID == watchPrepID || t.ID == watch.TaskID) {
+			return i18n.E("orch.task_reserved_id", i, t.ID)
+		}
+		if o.triaged != nil || o.procedure != nil || o.Watch != nil {
 			t.DependsOn = slices.DeleteFunc(t.DependsOn, reservedID)
 		}
 		ids[t.ID] = true
@@ -797,7 +824,7 @@ func (o *Orchestrator) Validate(p *Plan) error {
 			continue
 		}
 		if len(t.Tools) == 0 {
-			t.Tools = slices.DeleteFunc(o.Tools.Names(), isDiagramTool)
+			t.Tools = slices.DeleteFunc(o.Tools.Names(), notForTasks)
 			continue
 		}
 		expanded, err := o.Tools.Expand(t.Tools)
@@ -822,7 +849,7 @@ func (o *Orchestrator) Validate(p *Plan) error {
 				expanded = append(expanded, n)
 			}
 		}
-		t.Tools = slices.DeleteFunc(expanded, isDiagramTool)
+		t.Tools = slices.DeleteFunc(expanded, notForTasks)
 	}
 	for _, t := range p.Tasks {
 		for _, d := range t.DependsOn {
@@ -840,6 +867,8 @@ func (o *Orchestrator) validatePlan(p *Plan) error {
 }
 
 func isDiagramTool(n string) bool { return slices.Contains(dat.ToolNames(), n) }
+
+func notForTasks(n string) bool { return isDiagramTool(n) || n == watch.ToolName }
 
 func pruneSameRoleDeps(p *Plan) map[string][]string {
 	roles := map[string]string{}
@@ -1510,6 +1539,9 @@ func (o *Orchestrator) modeRule() string {
 	if o.Upgrade {
 		rule += upgradeRule
 	}
+	if o.Watch != nil && o.capture != nil {
+		rule += watchRule
+	}
 	if o.Change {
 		rule += "\nMode demande de changement : tu ne modifies rien, tu établis ce qu'il faudra modifier. Établis l'état actuel de ce que la demande modifie (configuration en place, versions, ressources, valeurs) avec ses preuves, puis où se fait la modification : l'IaC d'abord (dépôt, fichier, ligne et syntaxe lus), une ressource gérée par IaC se modifiant dans l'IaC, jamais à la main ; signale tout écart entre l'IaC et l'état réel. Relève les impacts de la modification (redémarrage, interruption, dépendances, flux, certificats, droits) et comment revenir en arrière. Dans tes constats, une modification à réaliser se formule avec la valeur actuelle prouvée et la valeur cible."
 	}
@@ -1580,6 +1612,8 @@ func (o *Orchestrator) reportMode() string {
 		return report.ModeChange
 	case o.Upgrade:
 		return report.ModeUpgrade
+	case o.Watch != nil:
+		return report.ModeWatch
 	case o.Incident:
 		return report.ModeIncident
 	}

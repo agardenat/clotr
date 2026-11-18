@@ -19,9 +19,9 @@ func TestWatchInterruptsConcludesThenCancels(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigs := make(chan os.Signal, 2)
-	var hook atomic.Pointer[func()]
+	var hook atomic.Pointer[func() bool]
 	var called atomic.Int32
-	f := func() { called.Add(1) }
+	f := func() bool { called.Add(1); return false }
 	hook.Store(&f)
 	done := make(chan struct{})
 	go func() {
@@ -37,6 +37,33 @@ func TestWatchInterruptsConcludesThenCancels(t *testing.T) {
 	<-done
 	if called.Load() != 1 || ctx.Err() == nil {
 		t.Fatal("second ctrl+c: contexte non annulé")
+	}
+}
+
+func TestWatchInterruptsRearmsWhileWaiting(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigs := make(chan os.Signal, 3)
+	var hook atomic.Pointer[func() bool]
+	var called atomic.Int32
+	f := func() bool { return called.Add(1) == 1 }
+	hook.Store(&f)
+	done := make(chan struct{})
+	go func() {
+		watchInterrupts(ctx, cancel, sigs, &hook)
+		close(done)
+	}()
+	for i := 1; i <= 2; i++ {
+		sigs <- os.Interrupt
+		time.Sleep(20 * time.Millisecond)
+		if called.Load() != int32(i) || ctx.Err() != nil {
+			t.Fatalf("ctrl+c %d: crochet %d, contexte %v", i, called.Load(), ctx.Err())
+		}
+	}
+	sigs <- os.Interrupt
+	<-done
+	if called.Load() != 2 || ctx.Err() == nil {
+		t.Fatal("troisième ctrl+c: contexte non annulé")
 	}
 }
 
@@ -60,7 +87,7 @@ func TestWatchInterruptsWithoutHook(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigs := make(chan os.Signal, 1)
-	var hook atomic.Pointer[func()]
+	var hook atomic.Pointer[func() bool]
 	sigs <- syscall.SIGTERM
 	watchInterrupts(ctx, cancel, sigs, &hook)
 	if ctx.Err() == nil {
