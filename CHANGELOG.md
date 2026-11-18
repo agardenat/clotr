@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.79.5] - 2026-11-18
+
+### Corrigé
+- Driver shell : une question de connexion suivie d'un retour à la ligne (par exemple un motif de connexion demandé par un script de login avant le shell) est reconnue par la regex `prompt` de l'instance et posée au terminal. Auparavant seule la dernière ligne, vide dans ce cas, était examinée, et la session expirait. Une question n'est reposée que si une nouvelle sortie non vide est arrivée depuis la réponse envoyée.
+
 ## [0.79.4] - 2026-11-18
 
 ### Corrigé
