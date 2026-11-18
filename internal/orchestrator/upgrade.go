@@ -49,7 +49,13 @@ const framePrompt = `Tu fixes le cadrage commun d'un mode opératoire de mise à
 - Conséquences de la variante retenue : arrêts nécessaires ou non (de ce composant et des autres), interruption attendue, prérequis propres à cette variante.
 - Variante de repli : l'autre variante, quand elle sert (conditions non remplies, option refusée, échec), et ce qu'elle change.
 - Bloquants mesurés (prérequis non satisfaits) et points à confirmer qui changent la décision.
+` + upgradeFacts + `
 N'écris que ce que les résultats établissent ; une hypothèse reste une hypothèse. ` + writingStyle
+
+const upgradeFacts = `Règles de lecture des résultats :
+- Une durée, un arrêt ou une interruption donnés pour une variante ne s'appliquent pas à une autre et ne servent pas à l'estimer : sans source pour la variante retenue, écris « non documenté ».
+- Une variante dont une commande ou une option lue est la marque (par exemple une option de mise à jour progressive dans la syntaxe de la commande) existe : si ses conditions n'ont pas été lues, elle est « à confirmer », jamais « non documentée » ni écartée.
+- Une version absente d'une page de la documentation (liste de versions, guide pas encore mis à jour) n'est pas un bloquant : c'est un point à confirmer, tranché par la liste des versions que propose l'outil de mise à jour, à placer en critère du premier go/no-go.`
 
 const frameRule = "\n\nCadrage commun du mode opératoire (fixé avant la rédaction ; ta section le suit : prérequis, arrêts, interruption et étapes sont ceux de la variante retenue, ceux d'une autre variante n'apparaissent que comme repli) :\n"
 

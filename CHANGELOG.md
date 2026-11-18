@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.80.2] - 2026-11-18
+
+### Corrigé
+- Mode opératoire de mise à jour, cadrage et rédaction (y compris `session --synthesize` sur un tour existant) : la durée ou l'interruption d'une variante ne sert plus d'estimation pour une autre ; une variante dont la commande lue porte l'option (par exemple une mise à jour progressive) est « à confirmer », pas « non documentée » ; une version absente d'une page de documentation n'est plus un bloquant mais un critère du premier go/no-go, tranché par la liste des versions proposées par l'outil de mise à jour.
+
 ## [0.80.1] - 2026-11-18
 
 ### Corrigé
