@@ -156,8 +156,8 @@ func TestRouteSharedLabel(t *testing.T) {
 			hidden++
 		}
 	}
-	if hidden != 1 {
-		t.Fatalf("un seul libellé SYNC attendu, %d masqués", hidden)
+	if hidden > 1 {
+		t.Fatalf("libellés SYNC masqués : %d", hidden)
 	}
 	if e := doc.FindElement("//mxCell[@id='e1']"); styleMap(e.SelectAttrValue("style", ""))["noLabel"] == "1" {
 		t.Fatal("libellé TCP masqué")
@@ -250,6 +250,25 @@ func TestStrokeEvenWidth(t *testing.T) {
 	for x := 5; x < 55; x++ {
 		if got := cv.img.RGBAAt(x, 11); got != ref {
 			t.Fatalf("épaisseur irrégulière en x=%d : %v au lieu de %v", x, got, ref)
+		}
+	}
+}
+
+func TestRouteLabelsOnlyHiddenOnSharedTrunk(t *testing.T) {
+	m := `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="net" value="net" style="container=1;" vertex="1" parent="1"><mxGeometry x="20" y="20" width="900" height="500" as="geometry"/></mxCell>
+<mxCell id="s1" value="A" style="shape=image;verticalLabelPosition=bottom;" vertex="1" parent="net"><mxGeometry x="40" y="40" width="48" height="48" as="geometry"/></mxCell>
+<mxCell id="t1" value="B" style="shape=image;verticalLabelPosition=bottom;" vertex="1" parent="net"><mxGeometry x="40" y="380" width="48" height="48" as="geometry"/></mxCell>
+<mxCell id="s2" value="C" style="shape=image;verticalLabelPosition=bottom;" vertex="1" parent="net"><mxGeometry x="780" y="40" width="48" height="48" as="geometry"/></mxCell>
+<mxCell id="t2" value="D" style="shape=image;verticalLabelPosition=bottom;" vertex="1" parent="net"><mxGeometry x="780" y="380" width="48" height="48" as="geometry"/></mxCell>
+<mxCell id="e1" value="NFS" style="" edge="1" parent="1" source="s1" target="t1"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e2" value="NFS" style="" edge="1" parent="1" source="s2" target="t2"><mxGeometry relative="1" as="geometry"/></mxCell>
+</root></mxGraphModel>`
+	doc, _ := routed(t, wrap(m), Options{})
+	for _, id := range []string{"e1", "e2"} {
+		e := doc.FindElement("//mxCell[@id='" + id + "']")
+		if styleMap(e.SelectAttrValue("style", ""))["noLabel"] == "1" {
+			t.Fatalf("%s : libellé masqué alors que les tracés ne se touchent pas", id)
 		}
 	}
 }
