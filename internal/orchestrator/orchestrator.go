@@ -1122,7 +1122,7 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 		user += "\n\nCauses et pistes signalées par les agents en cours de run (à confirmer par les preuves citées et les constats ; une piste non établie se présente comme telle):\n" + memory.Format(leads)
 	}
 	if o.Upgrade {
-		return o.synthesizeSections(ctx, user+o.upgradeFrame(ctx, user, cands), cands)
+		return o.synthesizeSections(ctx, user+o.upgradeFrame(ctx, user, cands)+"\n\n"+upgradeFacts, cands)
 	}
 	if o.DAT != nil && !o.DAT.DiagramOnly {
 		return o.synthesizeSections(ctx, user, cands)

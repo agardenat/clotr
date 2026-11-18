@@ -49,6 +49,9 @@ func TestUpgradeReadsDocumentationBeforePlan(t *testing.T) {
 	if !strings.Contains(tl.input["frame"], "procedure vu") || !strings.Contains(tl.input["synthesizer"], "Cadrage commun du mode opératoire") || !strings.Contains(tl.input["synthesizer"], "Variante retenue : progressive") {
 		t.Fatalf("cadrage absent : %q", tl.input["synthesizer"])
 	}
+	if !strings.Contains(tl.input["synthesizer"], "ne servent pas à l'estimer") {
+		t.Fatal("règles de lecture absentes de la rédaction")
+	}
 	if !strings.Contains(tl.input[procedureID], "Ne mêle jamais deux variantes") {
 		t.Fatal("consigne des variantes absente de l'étape procedure")
 	}
