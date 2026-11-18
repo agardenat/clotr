@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/agardenat/clotr/internal/report"
 	"io"
 	"maps"
 	"net/http"
@@ -95,6 +96,7 @@ type options struct {
 	raw          bool
 	incident     bool
 	change       bool
+	upgrade      bool
 	ticketFlag   string
 	prevTicket   string
 	request      string
@@ -143,6 +145,7 @@ type app struct {
 	dat          *dat.Store
 	mainTicket   *template.Ticket
 	change       bool
+	upgrade      bool
 	journal      bool
 	filtered     []*template.Instance
 	closers      []func()
@@ -273,6 +276,13 @@ func newRoot() *cobra.Command {
 		_ = run.Flags().MarkHidden("change")
 	} else {
 		_ = run.Flags().MarkHidden("demande")
+	}
+	run.Flags().BoolVar(&o.upgrade, "upgrade", false, i18n.T("cli.flag.upgrade"))
+	run.Flags().BoolVar(&o.upgrade, "modop", false, i18n.T("cli.flag.upgrade"))
+	if i18n.UI() == "fr" {
+		_ = run.Flags().MarkHidden("upgrade")
+	} else {
+		_ = run.Flags().MarkHidden("modop")
 	}
 	run.Flags().StringVar(&o.ticketFlag, "ticket", "", i18n.T("cli.flag.ticket"))
 	run.Flags().Lookup("ticket").NoOptDefVal = "auto"
@@ -936,6 +946,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 			rt.registry.Add(rt.leads.Tool())
 		}
 		rt.change = o.change && len(o.cveIDs) == 0
+		rt.upgrade = o.upgrade
 		if rt.ticketSrc != nil && (o.incident || o.change) {
 			rt.tickets = ticket.New(rt.ticketSrc, rt.evidence, rt.audit)
 			rt.tickets.SetMain(rt.mainTicket)
@@ -1022,6 +1033,7 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		}
 		in, err := newInstance(cfg, ic, t, o.levelFor(cfg, ic), tunnelURL(ic))
 		if err == nil {
+			in.Mode = o.mode()
 			in.Audit = rt.audit.Log
 			in.MCP = rt.templateMCP
 			in.Warn = warn
@@ -1501,6 +1513,7 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		WebTools:    rt.webTools,
 		Incident:    rt.leads != nil,
 		Change:      rt.change,
+		Upgrade:     rt.upgrade,
 		Tickets:     rt.tickets,
 		CVE:         rt.cves,
 		DAT:         rt.dat,
@@ -1879,6 +1892,8 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		rt.dat.Begin(turnDir)
 	case rt.change:
 		sess.Turns[n-1].Mode = template.TicketChange
+	case rt.upgrade:
+		sess.Turns[n-1].Mode = report.ModeUpgrade
 	case rt.leads != nil:
 		sess.Turns[n-1].Mode = template.TicketIncident
 	}
@@ -2081,6 +2096,9 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	}
 	if o.ticketFlag != "" && (o.cveFlag != "" || o.chat || o.direct != "") {
 		return i18n.E("cli.err.ticket_modes")
+	}
+	if o.upgrade && (o.incident || o.change || o.cveFlag != "" || o.ticketFlag != "" || o.chat || o.direct != "" || o.datFlag != "" || o.diagramFlag != "") {
+		return i18n.E("cli.err.upgrade_modes")
 	}
 	if o.cveFlag != "" && (o.incident || o.chat || o.direct != "") {
 		return i18n.E("cve.modes")
@@ -2344,8 +2362,15 @@ func (rt *app) budgetRefresher(events progress.Sink) func(context.Context) {
 	}
 }
 
+func (o *options) mode() string {
+	if o.upgrade {
+		return report.ModeUpgrade
+	}
+	return ""
+}
+
 func (o *options) inheritMode(sess *session.Session) {
-	if o.incident || o.change || o.cveFlag != "" || o.chat || o.direct != "" || o.datVariant != "" {
+	if o.incident || o.change || o.upgrade || o.cveFlag != "" || o.chat || o.direct != "" || o.datVariant != "" {
 		return
 	}
 	for i := len(sess.Turns) - 1; i >= 0; i-- {
@@ -2362,6 +2387,12 @@ func (o *options) inheritMode(sess *session.Session) {
 			o.incident = true
 		case template.TicketChange:
 			o.change = true
+		case report.ModeUpgrade:
+			if o.ticketFlag == "" {
+				o.upgrade = true
+				fmt.Fprintln(os.Stderr, i18n.T("session.mode_inherited", i18n.T("upgrade.mode"), t.N))
+			}
+			return
 		default:
 			continue
 		}
@@ -2574,6 +2605,8 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 		o.incident = true
 	case template.TicketChange:
 		o.change = true
+	case report.ModeUpgrade:
+		o.upgrade = true
 	default:
 		o.restoreDAT(sess.Turns[n-1])
 	}

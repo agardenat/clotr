@@ -84,6 +84,7 @@ var templateMsgs = map[string]msg{
 	"tpl.spec.list_item":           {"params.%s.item: required for list", "params.%s.item : requis pour list"},
 	"tpl.spec.item_type":           {"params.%s.item.%s: type %q is invalid (%s)", "params.%s.item.%s : type %q invalide (%s)"},
 	"tpl.spec.connector":           {"connectors.%s: invalid name ([a-z][a-z0-9_]*)", "connectors.%s : nom invalide ([a-z][a-z0-9_]*)"},
+	"tpl.spec.mode":                {"modes.%s: unknown mode (%s)", "modes.%s : mode inconnu (%s)"},
 	"tpl.spec.one_ssh":             {"connectors: a single ssh, local or shell connector per template", "connectors : un seul connecteur ssh, local ou shell par template"},
 	"tpl.spec.shell_option":        {"connectors.%s: option %q not supported by the shell driver (command, then, auth, ready, prompt, open_timeout, max_conns, sudo)", "connectors.%s : option %q non prise en charge par le driver shell (command, then, auth, ready, prompt, open_timeout, max_conns, sudo)"},
 	"tpl.spec.shell_command":       {"connectors.%s: command required (list: program and arguments, %%h = host)", "connectors.%s : command requis (liste : programme et arguments, %%h = hôte)"},

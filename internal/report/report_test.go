@@ -28,6 +28,13 @@ func TestModel(t *testing.T) {
 			t.Fatalf("modèle %s: %v", mode, err)
 		}
 	}
+	up, err := Model(ModeUpgrade, nil)
+	if err != nil || !strings.HasPrefix(up, "Sinon, rédige le mode opératoire") || strings.Contains(up, "{{") {
+		t.Fatalf("modèle upgrade: %v", err)
+	}
+	if p := Split(up); len(p.Sections) != 11 || !strings.HasPrefix(p.Head, "# Mode opératoire") || Heading(p.Sections[5]) != "6. Mode opératoire" {
+		t.Fatalf("sections du modèle upgrade: %d %q", len(p.Sections), p.Head)
+	}
 	if _, err := Model("panne", nil); err == nil {
 		t.Fatal("mode inconnu accepté")
 	}

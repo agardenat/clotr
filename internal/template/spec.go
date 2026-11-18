@@ -16,6 +16,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/report"
 )
 
 type Template struct {
@@ -39,12 +40,20 @@ type Template struct {
 	MinVersion   string               `yaml:"min_version"`
 	Architecture *bool                `yaml:"architecture"`
 	Checklist    []string             `yaml:"checklist"`
+	Modes        map[string]ModeSpec  `yaml:"modes"`
 
 	Source     string `yaml:"-"`
 	Raw        []byte `yaml:"-"`
 	ScriptPath string `yaml:"-"`
 	ScriptSrc  []byte `yaml:"-"`
 }
+
+type ModeSpec struct {
+	Hints     string   `yaml:"hints"`
+	Checklist []string `yaml:"checklist"`
+}
+
+var ModeNames = []string{report.ModeUpgrade}
 
 type Param struct {
 	Type        string            `yaml:"type"`
@@ -183,6 +192,11 @@ func (t *Template) validate() error {
 	}
 	if nssh > 1 {
 		fail(i18n.T("tpl.spec.one_ssh"))
+	}
+	for _, m := range sortedKeys(t.Modes) {
+		if !slices.Contains(ModeNames, m) {
+			fail(i18n.T("tpl.spec.mode", m, strings.Join(ModeNames, "|")))
+		}
 	}
 	for i, tg := range t.Targets {
 		if !targetKinds.MatchString(tg["kind"]) {

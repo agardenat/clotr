@@ -103,12 +103,14 @@ type Orchestrator struct {
 	OnAnswer        func(text string)
 	Incident        bool
 	Change          bool
+	Upgrade         bool
 	Tickets         *ticket.Store
 	CVE             *cve.Store
 	DAT             *dat.Store
 	Journal         bool
 	OnResult        func(Result)
 	triaged         *Result
+	procedure       *Result
 	stopVerify      atomic.Pointer[context.CancelFunc]
 }
 
@@ -252,6 +254,14 @@ func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error)
 		if t.Status == "ok" {
 			o.triaged = &t
 		}
+		if ctx.Err() != nil {
+			return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
+		}
+	}
+	if o.Upgrade && o.History == "" {
+		t := o.procedureStep(ctx, request)
+		results = append(results, t)
+		o.procedure = &t
 		if ctx.Err() != nil {
 			return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
 		}
@@ -716,6 +726,15 @@ func (o *Orchestrator) planInput(request string) string {
 	if o.Change {
 		user += "\n\n" + changePlan
 	}
+	if o.Upgrade {
+		user += "\n\n" + upgradePlan
+		if o.History != "" {
+			user += "\n\n" + upgradeRefine
+		}
+		if o.procedure != nil {
+			user += "\n\nRésultat de l'étape " + procedureID + " (documentation lue avant la planification ; transmis à chaque tâche) :" + synthInput([]Result{*o.procedure})
+		}
+	}
 	if o.DAT != nil {
 		user += "\n\n" + o.DAT.PlanRule()
 	}
@@ -739,7 +758,7 @@ const changePlan = "Demande de changement : rien n'est modifié par ce run. Le p
 
 func (o *Orchestrator) Validate(p *Plan) error {
 	if len(p.Tasks) == 0 {
-		if o.DAT != nil && o.History != "" {
+		if (o.DAT != nil || o.Upgrade) && o.History != "" {
 			return nil
 		}
 		return i18n.E("orch.no_task")
@@ -757,8 +776,11 @@ func (o *Orchestrator) Validate(p *Plan) error {
 		if o.triaged != nil && t.ID == triageID {
 			return i18n.E("orch.task_triage_id", i, triageID)
 		}
-		if o.triaged != nil {
-			t.DependsOn = slices.DeleteFunc(t.DependsOn, func(d string) bool { return d == triageID })
+		if o.procedure != nil && t.ID == procedureID {
+			return i18n.E("orch.task_reserved_id", i, procedureID)
+		}
+		if o.triaged != nil || o.procedure != nil {
+			t.DependsOn = slices.DeleteFunc(t.DependsOn, reservedID)
 		}
 		ids[t.ID] = true
 		if !slices.Contains(workers, t.Role) {
@@ -914,10 +936,7 @@ func (o *Orchestrator) Execute(ctx context.Context, request string, p *Plan) []R
 				o.Audit.Log("task_skipped", map[string]any{"task": t.ID})
 			} else {
 				mu.Lock()
-				var deps []Result
-				if o.triaged != nil {
-					deps = append(deps, *o.triaged)
-				}
+				deps := o.priorResults()
 				for _, d := range t.DependsOn {
 					deps = append(deps, results[d])
 				}
@@ -1054,7 +1073,7 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 			errs = append(errs, r.TaskID+": "+r.Error)
 		}
 	}
-	if ok == 0 {
+	if ok == 0 && (len(results) > 0 || o.History == "") {
 		return "", "", i18n.E("orch.all_failed", strings.Join(errs, "\n"))
 	}
 	cands, err := o.Router.Candidates(config.RoleSynthesizer)
@@ -1102,7 +1121,7 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 	if len(leads) > 0 {
 		user += "\n\nCauses et pistes signalées par les agents en cours de run (à confirmer par les preuves citées et les constats ; une piste non établie se présente comme telle):\n" + memory.Format(leads)
 	}
-	if o.DAT != nil && !o.DAT.DiagramOnly {
+	if o.DAT != nil && !o.DAT.DiagramOnly || o.Upgrade {
 		return o.synthesizeSections(ctx, user, cands)
 	}
 	model, effort := o.Runner.First(cands, config.RoleSynthesizer)
@@ -1131,6 +1150,8 @@ func (o *Orchestrator) reportBlocks() (map[string]string, []string, bool) {
 	case o.CVE != nil:
 		blocks, order := o.CVE.Blocks()
 		return blocks, order, true
+	case o.Upgrade:
+		return map[string]string{}, nil, true
 	case o.Incident || o.Change:
 		if o.Tickets == nil {
 			return map[string]string{}, nil, true
@@ -1483,6 +1504,9 @@ func (o *Orchestrator) modeRule() string {
 	if o.DAT != nil {
 		rule += o.DAT.WorkerRule()
 	}
+	if o.Upgrade {
+		rule += upgradeRule
+	}
 	if o.Change {
 		rule += "\nMode demande de changement : tu ne modifies rien, tu établis ce qu'il faudra modifier. Établis l'état actuel de ce que la demande modifie (configuration en place, versions, ressources, valeurs) avec ses preuves, puis où se fait la modification : l'IaC d'abord (dépôt, fichier, ligne et syntaxe lus), une ressource gérée par IaC se modifiant dans l'IaC, jamais à la main ; signale tout écart entre l'IaC et l'état réel. Relève les impacts de la modification (redémarrage, interruption, dépendances, flux, certificats, droits) et comment revenir en arrière. Dans tes constats, une modification à réaliser se formule avec la valeur actuelle prouvée et la valeur cible."
 	}
@@ -1551,6 +1575,8 @@ func (o *Orchestrator) reportMode() string {
 		return report.ModeCVE
 	case o.Change:
 		return report.ModeChange
+	case o.Upgrade:
+		return report.ModeUpgrade
 	case o.Incident:
 		return report.ModeIncident
 	}

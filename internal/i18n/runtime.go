@@ -104,6 +104,7 @@ var runtimeMsgs = map[string]msg{
 	"orch.plan_invalid":       {"invalid plan: %w", "plan invalide : %w"},
 	"orch.no_task":            {"no task", "aucune tâche"},
 	"orch.task_id":            {"task %d: empty or duplicated id %q", "tâche %d : id vide ou dupliqué %q"},
+	"orch.task_reserved_id":   {"task %d: id %s is reserved", "tâche %d : id %s réservé"},
 	"orch.task_triage_id":     {"task %d: id %s is reserved for the incident triage", "tâche %d : id %s réservé au tri d'incident"},
 	"orch.task_role":          {"task %s: invalid role %q (valid: %s)", "tâche %s : rôle %q invalide (valides : %s)"},
 	"orch.task_goal":          {"task %s: empty goal", "tâche %s : goal vide"},
