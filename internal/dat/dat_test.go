@@ -146,3 +146,17 @@ func TestUnitGoalChecklist(t *testing.T) {
 		t.Fatal("règle de regroupement des nœuds")
 	}
 }
+
+func TestDiagramGoalConsistent(t *testing.T) {
+	g := New(Clean, true, nil, nil).DiagramGoal()
+	for _, want := range []string{"client → serveur", "Chaque lien porte son libellé", "green entrée des utilisateurs", "Pas de title dans la spec", "pas l'organisation administrative", "relis la spec contre les preuves", "n'est pas un nœud : son adresse va dans le libellé de ce composant"} {
+		if !strings.Contains(g, want) {
+			t.Errorf("consigne absente : %q", want)
+		}
+	}
+	for _, gone := range []string{"relié une seule fois", "un point d'entrée se met dans le libellé", "un répartiteur de charge a le type du répartiteur", "une quinzaine au plus par schéma"} {
+		if strings.Contains(g, gone) {
+			t.Errorf("consigne contradictoire encore présente : %q", gone)
+		}
+	}
+}

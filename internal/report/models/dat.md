@@ -10,7 +10,7 @@ Rédige le document d'architecture technique en Markdown selon le modèle ci-des
 
 {{diagram}}
 
-<!-- Description de l'architecture par couches, du point d'entrée aux données : accès des utilisateurs et des systèmes externes, exposition (DNS, répartiteurs, passerelles, ingress), calcul (machines, clusters), plateformes et applications, données et stockage, services transverses (identité, secrets, supervision, sauvegarde). Un paragraphe par couche, qui nomme les composants et leurs liens. -->
+<!-- D'abord une phrase de légende des schémas : les flèches vont du client vers le service appelé ; vert : accès des utilisateurs, violet : exploitation et administration, bleu : flux applicatifs internes, orange : données et stockage, gris : identité, DNS et appairages. Puis la description de l'architecture par couches, du point d'entrée aux données : accès des utilisateurs et des systèmes externes, exposition (DNS, répartiteurs, passerelles, ingress), calcul (machines, clusters), plateformes et applications, données et stockage, services transverses (identité, secrets, supervision, sauvegarde). Un paragraphe par couche, qui nomme les composants et leurs liens. -->
 
 ## 3. Accès et identités
 

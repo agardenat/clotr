@@ -28,11 +28,12 @@ type Result struct {
 }
 
 const (
-	step      = 6.0
-	margin    = 12.0
-	labelPad  = 4.0
-	maxStates = 300000
-	canvasPad = 40.0
+	sharedTrunkCells = 8
+	step             = 6.0
+	margin           = 12.0
+	labelPad         = 4.0
+	maxStates        = 300000
+	canvasPad        = 40.0
 )
 
 type box struct{ x, y, w, h float64 }
@@ -294,7 +295,7 @@ func routeModel(m *etree.Element, opt Options) (*Result, error) {
 	sort.SliceStable(edges, func(i, j int) bool { return r.span(edges[i]) < r.span(edges[j]) })
 	res := &Result{Edges: len(edges)}
 	var placed []box
-	labelled := keySet{}
+	labelledCells := map[string]map[cellKey]bool{}
 	for _, e := range edges {
 		src, dst := e.SelectAttrValue("source", ""), e.SelectAttrValue("target", "")
 		if _, ok := r.boxes[src]; !ok {
@@ -349,12 +350,21 @@ func routeModel(m *etree.Element, opt Options) (*Result, error) {
 		if t == "" {
 			continue
 		}
-		if keys.meets(labelled) {
+		shared := 0
+		for _, k := range path {
+			if labelledCells[t][k] {
+				shared++
+			}
+		}
+		if shared >= sharedTrunkCells {
 			setStyle(e, "noLabel", "1")
 			continue
 		}
-		for k := range keys {
-			labelled[k] = true
+		if labelledCells[t] == nil {
+			labelledCells[t] = map[cellKey]bool{}
+		}
+		for _, k := range path {
+			labelledCells[t][k] = true
 		}
 		full := append(append([]pt{start.at}, pts...), end.at)
 		if pos, rect, ok := r.labelPos(full, t, fontSize(e, 9), placed); ok {
