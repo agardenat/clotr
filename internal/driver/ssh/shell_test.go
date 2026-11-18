@@ -241,3 +241,27 @@ func TestShellLoginRetype(t *testing.T) {
 		t.Fatalf("refusés %v, restants %v", refused, typed)
 	}
 }
+
+func TestShellThenAccept(t *testing.T) {
+	hop := `exec sh -c 'printf "%u@%h password: "; stty -echo; read p; stty echo; echo; [ "$p" = deux ] || { echo "Permission denied"; exit 1; }; PS1="[u@vm ~]$ " exec sh -i'`
+	var accepted []string
+	s, err := NewShell(ShellOptions{
+		Command:     []string{"sh", "-c", "PS1='[u@jump ~]$ ' exec sh -i"},
+		Then:        []string{hop},
+		OpenTimeout: 20 * time.Second,
+		Login: func(context.Context, string) (string, string, error) {
+			return "ops", "deux", nil
+		},
+		Accept: func(user, pass, host string) { accepted = append(accepted, user+"/"+pass+"@"+host) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.ExecInput(context.Background(), Endpoint{Host: "vm1"}, "true", "", 1024); err != nil {
+		t.Fatal(err)
+	}
+	if len(accepted) != 1 || accepted[0] != "ops/deux@vm1" {
+		t.Fatalf("acceptation signalée : %v", accepted)
+	}
+}

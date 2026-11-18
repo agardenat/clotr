@@ -368,6 +368,9 @@ func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label str
 		quiet = nil
 		line := lastLine(seen)
 		if o.Ready.MatchString(line) {
+			if sent && o.Accept != nil {
+				o.Accept(user, answer, ss.host)
+			}
 			return nil
 		}
 		if !o.Prompt.MatchString(line) || total == asked || !login && o.Ask == nil {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -760,6 +761,9 @@ func newShellPool(name string, o options) (*ssh.Shell, error) {
 			return strings.Join(steps, " ; ")
 		}
 		so.Login = func(ctx context.Context, host string) (string, string, error) {
+			if err := creds.HostRefused(label, host); err != nil {
+				return "", "", err
+			}
 			ctx = creds.WithDetail(ctx, loginDetail(i18n.T("creds.detail_shell", host, name, route(host)), label, a.str("hint")))
 			var p creds.Pair
 			var err error
@@ -768,10 +772,17 @@ func newShellPool(name string, o options) (*ssh.Shell, error) {
 			} else {
 				p, err = creds.Resolve(ctx, a.str("user_env"), a.str("password_env"), a.str("password_vault"), label)
 			}
+			var empty *creds.EmptyError
+			if errors.As(err, &empty) {
+				creds.Decline(label, host)
+			}
 			return p.User, p.Pass, err
 		}
 		so.Forget = func(user, pass, host, reason string) {
-			creds.Reject(label, user, pass, i18n.T("creds.refused_shell", user, host, defaultStr(reason, "?")))
+			creds.RejectOn(label, user, pass, host, i18n.T("creds.refused_shell", user, host, defaultStr(reason, "?")))
+		}
+		so.Accept = func(user, pass, _ string) {
+			creds.Accept(label, user, pass)
 		}
 	}
 	return ssh.NewShell(so)
