@@ -161,7 +161,13 @@ func (rt *app) datScope(reg *tools.Registry, env string, o *options) (*tools.Reg
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("dat.warn_no_iac"))
 	}
 	rt.dat.Instances, rt.dat.IaCOnes = all, iac
-	rt.dat.Units = datUnits(rt.cfg.Instances, rt.dat.Variant, all, iac)
+	checklists := map[string][]string{}
+	for _, in := range rt.instances {
+		if len(in.T.Checklist) > 0 {
+			checklists[in.Name] = in.T.Checklist
+		}
+	}
+	rt.dat.Units = withChecklists(datUnits(rt.cfg.Instances, rt.dat.Variant, all, iac), checklists)
 	rt.audit.Log("dat_scope", map[string]any{"variant": rt.dat.Variant, "diagram_only": rt.dat.DiagramOnly, "instances": all, "iac": iac, "units": len(rt.dat.Units), "renderer": rt.dat.Renderer != nil})
 	return reg, env, nil
 }
@@ -220,6 +226,17 @@ func datUnits(cfg []config.Instance, variant string, all, iac []string) []dat.Un
 			continue
 		}
 		units = append(units, dat.Unit{Instances: []string{n}, Except: covered[n]})
+	}
+	return units
+}
+
+func withChecklists(units []dat.Unit, lists map[string][]string) []dat.Unit {
+	for i := range units {
+		for _, n := range units[i].Instances {
+			if items := lists[n]; len(items) > 0 {
+				units[i].Checklist = append(units[i].Checklist, n+" : "+strings.Join(items, " ; "))
+			}
+		}
 	}
 	return units
 }

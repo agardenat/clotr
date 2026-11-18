@@ -181,6 +181,7 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
 
 ### Format
 
+- `checklist` : liste des faits d'architecture que l'instance permet d'établir (ex. appairages, passerelles, objets nommés des règles de filtrage) ; en `--dat` et `--diagram`, l'objectif de chaque tâche reprend la liste de ses instances, et l'agent doit établir chaque point par un constat ou dire dans ses manques pourquoi il ne l'est pas ;
 - `architecture` : `false` pour une source qui ne décrit pas l'architecture (alertes, tickets) : ses instances n'ont pas de tâche dans le plan des modes `--dat` et `--diagram` (défaut true) ;
 - `min_version` : version minimale de clotr (`X.Y.Z`), vérifiée avant le reste du fichier : un clotr plus ancien ignore le template avec un avertissement explicite au lieu d'une erreur sur un champ inconnu (les builds hors release, `dev` ou `vX.Y.Z-…`, ne sont pas contrôlés) ;
 - `keywords` : termes qui, présents dans une demande, font proposer l'instance aux agents (en plus du nom de l'instance, du template et des cibles), voir Activation d'une instance ;
@@ -322,6 +323,8 @@ Saisie des identifiants SSH et shell : la première question d'un nom d'identifi
 3. **Cibles injoignables** : retirées pour le run, avec un avertissement. Si aucune cible ne répond, l'instance est indisponible pour le run.
 
 Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans nouvelle saisie ni nouvelle découverte. L'activation est tracée dans l'audit (`instance_activation`).
+
+Pour ne pas avoir à attendre une question en cours de run, les identifiants à saisir sont demandés dès que le plan est établi, avant le lancement des tâches, pour chaque instance que le plan utilise : `auth` des connecteurs `http` (et connexion `oauth2`), mot de passe du connecteur `ssh` sans clé (`key`, `key_vault`) et identifiants du driver `shell`. Rien n'est demandé pour ce que fournissent les variables ou Vault, ni pour le mot de passe de secours d'un connecteur `ssh` à clé. En `--dat` et `--diagram`, le plan étant construit sans planner, les questions arrivent au démarrage. Les réponses servent ensuite à l'activation sans nouvelle question (audit `credentials_prepared`).
 
 ### Templates de démarrage
 

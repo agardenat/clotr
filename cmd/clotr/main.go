@@ -1505,6 +1505,32 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		CVE:         rt.cves,
 		DAT:         rt.dat,
 		Journal:     rt.journal,
+		PrepareTools: func(ctx context.Context, names []string) {
+			rt.prepareCredentials(ctx, reg, names)
+		},
+	}
+}
+
+func (rt *app) prepareCredentials(ctx context.Context, reg *tools.Registry, names []string) {
+	groups := map[string]bool{}
+	for _, n := range names {
+		if g := reg.GroupOf(n); g != "" {
+			groups[g] = true
+		}
+	}
+	for _, in := range rt.instances {
+		if !groups[in.ToolPrefix()] || in.Activated() {
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		err := in.PrepareCredentials(ctx)
+		f := map[string]any{"instance": in.Name}
+		if err != nil {
+			f["error"] = err.Error()
+		}
+		rt.audit.Log("credentials_prepared", f)
 	}
 }
 

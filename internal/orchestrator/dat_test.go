@@ -222,3 +222,23 @@ func TestDATFixedPlanSkipsPlanner(t *testing.T) {
 		t.Fatal("affinage de session : le planner doit décider des faits nouveaux")
 	}
 }
+
+func TestPrepareToolsBeforeTasks(t *testing.T) {
+	o, tl, _, _ := datOrch(t, dat.Clean, true)
+	o.DAT.Units = []dat.Unit{{IaC: "code", Instances: []string{"code", "k8s"}}}
+	var prepared []string
+	var startedBefore bool
+	o.PrepareTools = func(_ context.Context, names []string) {
+		prepared = names
+		_, startedBefore = tl.start["t1"]
+	}
+	if _, err := o.Run(context.Background(), "schéma"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(prepared, "code_tree") || !slices.Contains(prepared, "k8s_list") {
+		t.Fatalf("outils préparés : %v", prepared)
+	}
+	if startedBefore {
+		t.Fatal("identifiants préparés après le démarrage d'une tâche")
+	}
+}
