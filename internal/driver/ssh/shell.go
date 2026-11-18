@@ -326,7 +326,7 @@ const shellPasswordAttempts = 3
 func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label string, deadline *time.Time, hop bool) error {
 	var seen []byte
 	var quiet <-chan time.Time
-	total, asked := 0, -1
+	asked, fresh := false, false
 	login := hop && o.Login != nil
 	user, sent, tries := "", false, 0
 	var answer string
@@ -356,7 +356,9 @@ func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label str
 					return i18n.E("ssh.shell_hop", ss.host, l, lastLines(seen))
 				}
 			}
-			total += len(b)
+			if strings.TrimSpace(shellEscapes.ReplaceAllString(string(b), "")) != "" {
+				fresh = true
+			}
 			quiet = time.After(shellQuiet)
 			continue
 		case <-quiet:
@@ -373,7 +375,10 @@ func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label str
 			}
 			return nil
 		}
-		if !o.Prompt.MatchString(line) || total == asked || !login && o.Ask == nil {
+		if strings.TrimSpace(line) == "" {
+			line = lastTextLine(seen)
+		}
+		if !o.Prompt.MatchString(line) || asked && !fresh || !login && o.Ask == nil {
 			continue
 		}
 		if sent {
@@ -382,7 +387,7 @@ func (ss *shellSession) waitReady(ctx context.Context, o ShellOptions, label str
 				return i18n.E("ssh.shell_auth", ss.host, label, lastLines(seen))
 			}
 		}
-		asked = total
+		asked, fresh = true, false
 		t0 := time.Now()
 		var err error
 		if login {
@@ -482,6 +487,14 @@ func lastLine(b []byte) string {
 }
 
 var hopError = regexp.MustCompile(`(?m)^ssh: .*$`)
+
+func lastTextLine(b []byte) string {
+	s := strings.TrimRight(strings.ReplaceAll(shellEscapes.ReplaceAllString(string(b), ""), "\r", ""), " \t\n")
+	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
+		s = s[i+1:]
+	}
+	return s
+}
 
 func hopFailure(b []byte) string {
 	s := strings.ReplaceAll(shellEscapes.ReplaceAllString(string(b), ""), "\r", "")

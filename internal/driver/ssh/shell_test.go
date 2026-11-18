@@ -4,6 +4,7 @@ package ssh
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -263,5 +264,30 @@ func TestShellThenAccept(t *testing.T) {
 	}
 	if len(accepted) != 1 || accepted[0] != "ops/deux@vm1" {
 		t.Fatalf("acceptation signalée : %v", accepted)
+	}
+}
+
+func TestShellPromptFollowedByNewline(t *testing.T) {
+	script := `printf "banner\n What is the reason for this connection ? >\n"; read r; [ "$r" = audit ] || { echo refused; exit 1; }; printf "\n\n"; PS1='[u@vm ~]$ ' exec sh -i`
+	var asked []string
+	s, err := NewShell(ShellOptions{
+		Command:     []string{"sh", "-c", script},
+		OpenTimeout: 20 * time.Second,
+		Prompt:      regexp.MustCompile(`(?i)((password|passphrase|mot de passe)[^:\n]*: ?|reason for this connection \? ?> ?)$`),
+		Ask: func(_ context.Context, q string) (string, error) {
+			asked = append(asked, q)
+			return "audit", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	res, err := s.ExecInput(context.Background(), Endpoint{Host: "vm1"}, "echo ok", "", 1024)
+	if err != nil || res.Stdout != "ok\n" {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if len(asked) != 1 || !strings.Contains(asked[0], "reason for this connection") {
+		t.Fatalf("questions posées : %q", asked)
 	}
 }
