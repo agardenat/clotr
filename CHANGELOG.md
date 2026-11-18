@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.79.1] - 2026-11-18
+
+### Modifié
+- DAT destiné au client (`--dat clean`) : la demande du run n'est plus citée en tête du rapport ni transmise au template de document (plus de sous-titre de couverture tiré de la demande). Un rapport déjà enregistré perd sa citation à l'affichage et à l'export (`clotr session <nom> --export docx`).
+
 ## [0.79.0] - 2026-11-18
 
 ### Modifié
