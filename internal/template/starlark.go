@@ -42,6 +42,7 @@ type scriptTool struct {
 	desc   starlark.Value
 	schema json.RawMessage
 	fn     starlark.Callable
+	follow starlark.Callable
 	level  access.Level
 }
 
@@ -296,9 +297,9 @@ func (in *Instance) builtinTool(thread *starlark.Thread, b *starlark.Builtin, ar
 	var name string
 	var desc starlark.Value
 	var schema *starlark.Dict
-	var fn starlark.Callable
+	var fn, follow starlark.Callable
 	var lvl string
-	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name", &name, "description", &desc, "schema", &schema, "fn", &fn, "access?", &lvl); err != nil {
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name", &name, "description", &desc, "schema", &schema, "fn", &fn, "access?", &lvl, "follow?", &follow); err != nil {
 		return nil, err
 	}
 	level, err := access.Parse(lvl)
@@ -328,7 +329,10 @@ func (in *Instance) builtinTool(thread *starlark.Thread, b *starlark.Builtin, ar
 			return nil, i18n.E("tpl.star.tool_dup", name)
 		}
 	}
-	in.script.tools = append(in.script.tools, &scriptTool{name: name, desc: desc, schema: raw, fn: fn, level: level})
+	if follow != nil && level != access.Read {
+		return nil, i18n.E("tpl.star.follow_level", name)
+	}
+	in.script.tools = append(in.script.tools, &scriptTool{name: name, desc: desc, schema: raw, fn: fn, follow: follow, level: level})
 	return starlark.None, nil
 }
 

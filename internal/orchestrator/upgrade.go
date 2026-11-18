@@ -12,6 +12,7 @@ import (
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/memory"
 	"github.com/agardenat/clotr/internal/progress"
+	"github.com/agardenat/clotr/internal/watch"
 )
 
 const procedureID = "procedure"
@@ -90,7 +91,15 @@ func (o *Orchestrator) priorResults() []Result {
 	if o.procedure != nil {
 		out = append(out, *o.procedure)
 	}
+	if o.watchPrep != nil {
+		out = append(out, *o.watchPrep)
+	}
+	if o.capture != nil {
+		out = append(out, *o.capture)
+	}
 	return out
 }
 
-func reservedID(id string) bool { return id == triageID || id == procedureID }
+func reservedID(id string) bool {
+	return id == triageID || id == procedureID || id == watchPrepID || id == watch.TaskID
+}

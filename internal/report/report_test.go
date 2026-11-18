@@ -35,6 +35,13 @@ func TestModel(t *testing.T) {
 	if p := Split(up); len(p.Sections) != 11 || !strings.HasPrefix(p.Head, "# Mode opératoire") || Heading(p.Sections[5]) != "6. Mode opératoire" {
 		t.Fatalf("sections du modèle upgrade: %d %q", len(p.Sections), p.Head)
 	}
+	w, err := Model(ModeWatch, nil)
+	if err != nil || !strings.HasPrefix(w, "Sinon, rédige le rapport de suivi") || strings.Contains(w, "{{") {
+		t.Fatalf("modèle watch: %v", err)
+	}
+	if p := Split(w); len(p.Sections) != 7 || Heading(p.Sections[2]) != "3. Chronologie de l'action" {
+		t.Fatalf("sections du modèle watch: %d", len(p.Sections))
+	}
 	if _, err := Model("panne", nil); err == nil {
 		t.Fatal("mode inconnu accepté")
 	}

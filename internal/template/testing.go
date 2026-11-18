@@ -310,7 +310,7 @@ func (ti *testInstance) Freeze()               {}
 func (ti *testInstance) Truth() starlark.Bool  { return true }
 func (ti *testInstance) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable") }
 func (ti *testInstance) AttrNames() []string {
-	return []string{"call", "cleanup", "commands", "diagram_reference", "diagram_render", "diagram_shapes", "discover", "environment", "error", "fn", "git_calls", "mcp_calls", "questions", "render", "requests", "startup", "ticket_get", "ticket_search", "tools", "tracked"}
+	return []string{"call", "cleanup", "commands", "diagram_reference", "diagram_render", "diagram_shapes", "discover", "environment", "error", "fn", "follow", "git_calls", "mcp_calls", "questions", "render", "requests", "startup", "ticket_get", "ticket_search", "tools", "tracked"}
 }
 
 func (ti *testInstance) Attr(name string) (starlark.Value, error) {
@@ -356,6 +356,42 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 				return starlark.String(out), nil
 			}
 			return nil, i18n.E("tpl.test.tool", tool, strings.Join(ti.in.ToolNames(), ", "))
+		}), nil
+	case "follow":
+		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			var tool string
+			var targs *starlark.Dict
+			var cursor starlark.Value = starlark.None
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "tool", &tool, "args?", &targs, "cursor?", &cursor); err != nil {
+				return nil, err
+			}
+			raw := []byte("{}")
+			if targs != nil {
+				var err error
+				if raw, err = starlarkJSON(targs); err != nil {
+					return nil, err
+				}
+			}
+			cur, err := starlarkJSON(cursor)
+			if err != nil {
+				return nil, err
+			}
+			lines, next, err := ti.in.Follow(threadCtx(thread), tool, raw, cur)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", tool, err)
+			}
+			l := make([]starlark.Value, len(lines))
+			for i, s := range lines {
+				l[i] = starlark.String(s)
+			}
+			c, err := jsonToStarlark(next)
+			if err != nil {
+				return nil, err
+			}
+			d := starlark.NewDict(2)
+			_ = d.SetKey(starlark.String("lines"), starlark.NewList(l))
+			_ = d.SetKey(starlark.String("cursor"), c)
+			return d, nil
 		}), nil
 	case "fn":
 		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

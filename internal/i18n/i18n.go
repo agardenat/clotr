@@ -267,6 +267,10 @@ var plurals = map[string]msg{
 	"finding":   {"finding|findings", "constat|constats"},
 	"call":      {"call|calls", "appel|appels"},
 	"entry":     {"entry|entries", "entrée|entrées"},
+	"line":      {"line|lines", "ligne|lignes"},
+	"sample":    {"sample|samples", "relevé|relevés"},
+	"retained":  {"retained|retained", "retenue|retenues"},
+	"source":    {"source|sources", "source|sources"},
 }
 
 func pick(m msg, l string) string {

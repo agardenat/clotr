@@ -369,7 +369,7 @@ var instanceName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 var varName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
-var reservedPrefixes = []string{"fs", "mcp", "memory", "evidence", "web", "cause", "dns", "cve", "ticket", "diagram"}
+var reservedPrefixes = []string{"fs", "mcp", "memory", "evidence", "web", "cause", "dns", "cve", "ticket", "diagram", "watch"}
 
 type SessionsConf struct {
 	Dir string `yaml:"dir"`
