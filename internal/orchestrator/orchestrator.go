@@ -1121,7 +1121,10 @@ func (o *Orchestrator) Synthesize(ctx context.Context, request string, results [
 	if len(leads) > 0 {
 		user += "\n\nCauses et pistes signalées par les agents en cours de run (à confirmer par les preuves citées et les constats ; une piste non établie se présente comme telle):\n" + memory.Format(leads)
 	}
-	if o.DAT != nil && !o.DAT.DiagramOnly || o.Upgrade {
+	if o.Upgrade {
+		return o.synthesizeSections(ctx, user+o.upgradeFrame(ctx, user, cands), cands)
+	}
+	if o.DAT != nil && !o.DAT.DiagramOnly {
 		return o.synthesizeSections(ctx, user, cands)
 	}
 	model, effort := o.Runner.First(cands, config.RoleSynthesizer)
