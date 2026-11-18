@@ -2210,6 +2210,9 @@ func withRequest(md string, turns []session.Turn) string {
 	if strings.TrimSpace(md) == "" || len(turns) == 0 {
 		return md
 	}
+	if clientDocument(turns[len(turns)-1]) {
+		return stripRequest(md)
+	}
 	var b strings.Builder
 	for i, t := range turns {
 		if i > 0 {
@@ -2223,6 +2226,10 @@ func withRequest(md string, turns []session.Turn) string {
 		}
 	}
 	return b.String() + "\n---\n\n" + stripRequest(md)
+}
+
+func clientDocument(t session.Turn) bool {
+	return t.DAT == dat.Clean
 }
 
 func stripRequest(md string) string {
@@ -2806,7 +2813,7 @@ func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error
 	if n == 0 {
 		n = len(s.Turns)
 	}
-	if stripRequest(report) == report {
+	if stripRequest(report) == report || clientDocument(s.Turns[n-1]) {
 		report = withRequest(report, s.Turns[:n])
 	}
 	report = o.fullReport(report, s.Dir())

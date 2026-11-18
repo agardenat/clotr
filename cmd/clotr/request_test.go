@@ -1,8 +1,10 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/agardenat/clotr/internal/dat"
 	"github.com/agardenat/clotr/internal/session"
 )
 
@@ -28,5 +30,20 @@ func TestWithRequest(t *testing.T) {
 	cve := "| CVE | statut |\n|---|---|\n\n---\n\n## 1. Conclusion"
 	if stripRequest(cve) != cve {
 		t.Fatal("un rapport sans bloc de demande ne doit pas être coupé")
+	}
+}
+
+func TestWithRequestClientDocument(t *testing.T) {
+	md := "# DAT\n\nTexte.\n"
+	clean := []session.Turn{{N: 1, Request: "dat clean du client acme", DAT: dat.Clean}}
+	if got := withRequest(md, clean); strings.Contains(got, "acme") {
+		t.Fatalf("demande citée dans un DAT client : %q", got)
+	}
+	if got := withRequest("> dat clean du client acme\n\n---\n\n"+md, clean); strings.Contains(got, "acme") || !strings.Contains(got, "Texte.") {
+		t.Fatalf("rapport existant : %q", got)
+	}
+	drift := []session.Turn{{N: 1, Request: "dat drift du client acme", DAT: dat.Drift}}
+	if got := withRequest(md, drift); !strings.HasPrefix(got, "> dat drift du client acme") {
+		t.Fatalf("DAT interne sans la demande : %q", got)
 	}
 }
