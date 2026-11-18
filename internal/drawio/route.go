@@ -367,7 +367,7 @@ func routeModel(m *etree.Element, opt Options) (*Result, error) {
 			labelledCells[t][k] = true
 		}
 		full := append(append([]pt{start.at}, pts...), end.at)
-		if pos, rect, ok := r.labelPos(full, t, fontSize(e, 9), placed); ok {
+		if pos, rect, ok := r.labelPos(full, t, fontSize(e, 9), placed, keys); ok {
 			placed = append(placed, rect)
 			g.CreateAttr("x", fmtNum(pos))
 			g.CreateAttr("y", "0")
@@ -713,7 +713,7 @@ func overlap(a, b box) bool {
 	return a.x < b.x+b.w && b.x < a.x+a.w && a.y < b.y+b.h && b.y < a.y+a.h
 }
 
-func (r *router) labelPos(full []pt, t string, fs float64, placed []box) (float64, box, bool) {
+func (r *router) labelPos(full []pt, t string, fs float64, placed []box, keys keySet) (float64, box, bool) {
 	total := 0.0
 	for i := 0; i+1 < len(full); i++ {
 		total += math.Abs(full[i+1].x-full[i].x) + math.Abs(full[i+1].y-full[i].y)
@@ -745,6 +745,12 @@ func (r *router) labelPos(full []pt, t string, fs float64, placed []box) (float6
 					}
 					if _, ok := r.border[k]; ok {
 						hit++
+					}
+					for _, d := range []cellKey{k, {k.i - 1, k.j}, {k.i + 1, k.j}, {k.i, k.j - 1}, {k.i, k.j + 1}, {k.i - 2, k.j}, {k.i + 2, k.j}} {
+						if foreign(r.usedH[d], keys) || foreign(r.usedV[d], keys) {
+							hit += 3
+							break
+						}
 					}
 				}
 				for _, o := range placed {
