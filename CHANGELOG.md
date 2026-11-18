@@ -1,5 +1,14 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.79.2] - 2026-11-18
+
+### Modifié
+- Consignes du schéma relues et mises en cohérence : chaque lien porte son libellé (la règle « ne libeller que le premier » du serveur ne s'applique plus, clotr n'affiche qu'un libellé par tronc commun) ; une flèche va du client vers le service appelé ; couleur fixe par nature de flux (vert utilisateurs, violet exploitation, bleu applicatif, orange données et stockage, gris identité, DNS et appairages), rappelée par une phrase de légende dans le document ; groupes selon la topologie réseau, pas les groupes de ressources ; un répartiteur qui ne sert qu'un composant va dans le libellé de ce composant ; un service partagé n'a plus, sur les autres schémas, de lien unique choisi au hasard ; pas de titre dans la spec ; relecture de la spec contre les preuves avant chaque rendu. En mode schéma, les lectures de configuration des hôtes (ports, montages) restent permises.
+- Notice du schéma destinée au client (`--diagram clean`) : « Hors périmètre » réduit aux composants non représentés, comme le DAT.
+
+### Corrigé
+- Schémas : un lien ne perd son libellé que s'il emprunte réellement le tronc d'un lien de même libellé déjà libellé. Auparavant, tout lien qui partageait sa source ou sa cible et son libellé avec un lien libellé restait muet, même sur un tracé séparé : des flèches sans aucune indication.
+
 ## [0.79.1] - 2026-11-18
 
 ### Modifié
