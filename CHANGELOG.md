@@ -1,5 +1,11 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Corrigé
+- Identifiants partagés d'un rebond shell : un hôte qui refuse un mot de passe déjà accepté par un autre hôte du même label n'efface plus ces identifiants. Seul cet hôte est écarté pour le reste du run, sans nouvel essai (aucun échec d'authentification supplémentaire) et sans redemander le mot de passe pour les autres hôtes. Auparavant, le mot de passe était oublié et redemandé à chaque nouvelle connexion, en boucle.
+- Une demande d'identifiants laissée vide écarte l'hôte concerné pour le reste du run au lieu d'être reposée à chaque connexion vers lui.
+
 ## [0.79.3] - 2026-11-18
 
 ### Modifié

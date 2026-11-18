@@ -30,7 +30,52 @@ var (
 	refusals  = map[string]string{}
 	lastUser  = map[string]string{}
 	described = map[string]bool{}
+	accepted  = map[string]string{}
+	hostDeny  = map[string]string{}
 )
+
+type EmptyError struct{ Label string }
+
+func (e *EmptyError) Error() string { return i18n.T("creds.empty", e.Label) }
+
+func hostKey(label, host string) string {
+	return label + "\x01" + host
+}
+
+func Accept(label, user, pass string) {
+	if user == "" || pass == "" {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	accepted[userKey(label, user)] = pass
+}
+
+func RejectOn(label, user, pass, host, reason string) {
+	mu.Lock()
+	if p, ok := accepted[userKey(label, user)]; ok && pass != "" && p == pass {
+		hostDeny[hostKey(label, host)] = reason
+		mu.Unlock()
+		return
+	}
+	mu.Unlock()
+	Reject(label, user, pass, reason)
+}
+
+func Decline(label, host string) {
+	mu.Lock()
+	defer mu.Unlock()
+	hostDeny[hostKey(label, host)] = i18n.T("creds.declined")
+}
+
+func HostRefused(label, host string) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if r, ok := hostDeny[hostKey(label, host)]; ok {
+		return i18n.E("creds.host_refused", host, label, r)
+	}
+	return nil
+}
 
 type detailKey struct{}
 
@@ -105,6 +150,7 @@ func Forget(label, user string) {
 	mu.Lock()
 	defer mu.Unlock()
 	delete(cache, userKey(label, user))
+	delete(accepted, userKey(label, user))
 	skipVault[label] = true
 	if c, ok := cache[label]; ok && c.User == user {
 		delete(cache, label)
@@ -217,7 +263,7 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		p.Pass = pass
 	}
 	if p.Pass == "" || p.User == "" && !secretOnly {
-		return Pair{}, i18n.E("creds.empty", label)
+		return Pair{}, &EmptyError{Label: label}
 	}
 	cache[key] = p
 	if !secretOnly {

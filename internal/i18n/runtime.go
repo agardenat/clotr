@@ -140,6 +140,8 @@ var runtimeMsgs = map[string]msg{
 	"creds.refused_ssh":       {"password for %s refused by %s", "mot de passe de %s refusé par %s"},
 	"ssh.shell_prompt":        {"%s — %s ", "%s — %s "},
 	"creds.empty":             {"%s: empty credentials", "%s : identifiants vides"},
+	"creds.declined":          {"no credentials given for this host", "aucun identifiant saisi pour cet hôte"},
+	"creds.host_refused":      {"%s refuses the credentials of %s accepted by other hosts, no new attempt in this run: %s", "%s refuse les identifiants de %s acceptés par d'autres hôtes, pas de nouvel essai pendant ce run : %s"},
 	"vault.login":             {"Vault sign-in (auth/%s): %w", "connexion Vault (auth/%s) : %w"},
 	"vault.login_url":         {"Vault sign-in (auth/%s): no auth_url; role or redirect_uri %s not allowed", "connexion Vault (auth/%s) : pas d'auth_url ; rôle ou redirect_uri %s non autorisé"},
 	"vault.login_listen":      {"Vault sign-in: cannot listen on localhost:%d for the return: %w", "connexion Vault : écoute impossible sur localhost:%d pour le retour : %w"},

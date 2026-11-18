@@ -122,3 +122,51 @@ func TestRejectKeepsNewerPassword(t *testing.T) {
 		t.Fatalf("refus du mot de passe courant : gardé %v, motif %q", kept, reason)
 	}
 }
+
+func TestRejectOnKeepsAcceptedCredentials(t *testing.T) {
+	const label = "rebond (test)"
+	mu.Lock()
+	cache[label] = Pair{User: "ops", Pass: "bon"}
+	cache[userKey(label, "ops")] = Pair{User: "ops", Pass: "bon"}
+	mu.Unlock()
+	t.Cleanup(func() {
+		Forget(label, "ops")
+		mu.Lock()
+		delete(hostDeny, hostKey(label, "db1"))
+		delete(hostDeny, hostKey(label, "vm3"))
+		mu.Unlock()
+	})
+
+	Accept(label, "ops", "bon")
+	RejectOn(label, "ops", "bon", "db1", "refusé par db1")
+	p, err := ResolveUser(context.Background(), "ops", "", "", label)
+	if err != nil || p.Pass != "bon" {
+		t.Fatalf("identifiants acceptés ailleurs oubliés après un refus d'un seul hôte : %+v %v", p, err)
+	}
+	if err := HostRefused(label, "db1"); err == nil || !strings.Contains(err.Error(), "db1") {
+		t.Fatalf("hôte refusant non mémorisé : %v", err)
+	}
+	if err := HostRefused(label, "vm2"); err != nil {
+		t.Fatalf("autre hôte écarté : %v", err)
+	}
+
+	Decline(label, "vm3")
+	if err := HostRefused(label, "vm3"); err == nil {
+		t.Fatal("hôte sans identifiant saisi non écarté")
+	}
+
+	Forget(label, "ops")
+	mu.Lock()
+	cache[userKey(label, "ops")] = Pair{User: "ops", Pass: "faux"}
+	mu.Unlock()
+	RejectOn(label, "ops", "faux", "vm1", "refusé par vm1")
+	mu.Lock()
+	_, kept := cache[userKey(label, "ops")]
+	mu.Unlock()
+	if kept {
+		t.Fatal("mot de passe jamais accepté gardé après un refus")
+	}
+	if err := HostRefused(label, "vm1"); err != nil {
+		t.Fatalf("hôte écarté pour un mot de passe jamais accepté : %v", err)
+	}
+}
