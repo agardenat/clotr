@@ -120,15 +120,19 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	if mode == "" {
 		mode = report.ModeDefault
 	}
+	request, ticket := turn.Request, turn.Ticket
+	if clientDocument(turn) {
+		request, ticket = "", ""
+	}
 	return renderExport(ctx, o, cfg, exportJob{
 		input: template.DocumentInput{
 			Images:   reportImages(md, sess.TurnDir(n), false),
 			Markdown: md,
-			Title:    exportTitle(md, turn.Request),
+			Title:    exportTitle(md, request),
 			Mode:     mode,
 			Language: reportLanguage(cmp.Or(o.langFlag, sess.Language), md),
-			Request:  turn.Request,
-			Ticket:   turn.Ticket,
+			Request:  request,
+			Ticket:   ticket,
 			Date:     turn.Time.Local().Format("2006-01-02"),
 			Session:  sess.Name,
 		},
