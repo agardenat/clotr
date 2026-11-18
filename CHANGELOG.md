@@ -1,5 +1,14 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.79.0] - 2026-11-18
+
+### Modifié
+- Identifiants à saisir demandés dès que le plan est établi, avant le lancement des tâches, pour les instances du plan : authentification des connecteurs `http` (API de gestion par exemple) et `oauth2`, mot de passe `ssh` sans clé, identifiants du driver `shell`. En `--dat` et `--diagram`, ils sont demandés au démarrage. La question n'arrive plus au premier appel de l'instance, plusieurs minutes après le début du run. Rien ne change pour ce que fournissent les variables ou Vault.
+- Schéma d'architecture : un composant nommé et distinct par son rôle (cluster, base, serveur applicatif) reste un nœud à lui seul ; seuls des éléments interchangeables (nœuds d'un même pool, réplicas, machines d'un même rôle) se regroupent en « (×N) », et un même composant n'est jamais dessiné deux fois. La consigne regroupait toute série de plus de trois ressources de même type.
+
+### Ajouté
+- `checklist` dans un template : faits d'architecture que ses instances permettent d'établir. En `--dat` et `--diagram`, chaque tâche reçoit la liste de ses instances et doit établir chaque point ou dire pourquoi il ne l'est pas : le relevé ne dépend plus des choix de lecture de l'agent (un appairage ou un objet de filtrage pouvait manquer d'un run à l'autre).
+
 ## [0.78.5] - 2026-11-17
 
 ### Modifié
