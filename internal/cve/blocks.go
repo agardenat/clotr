@@ -381,7 +381,7 @@ func indicators(adv *Advisory) string {
 func legend() string {
 	var b strings.Builder
 	b.WriteString("> **" + i18n.R("cve.legend") + "**\n")
-	for _, k := range []string{"cvss", "vendor", "epss", "kev", "ssvc"} {
+	for _, k := range []string{"cvss", "vendor", "epss", "kev", "ssvc", "positives"} {
 		b.WriteString(">\n> " + i18n.R("cve.legend."+k) + "\n")
 	}
 	return b.String()
@@ -621,13 +621,11 @@ func verdict(finds []Finding) string {
 	fmt.Fprintf(&b, "🚨 %d %s · ❓ %d %s · ✅ %d %s (%d %s)", counts[Vulnerable], i18n.R("cve.st.vulnerable"), counts[Unknown], i18n.R("cve.st.unknown"), counts[Clean], i18n.R("cve.st.clean"), len(finds), i18n.R("cve.assets"))
 	if pos := counts[Vulnerable] + counts[Compromised]; pos > 0 {
 		var parts []string
+		exp[Unmeasured] += exp[""]
 		for _, e := range exposures {
 			if exp[e] > 0 {
-				parts = append(parts, fmt.Sprintf("%d %s", exp[e], i18n.R("cve.exp."+e)))
+				parts = append(parts, fmt.Sprintf("%s %d %s", ExposureIcon(e), exp[e], i18n.R("cve.exp."+e)))
 			}
-		}
-		if exp[""] > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", exp[""], i18n.R("cve.exp.unmeasured")))
 		}
 		fmt.Fprintf(&b, "\n\n%s%s%s", i18n.R("cve.l.positives_exposure"), colon(), strings.Join(parts, " · "))
 	}
@@ -643,8 +641,10 @@ func exposureRank(e string) int {
 		return 0
 	case Unmeasured, "":
 		return 1
+	case Limited:
+		return 2
 	}
-	return 2
+	return 3
 }
 
 func (s *Store) positives(adv *Advisory, finds []Finding) string {
@@ -677,7 +677,7 @@ func (s *Store) positives(adv *Advisory, finds []Finding) string {
 	if len(rows) > 1 {
 		fmt.Fprintf(&b, "| | %s | %s | %s |\n|---|---|---|---|\n", i18n.R("cve.col.asset"), i18n.R("cve.col.exposure"), i18n.R("cve.col.fixed_in"))
 		for _, f := range rows {
-			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", Icon(f.Status), cell(f.Asset), exposureLabel(f), cell(orDash(fixFor(facts, f))))
+			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", f.Icon(), cell(f.Asset), exposureLabel(f), cell(orDash(fixFor(facts, f))))
 		}
 		b.WriteString("\n")
 	}
@@ -699,7 +699,7 @@ func (s *Store) assetCard(b *strings.Builder, f Finding, facts *sources.Facts) {
 	if f.OS != "" {
 		head += ", " + f.OS
 	}
-	fmt.Fprintf(b, "**%s %s** (%s)\n\n", Icon(f.Status), f.Asset, head)
+	fmt.Fprintf(b, "**%s %s** (%s)\n\n", f.Icon(), f.Asset, head)
 	bullet := func(label, v string) {
 		if v != "" {
 			fmt.Fprintf(b, "- **%s**%s%s\n", label, colon(), v)
