@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.83.1] - 2026-11-19
 
 ### Corrigé
 - Récapitulatif CVE illisible quand une entrée du plan d'action ne reprend pas le nom exact de ses actifs : les conditions et constats de tous les positifs du sujet étaient recopiés dans chaque ligne.
