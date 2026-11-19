@@ -117,6 +117,7 @@ type exportJob struct {
 	input        template.DocumentInput
 	keepDir      string
 	keepName     string
+	dest         string
 	confidential bool
 }
 
@@ -138,6 +139,10 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	if len(turn.CVE) > 1 {
 		title = cveReportTitle(lang, turn.CVE)
 	}
+	dest := ""
+	if len(turn.CVE) > 0 {
+		dest = turn.ReportName() + "." + o.exportFmt
+	}
 	return renderExport(ctx, o, cfg, exportJob{
 		input: template.DocumentInput{
 			Images:   reportImages(md, sess.TurnDir(n), false),
@@ -152,6 +157,7 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 		},
 		keepDir:      sess.TurnDir(n),
 		keepName:     turn.ReportName(),
+		dest:         dest,
 		confidential: sess.Confidential,
 	})
 }
@@ -179,6 +185,12 @@ func writeRecap(o *options, sess *session.Session, n int, md string) {
 	if err := os.WriteFile(path, []byte(recap), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.recap_failed", err))
 		return
+	}
+	local := filepath.Base(path)
+	if err := os.WriteFile(local, []byte(recap), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.recap_copy_failed", err))
+	} else {
+		path = local
 	}
 	fmt.Fprintln(os.Stderr, i18n.T("cve.recap_written", path))
 }
@@ -232,7 +244,7 @@ func cmdExport(ctx context.Context, o *options, src string) error {
 
 func renderExport(ctx context.Context, o *options, cfg *config.Config, job exportJob) error {
 	md := job.input.Markdown
-	format, dest := o.exportFmt, o.exportPath
+	format, dest := o.exportFmt, cmp.Or(o.exportPath, job.dest)
 	name := cmp.Or(o.exportTpl, cfg.Export.Template)
 	if name == "" {
 		return i18n.E("export.no_template")

@@ -1,7 +1,11 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/agardenat/clotr/internal/session"
 )
 
 func TestResolveExport(t *testing.T) {
@@ -86,5 +90,64 @@ func TestCVEReportTitle(t *testing.T) {
 	}
 	if got := cveReportTitle("en", ids); got != "Report CVE-2026-11111, CVE-2026-22222" {
 		t.Fatalf("en: %q", got)
+	}
+}
+
+const recapSource = `# CVE-2026-11111 — openjdk
+
+## 3. Actifs positifs
+
+**🚨 vm-a** (hôte, RHEL 9)
+
+- **Trouvé** : openjdk 17.0.1 [E010]
+- **Exposition** : **exposée** : port 8443 publié [E012]
+
+## 6. Plan d'action
+
+1. **vm-a**
+   - Pourquoi positif : openjdk 17.0.1, dans la plage touchée < 17.0.9 [E010]
+   - Mitigation immédiate : filtrer le port 8443
+   - Correctif définitif : openjdk 17.0.9
+`
+
+func TestWriteRecapCopiesToWorkingDir(t *testing.T) {
+	s, err := session.Create(t.TempDir(), false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.NewTurn("CVE-2026-11111"); err != nil {
+		t.Fatal(err)
+	}
+	s.Turns[0].CVE, s.Turns[0].Clients = []string{"CVE-2026-11111"}, []string{"gnr"}
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	writeRecap(&options{}, s, 1, recapSource)
+	kept, err := os.ReadFile(s.RecapPath(1, "md"))
+	if err != nil {
+		t.Fatalf("récapitulatif absent de la session : %v", err)
+	}
+	local, err := os.ReadFile(filepath.Join(cwd, s.Turns[0].RecapName()+".md"))
+	if err != nil {
+		t.Fatalf("récapitulatif absent du répertoire courant : %v", err)
+	}
+	if len(kept) == 0 || string(local) != string(kept) {
+		t.Fatalf("copie différente :\n%s\n---\n%s", local, kept)
+	}
+}
+
+func TestWriteRecapIgnoresOtherModes(t *testing.T) {
+	s, err := session.Create(t.TempDir(), false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.NewTurn("incident"); err != nil {
+		t.Fatal(err)
+	}
+	s.Turns[0].Clients = []string{"gnr"}
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	writeRecap(&options{}, s, 1, recapSource)
+	if entries, _ := os.ReadDir(cwd); len(entries) != 0 {
+		t.Fatalf("fichiers écrits hors mode CVE : %v", entries)
 	}
 }

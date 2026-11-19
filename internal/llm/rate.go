@@ -2,24 +2,67 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sync"
 	"time"
+
+	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/filelock"
 )
 
 const rateWindow = time.Minute + time.Second
+
+var rateDir = func() string { return filepath.Join(config.StateDir(), "clotr", "rate") }
 
 type rateGate struct {
 	mu    sync.Mutex
 	limit int
 	sent  []time.Time
 	until time.Time
+	file  *os.File
 	now   func() time.Time
 	after func(time.Duration) <-chan time.Time
 }
 
+type rateState struct {
+	Sent  []time.Time `json:"sent"`
+	Until time.Time   `json:"until"`
+}
+
 func newRateGate(limit int) *rateGate {
 	return &rateGate{limit: limit, now: time.Now, after: time.After}
+}
+
+var unsafeRateName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
+func newSharedRateGate(limit int, provider string) *rateGate {
+	g := newRateGate(limit)
+	if f, err := filelock.Open(filepath.Join(rateDir(), unsafeRateName.ReplaceAllString(provider, "_")+".json")); err == nil {
+		g.file = f
+	}
+	return g
+}
+
+func (g *rateGate) shared(fn func()) {
+	if g.file == nil || filelock.Lock(g.file) != nil {
+		fn()
+		return
+	}
+	defer func() { _ = filelock.Unlock(g.file) }()
+	if data, err := filelock.ReadLocked(g.file); err == nil {
+		var st rateState
+		if json.Unmarshal(data, &st) != nil {
+			st = rateState{}
+		}
+		g.sent, g.until = st.Sent, st.Until
+	}
+	fn()
+	if data, err := json.Marshal(rateState{Sent: g.sent, Until: g.until}); err == nil {
+		_ = filelock.WriteLocked(g.file, data)
+	}
 }
 
 func (g *rateGate) delay() time.Duration {
@@ -45,8 +88,9 @@ func (g *rateGate) delay() time.Duration {
 
 func (g *rateGate) wait(ctx context.Context) error {
 	for {
+		var d time.Duration
 		g.mu.Lock()
-		d := g.delay()
+		g.shared(func() { d = g.delay() })
 		g.mu.Unlock()
 		if d <= 0 {
 			return nil
@@ -65,9 +109,11 @@ func (g *rateGate) block(d time.Duration) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if until := g.now().Add(min(d, rateWindow)); until.After(g.until) {
-		g.until = until
-	}
+	g.shared(func() {
+		if until := g.now().Add(min(d, rateWindow)); until.After(g.until) {
+			g.until = until
+		}
+	})
 }
 
 var limitResets = regexp.MustCompile(`[Ll]imit resets at:? (\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}) UTC`)
