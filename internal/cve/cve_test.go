@@ -262,7 +262,7 @@ func TestBlocksCompact(t *testing.T) {
 	for want, in := range map[string]string{
 		"🚨 1 vulnerable · ❓ 1 undetermined · ✅ 51 clean (53 assets)": verdict,
 		"1 limited exposure": verdict,
-		"**🚨 k8s/prod/ns0/legacy/php** (workload)\n\n- **Found**: php 8.1.2\n- **Exposure**: **limited**: php-fpm non publié\n- **Deciding test**: `rpm -qa | grep php` [E001]": pos,
+		"**🟠 k8s/prod/ns0/legacy/php** (workload)\n\n- **Found**: php 8.1.2\n- **Exposure**: **limited**: php-fpm non publié\n- **Deciding test**: `rpm -qa | grep php` [E001]": pos,
 		"**❓ vm/web2** (host)\n\n- **What is missing**: accès refusé": unk,
 		"**Workloads** (50)":                             neg,
 		"- `k8s/prod/ns0` (17): app-0/main, app-12/main": neg,

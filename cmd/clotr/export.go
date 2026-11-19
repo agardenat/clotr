@@ -117,7 +117,6 @@ type exportJob struct {
 	input        template.DocumentInput
 	keepDir      string
 	keepName     string
-	format       string
 	confidential bool
 }
 
@@ -164,42 +163,24 @@ func withClients(sess *session.Session, n int) session.Turn {
 	return sess.Turns[n-1]
 }
 
-func exportRecap(ctx context.Context, o *options, cfg *config.Config, sess *session.Session, n int, md string) {
+func writeRecap(o *options, sess *session.Session, n int, md string) {
 	turn := withClients(sess, n)
 	if len(turn.CVE) == 0 || md == "" {
 		return
 	}
-	lang := reportLanguage(cmp.Or(o.langFlag, sess.Language), md)
 	prev := i18n.Report()
-	i18n.SetReport(lang)
+	i18n.SetReport(reportLanguage(cmp.Or(o.langFlag, sess.Language), md))
 	recap := cve.Recap(md)
 	i18n.SetReport(prev)
 	if recap == "" {
 		return
 	}
-	err := renderExport(ctx, o, cfg, exportJob{
-		input: template.DocumentInput{
-			Markdown: recap,
-			Title:    exportTitle(recap, ""),
-			Mode:     report.ModeCVE,
-			Language: lang,
-			Date:     turn.Time.Local().Format("2006-01-02"),
-			Session:  sess.Name,
-		},
-		keepDir:      sess.TurnDir(n),
-		keepName:     turn.RecapName(),
-		format:       "pdf",
-		confidential: sess.Confidential,
-	})
-	if err == nil {
-		return
-	}
 	path := sess.RecapPath(n, "md")
-	if werr := os.WriteFile(path, []byte(recap), 0o600); werr != nil {
-		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.recap_failed", err, werr))
+	if err := os.WriteFile(path, []byte(recap), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.recap_failed", err))
 		return
 	}
-	fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.recap_markdown", err, path))
+	fmt.Fprintln(os.Stderr, i18n.T("cve.recap_written", path))
 }
 
 func cmdExport(ctx context.Context, o *options, src string) error {
@@ -251,10 +232,7 @@ func cmdExport(ctx context.Context, o *options, src string) error {
 
 func renderExport(ctx context.Context, o *options, cfg *config.Config, job exportJob) error {
 	md := job.input.Markdown
-	format, dest := cmp.Or(job.format, o.exportFmt), o.exportPath
-	if job.format != "" {
-		dest = ""
-	}
+	format, dest := o.exportFmt, o.exportPath
 	name := cmp.Or(o.exportTpl, cfg.Export.Template)
 	if name == "" {
 		return i18n.E("export.no_template")

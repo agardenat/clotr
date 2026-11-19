@@ -1,5 +1,14 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Modifié
+- Nom de session : `<client>-<mot>-<adjectif>-<nom>`. Le client est celui que cite la demande ou `-t`. Le mot résume le run : `cve`, `dat` ou `schema` dans ces modes, sinon un mot donné par le modèle du rôle le plus rapide, avec repli sur le nom du mode. La partie aléatoire est gardée.
+- Récapitulatif CVE : tableau Markdown à coller dans un ticket ou une messagerie, au lieu d'un PDF. Une ligne par entrée du plan d'action, avec la CVE, le ou les actifs, pourquoi l'actif est positif, la mitigation immédiate et le correctif définitif (fix / patch).
+- Mode CVE : nouveau niveau d'exposition `neutralized` pour un actif vulnérable dont la configuration actuelle désactive la fonction touchée. Il n'est pas exploitable en l'état, mais le redevient si la configuration change. Chaque positif a son icône : 🚨 exposé ou non mesuré, 🟠 exposition limitée, 🟡 neutralisé par la configuration. Le verdict décompte les positifs par icône, et une légende des icônes est ajoutée.
+- Récapitulatif CVE : colonne « En l'état » (icône, niveau et conditions mesurées) et tableau ❓ des actifs indéterminés, avec ce qui a manqué.
+- Modèle de rapport CVE : chaque entrée du plan d'action nomme ses actifs comme dans le tableau et donne, dans cet ordre, « Pourquoi positif », « Mitigation immédiate », « Correctif définitif » et « Vérification ».
+
 ## [0.82.1] - 2026-11-19
 
 ### Corrigé

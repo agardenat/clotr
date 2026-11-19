@@ -8,9 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/memory"
@@ -81,6 +85,7 @@ type Session struct {
 	Language     string    `json:"language,omitempty"`
 	Turns        []Turn    `json:"turns"`
 	dir          string
+	root         string
 }
 
 func nameWords() ([]string, []string) {
@@ -91,35 +96,87 @@ func nameWords() ([]string, []string) {
 }
 
 func GenerateName(exists func(string) bool) string {
+	return GenerateNamePrefixed("", exists)
+}
+
+func GenerateNamePrefixed(prefix string, exists func(string) bool) string {
 	adj, noun := nameWords()
 	for range 50 {
-		name := adj[rand.IntN(len(adj))] + "-" + noun[rand.IntN(len(noun))]
+		name := prefix + adj[rand.IntN(len(adj))] + "-" + noun[rand.IntN(len(noun))]
 		if !exists(name) {
 			return name
 		}
 	}
 	for i := 2; ; i++ {
-		name := fmt.Sprintf("%s-%s-%d", adj[rand.IntN(len(adj))], noun[rand.IntN(len(noun))], i)
+		name := fmt.Sprintf("%s%s-%s-%d", prefix, adj[rand.IntN(len(adj))], noun[rand.IntN(len(noun))], i)
 		if !exists(name) {
 			return name
 		}
 	}
 }
 
-func Create(root string, confidential bool, sovereign string) (*Session, error) {
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return nil, err
+var namePart = regexp.MustCompile(`[^a-z0-9]+`)
+
+func NamePrefix(parts ...string) string {
+	var out []string
+	for _, p := range parts {
+		p = strings.Trim(namePart.ReplaceAllString(strings.ToLower(foldAccents(p)), "-"), "-")
+		if p != "" && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
 	}
-	name := GenerateName(func(n string) bool {
-		_, err := os.Stat(filepath.Join(root, n))
-		return err == nil
-	})
+	if len(out) == 0 {
+		return ""
+	}
+	return strings.Join(out, "-") + "-"
+}
+
+func foldAccents(s string) string {
+	var b strings.Builder
+	for _, r := range norm.NFD.String(s) {
+		if !unicode.Is(unicode.Mn, r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func New(root string, confidential bool, sovereign string) *Session {
 	now := time.Now()
-	s := &Session{Name: name, Created: now, Updated: now, Confidential: confidential, Sovereign: sovereign, dir: filepath.Join(root, name)}
-	if err := os.Mkdir(s.dir, 0o700); err != nil {
-		return nil, err
+	return &Session{Created: now, Updated: now, Confidential: confidential, Sovereign: sovereign, root: root}
+}
+
+func (s *Session) Started() bool {
+	return s.dir != ""
+}
+
+func (s *Session) Start(prefix string) error {
+	if s.Started() {
+		return nil
 	}
-	return s, s.Save()
+	if err := os.MkdirAll(s.root, 0o700); err != nil {
+		return err
+	}
+	for {
+		name := GenerateNamePrefixed(prefix, func(n string) bool {
+			_, err := os.Lstat(filepath.Join(s.root, n))
+			return err == nil
+		})
+		dir := filepath.Join(s.root, name)
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				continue
+			}
+			return err
+		}
+		s.Name, s.dir = name, dir
+		return s.Save()
+	}
+}
+
+func Create(root string, confidential bool, sovereign string) (*Session, error) {
+	s := New(root, confidential, sovereign)
+	return s, s.Start("")
 }
 
 func Open(root, name string) (*Session, error) {

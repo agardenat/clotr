@@ -36,11 +36,12 @@ const (
 	Exposed      = "exposed"
 	Limited      = "limited"
 	Unmeasured   = "unmeasured"
+	Neutralized  = "neutralized"
 )
 
 var (
 	assetTypes = []string{AssetHost, AssetWork, AssetImage, AssetService}
-	exposures  = []string{Exposed, Limited, Unmeasured}
+	exposures  = []string{Exposed, Unmeasured, Limited, Neutralized}
 )
 
 var idRe = regexp.MustCompile(`(?i)\b(?:CVE-\d{4}-\d{4,}|GHSA(?:-[0-9a-z]{4}){3})\b`)
@@ -501,11 +502,11 @@ type reportTool struct{ s *Store }
 func (reportTool) Name() string { return ReportTool }
 
 func (reportTool) Description() string {
-	return "Signale tout de suite le statut d'un actif pour un sujet de la demande (CVE, GHSA ou compromission, identifiant exact de la fiche), appuyé par au moins une preuve [Exxx], celle du test qui détermine le statut : l'utilisateur le voit aussitôt et les autres tâches le reçoivent. status : compromised si une preuve montre un indicateur de compromission de la fiche (fichier, empreinte, connexion, processus, persistance) ; vulnerable si une preuve montre une version touchée ou malveillante (selon la fiche) ; clean seulement si une preuve couvre la CVE pour cet actif (composant absent de l'inventaire des paquets ou de l'image, version corrigée) ; unknown sinon (binaire introuvable dans le PATH, image non inspectée, version illisible, accès refusé), avec ce qui manque dans detail. asset : chemin stable instance/cible/namespace/objet[/conteneur] ou instance/hôte, toujours le même pour un même actif. asset_type (obligatoire) : host (VM, serveur, nœud), workload (pod, conteneur, déploiement), image, service (point d'accès managé, URL). os : la distribution lue dans /etc/os-release, au format « ID VERSION_ID VERSION_CODENAME » (ex. « ubuntu 22.04 jammy », « rhel 9.4 »), quand elle est connue : clotr y associe la version corrigée de la fiche. Pour vulnerable ou compromised : exposure (exposed si les prérequis d'exploitation de la fiche sont réunis, limited si l'un manque, unmeasured s'ils n'ont pas été mesurés) et conditions (ce qui a été mesuré, ex. « port 22 publié par le load balancer public », « module non chargé »), avec leur preuve. Si la fiche indique un composant de l'hôte : asset_type host ou workload ; un workload prend le statut de ses hôtes, cités dans runs_on et signalés avant lui, même si son image ne contient pas le composant. Re-signaler un actif remplace son statut (ex. unknown puis clean après inspection de l'image). Un signalement par actif et par CVE, puis poursuis."
+	return "Signale tout de suite le statut d'un actif pour un sujet de la demande (CVE, GHSA ou compromission, identifiant exact de la fiche), appuyé par au moins une preuve [Exxx], celle du test qui détermine le statut : l'utilisateur le voit aussitôt et les autres tâches le reçoivent. status : compromised si une preuve montre un indicateur de compromission de la fiche (fichier, empreinte, connexion, processus, persistance) ; vulnerable si une preuve montre une version touchée ou malveillante (selon la fiche) ; clean seulement si une preuve couvre la CVE pour cet actif (composant absent de l'inventaire des paquets ou de l'image, version corrigée) ; unknown sinon (binaire introuvable dans le PATH, image non inspectée, version illisible, accès refusé), avec ce qui manque dans detail. asset : chemin stable instance/cible/namespace/objet[/conteneur] ou instance/hôte, toujours le même pour un même actif. asset_type (obligatoire) : host (VM, serveur, nœud), workload (pod, conteneur, déploiement), image, service (point d'accès managé, URL). os : la distribution lue dans /etc/os-release, au format « ID VERSION_ID VERSION_CODENAME » (ex. « ubuntu 22.04 jammy », « rhel 9.4 »), quand elle est connue : clotr y associe la version corrigée de la fiche. Pour vulnerable ou compromised : exposure (" + exposureRule + ") et conditions (ce qui a été mesuré, ex. « port 22 publié par le load balancer public », « module non chargé »), avec leur preuve. Si la fiche indique un composant de l'hôte : asset_type host ou workload ; un workload prend le statut de ses hôtes, cités dans runs_on et signalés avant lui, même si son image ne contient pas le composant. Re-signaler un actif remplace son statut (ex. unknown puis clean après inspection de l'image). Un signalement par actif et par CVE, puis poursuis."
 }
 
 func (reportTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"cve":{"type":"string"},"asset":{"type":"string","description":"ex: k8s-prod/prod/web/web-7d9f/app ou vm-prod/web1"},"asset_type":{"type":"string","enum":["host","workload","image","service"]},"status":{"type":"string","enum":["clean","vulnerable","compromised","unknown"]},"os":{"type":"string","description":"ID VERSION_ID VERSION_CODENAME de /etc/os-release, ex: ubuntu 22.04 jammy"},"exposure":{"type":"string","enum":["exposed","limited","unmeasured"],"description":"obligatoire pour vulnerable ou compromised"},"conditions":{"type":"string","description":"prérequis d'exploitation mesurés sur cet actif ; obligatoire pour vulnerable ou compromised"},"runs_on":{"type":"array","items":{"type":"string"},"description":"pour un workload et un composant de l'hôte : les hôtes qui l'exécutent, avec leur asset signalé"},"detail":{"type":"string","description":"version ou paquet trouvé, ou ce qui manque pour conclure"},"evidence":{"type":"array","items":{"type":"string"},"description":"preuve du test déterminant d'abord, ex: [\"E012\"]"}},"required":["cve","asset","asset_type","status","detail","evidence"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"cve":{"type":"string"},"asset":{"type":"string","description":"ex: k8s-prod/prod/web/web-7d9f/app ou vm-prod/web1"},"asset_type":{"type":"string","enum":["host","workload","image","service"]},"status":{"type":"string","enum":["clean","vulnerable","compromised","unknown"]},"os":{"type":"string","description":"ID VERSION_ID VERSION_CODENAME de /etc/os-release, ex: ubuntu 22.04 jammy"},"exposure":{"type":"string","enum":["exposed","limited","neutralized","unmeasured"],"description":"obligatoire pour vulnerable ou compromised"},"conditions":{"type":"string","description":"prérequis d'exploitation mesurés sur cet actif ; obligatoire pour vulnerable ou compromised"},"runs_on":{"type":"array","items":{"type":"string"},"description":"pour un workload et un composant de l'hôte : les hôtes qui l'exécutent, avec leur asset signalé"},"detail":{"type":"string","description":"version ou paquet trouvé, ou ce qui manque pour conclure"},"evidence":{"type":"array","items":{"type":"string"},"description":"preuve du test déterminant d'abord, ex: [\"E012\"]"}},"required":["cve","asset","asset_type","status","detail","evidence"]}`)
 }
 
 func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
@@ -535,7 +536,7 @@ func (t reportTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 	exposure, conditions := a.Exposure, oneLine(a.Conditions)
 	if positive {
 		if !slices.Contains(exposures, exposure) {
-			return "", errors.New("exposure requis pour un actif vulnerable ou compromised : exposed si les prérequis d'exploitation de la fiche sont réunis, limited si l'un manque, unmeasured s'ils n'ont pas été mesurés")
+			return "", errors.New("exposure requis pour un actif vulnerable ou compromised : " + exposureRule)
 		}
 		if conditions == "" {
 			return "", errors.New("conditions requis pour un actif vulnerable ou compromised : ce qui a été mesuré des prérequis d'exploitation (exposition réseau, option activée), ou pourquoi ce n'est pas mesurable")
@@ -659,11 +660,30 @@ func (f *Finding) line() string {
 }
 
 func (f *Finding) display() string {
-	s := fmt.Sprintf("%s %s · %s : %s %s", Icon(f.Status), f.CVE, f.Asset, f.withHosts(), strings.Join(f.Evidence, ""))
+	s := fmt.Sprintf("%s %s · %s : %s %s", f.Icon(), f.CVE, f.Asset, f.withHosts(), strings.Join(f.Evidence, ""))
 	if f.Previous != "" && f.Previous != f.Status {
 		s += i18n.T("cve.previous", Icon(f.Previous))
 	}
 	return s
+}
+
+const exposureRule = "exposed si les prérequis d'exploitation de la fiche sont réunis (fonction touchée active et joignable) ; limited si la fonction touchée est active mais son accès est restreint (réseau interne seulement, authentification requise, service non publié) ; neutralized si la configuration actuelle désactive la fonction touchée (module non chargé ou non compilé, option ou directive absente, composant jamais exécuté) : non exploitable en l'état, exploitable si la configuration change ; unmeasured si les prérequis n'ont pas été mesurés"
+
+func (f Finding) Icon() string {
+	if f.Status == Vulnerable {
+		return ExposureIcon(f.Exposure)
+	}
+	return Icon(f.Status)
+}
+
+func ExposureIcon(exposure string) string {
+	switch exposure {
+	case Limited:
+		return "🟠"
+	case Neutralized:
+		return "🟡"
+	}
+	return "🚨"
 }
 
 func Icon(status string) string {

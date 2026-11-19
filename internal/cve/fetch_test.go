@@ -168,7 +168,7 @@ func TestFicheIndicatorsAndPositives(t *testing.T) {
 		"| Red Hat | Red Hat Enterprise Linux 9 | openssh | corrigé | 0:8.7p1-38.el9_4.1 | RHSA-2024:4312 |": fiche,
 		"| Ubuntu | noble | openssh | corrigé | 1:9.6p1-3ubuntu13.3 |":                                       fiche,
 		"> **CNA redhat · Red Hat** [E001][E006] : ":                                                         fiche,
-		"**🚨 vm/web1** (hôte, rhel 9.4)\n\n- **Trouvé** : openssh 0:8.7p1-38.el9\n- **Corrigé dans** : 0:8.7p1-38.el9_4.1 (RHSA-2024:4312)": pos,
+		"**🟠 vm/web1** (hôte, rhel 9.4)\n\n- **Trouvé** : openssh 0:8.7p1-38.el9\n- **Corrigé dans** : 0:8.7p1-38.el9_4.1 (RHSA-2024:4312)": pos,
 		"**limitée** : port 22 joignable": pos,
 		"grep openssh`":                   pos,
 	} {

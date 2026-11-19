@@ -1881,6 +1881,10 @@ func openRun(ctx context.Context, o *options, request string) (*session.Session,
 		return nil, nil, err
 	}
 	rt.closers = append(rt.closers, func() { _ = rt.audit.Close() })
+	if err := rt.startSession(ctx, o, sess, request); err != nil {
+		rt.close()
+		return nil, nil, err
+	}
 	prior, err := sess.LoadMemory()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.memory"), err)
@@ -2228,7 +2232,7 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 			}
 		}
 	}
-	exportRecap(ctx, o, rt.cfg, sess, len(sess.Turns), report.Markdown)
+	writeRecap(o, sess, len(sess.Turns), report.Markdown)
 	return runErr
 }
 
@@ -2490,11 +2494,9 @@ func openSession(cfg *config.Config, o *options, request string) (*session.Sessi
 		if err := o.applyCompliance(cfg, o.tools, request, false); err != nil {
 			return nil, err
 		}
-		s, err := session.Create(cfg.Sessions.Dir, o.confidential || o.sovereign == "require", o.sovereign)
-		if err == nil {
-			s.Language = o.lang
-		}
-		return s, err
+		s := session.New(cfg.Sessions.Dir, o.confidential || o.sovereign == "require", o.sovereign)
+		s.Language = o.lang
+		return s, nil
 	}
 	sess, err := session.Open(cfg.Sessions.Dir, o.session)
 	if err != nil {
@@ -2752,7 +2754,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	if err := sess.Save(); err != nil {
 		return err
 	}
-	exportRecap(ctx, o, rt.cfg, sess, n, md)
+	writeRecap(o, sess, n, md)
 	fmt.Fprintln(os.Stderr, i18n.T("models.used", model))
 	for _, c := range rt.budget.Summary() {
 		fmt.Fprintln(os.Stderr, i18n.T("cost.line", c.String()))
@@ -2958,9 +2960,8 @@ func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error
 	if o.sovereign == "" {
 		o.sovereign = s.Sovereign
 	}
-	err = exportReport(ctx, o, cfg, s, n, report)
-	exportRecap(ctx, o, cfg, s, n, report)
-	return err
+	writeRecap(o, s, n, report)
+	return exportReport(ctx, o, cfg, s, n, report)
 }
 
 type usedModel struct {

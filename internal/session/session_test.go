@@ -164,3 +164,36 @@ func TestReportNamedAndLegacy(t *testing.T) {
 		t.Fatalf("rapport d'un ancien tour: %q", r)
 	}
 }
+
+func TestNamePrefix(t *testing.T) {
+	cases := map[string][]string{
+		"lap-nginx-":      {"lap", "nginx"},
+		"gnr-certificat-": {"GNR", "Certificat"},
+		"lap-schema-":     {"lap", "schéma", ""},
+		"cve-":            {"", "cve", "cve"},
+		"":                {"", " "},
+	}
+	for want, parts := range cases {
+		if got := NamePrefix(parts...); got != want {
+			t.Errorf("NamePrefix(%q) = %q, want %q", parts, got, want)
+		}
+	}
+}
+
+func TestStartPrefixed(t *testing.T) {
+	root := t.TempDir()
+	s := New(root, false, "")
+	if s.Started() {
+		t.Fatal("draft session already started")
+	}
+	if err := s.Start("lap-nginx-"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(s.Name, "lap-nginx-") || !validName.MatchString(s.Name) {
+		t.Fatalf("name %q", s.Name)
+	}
+	got, err := Open(root, s.Name)
+	if err != nil || got.Name != s.Name {
+		t.Fatalf("reopen: %v %v", got, err)
+	}
+}
