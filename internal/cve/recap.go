@@ -1,8 +1,8 @@
 package cve
 
 import (
+	"path"
 	"regexp"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -31,8 +31,8 @@ type recapCard struct {
 }
 
 type recapRow struct {
-	asset string
-	cells [3]string
+	asset, detail string
+	cells         [3]string
 }
 
 type recapSubject struct {
@@ -91,7 +91,7 @@ func Recap(md string) string {
 			}
 		case "6":
 			if m := planEntry.FindStringSubmatch(t); m != nil {
-				row = &recapRow{asset: clean(m[1])}
+				row = &recapRow{asset: clean(m[1]), detail: trimDetail(clean(m[2]))}
 				cur.rows = append(cur.rows, row)
 				last = -1
 				continue
@@ -120,95 +120,149 @@ func Recap(md string) string {
 	}
 	var b strings.Builder
 	b.WriteString("# " + i18n.R("cve.recap.title") + " " + strings.Join(ids, ", ") + "\n")
-	var lines, unknown []string
+	var cards, unknown []string
 	for _, s := range subjects {
 		cve := strings.Join(s.ids, ", ")
-		for _, c := range s.unknown {
-			unknown = append(unknown, tableRow(cve, c.asset, c.missing))
-		}
-		if len(s.rows) == 0 {
-			none = append(none, s.ids...)
-			continue
-		}
+		unknown = append(unknown, unknownLines(s.unknown, cve)...)
+		before := len(cards)
 		for _, r := range s.rows {
-			cards := s.cardsFor(r.asset)
+			if r.cells[colMitigation] == "" && r.cells[colFix] == "" {
+				continue
+			}
+			matched := s.cardsFor(r.asset + " " + r.detail)
 			why := r.cells[colWhy]
 			if why == "" {
-				why = cardsText(cards, func(c *recapCard) string { return c.found })
+				why = r.detail
 			}
-			state := cardsText(cards, func(c *recapCard) string { return strings.TrimSpace(c.stateIcon() + " " + c.exposure) })
-			lines = append(lines, tableRow(cve, r.asset, state, why, r.cells[colMitigation], r.cells[colFix]))
+			if why == "" && len(matched) > 0 {
+				why = matched[0].found
+			}
+			state := stateOf(matched)
+			if state == "" {
+				state = stateIn(r.asset + " " + r.detail)
+			}
+			icon, _, _ := strings.Cut(state, " ")
+			var c strings.Builder
+			c.WriteString("## " + strings.TrimSpace(icon+" "+cve) + " · " + r.asset + "\n\n")
+			for _, kv := range [][2]string{
+				{i18n.R("cve.recap.state"), state},
+				{i18n.R("cve.recap.why"), why},
+				{i18n.R("cve.recap.mitigation"), r.cells[colMitigation]},
+				{i18n.R("cve.recap.fix"), r.cells[colFix]},
+			} {
+				c.WriteString("- **" + kv[0] + "**" + colon() + orDash(kv[1]) + "\n")
+			}
+			cards = append(cards, c.String())
+		}
+		if len(cards) == before {
+			none = append(none, s.ids...)
 		}
 	}
-	if len(lines) > 0 {
-		b.WriteString("\n" + tableHead("CVE", i18n.R("cve.recap.asset"), i18n.R("cve.recap.state"), i18n.R("cve.recap.why"), i18n.R("cve.recap.mitigation"), i18n.R("cve.recap.fix")))
-		b.WriteString(strings.Join(lines, "\n") + "\n")
+	for _, c := range cards {
+		b.WriteString("\n" + c)
 	}
 	if len(none) > 0 {
 		b.WriteString("\n" + i18n.R("cve.recap.none", strings.Join(none, ", ")) + "\n")
 	}
 	if len(unknown) > 0 {
 		b.WriteString("\n## ❓ " + i18n.R("cve.recap.unknown") + "\n\n")
-		b.WriteString(tableHead("CVE", i18n.R("cve.recap.asset"), i18n.R("cve.col.missing")))
 		b.WriteString(strings.Join(unknown, "\n") + "\n")
 	}
 	return b.String()
 }
 
-func (c *recapCard) stateIcon() string {
+func (c *recapCard) level() string {
 	e := strings.TrimPrefix(c.exposure, "**")
 	for _, x := range []string{Neutralized, Limited, Exposed, Unmeasured} {
 		if strings.HasPrefix(e, i18n.R("cve.exp1."+x)) {
-			return ExposureIcon(x)
+			return x
 		}
 	}
-	return c.icon
+	return ""
 }
 
-func (s *recapSubject) cardsFor(title string) []*recapCard {
+func stateOf(cards []*recapCard) string {
+	var out []string
+	for _, x := range exposures {
+		for _, c := range cards {
+			if c.level() == x {
+				out = append(out, ExposureIcon(x)+" "+i18n.R("cve.exp1."+x))
+				break
+			}
+		}
+	}
+	return strings.Join(out, " · ")
+}
+
+func stateIn(text string) string {
+	t := fold(text)
+	for _, x := range []string{Neutralized, Limited, Exposed} {
+		if strings.Contains(t, fold(i18n.R("cve.exp1."+x))) {
+			return ExposureIcon(x) + " " + i18n.R("cve.exp1."+x)
+		}
+	}
+	return ""
+}
+
+func (s *recapSubject) cardsFor(text string) []*recapCard {
 	var out []*recapCard
 	for _, c := range s.positive {
-		if strings.Contains(title, c.asset) {
+		if strings.Contains(text, c.asset) {
 			out = append(out, c)
 		}
 	}
 	if len(out) == 0 {
+		for _, c := range s.positive {
+			if i := strings.LastIndex(c.asset, "/"); i >= 0 && len(c.asset)-i > 4 && strings.Contains(text, c.asset[i+1:]) {
+				out = append(out, c)
+			}
+		}
+	}
+	if len(out) == 0 && len(s.positive) == 1 {
 		return s.positive
 	}
 	return out
 }
 
-func cardsText(cards []*recapCard, get func(*recapCard) string) string {
-	var vals []string
-	for _, c := range cards {
-		if v := get(c); v != "" && !slices.Contains(vals, v) {
-			vals = append(vals, v)
-		}
+const groupFrom = 3
+
+func trimDetail(s string) string {
+	s = strings.TrimSpace(strings.TrimLeft(s, "—–-: "))
+	if strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")") {
+		s = s[1 : len(s)-1]
 	}
-	if len(vals) <= 1 {
-		return strings.Join(vals, "")
+	if strings.Count(s, "(") > strings.Count(s, ")") {
+		s += ")"
 	}
-	vals = vals[:0]
-	for _, c := range cards {
-		if v := get(c); v != "" {
-			vals = append(vals, c.asset+" : "+v)
-		}
-	}
-	return strings.Join(vals, " ; ")
+	return strings.TrimSpace(s)
 }
 
-func tableHead(cols ...string) string {
-	return "| " + strings.Join(cols, " | ") + " |\n" + strings.Repeat("|---", len(cols)) + "|\n"
-}
-
-func tableRow(cells ...string) string {
-	for i, c := range cells {
-		if c == "" {
-			c = "—"
+func unknownLines(cards []*recapCard, cve string) []string {
+	var parents []string
+	groups := map[string][]*recapCard{}
+	for _, c := range cards {
+		p, _ := path.Split(c.asset)
+		if _, ok := groups[p]; !ok {
+			parents = append(parents, p)
 		}
-		cells[i] = strings.ReplaceAll(c, "|", `\|`)
+		groups[p] = append(groups[p], c)
 	}
-	return "| " + strings.Join(cells, " | ") + " |"
+	var out []string
+	for _, p := range parents {
+		g := groups[p]
+		if p == "" || len(g) < groupFrom {
+			for _, c := range g {
+				out = append(out, "- **"+c.asset+"** ("+cve+")"+colon()+orDash(c.missing))
+			}
+			continue
+		}
+		var names []string
+		for _, c := range g {
+			names = append(names, path.Base(c.asset))
+		}
+		out = append(out, "- **"+strings.TrimSuffix(p, "/")+"** ("+cve+", "+i18n.R("cve.recap.n_assets", len(g))+" : "+strings.Join(names, ", ")+")"+colon()+orDash(g[0].missing))
+	}
+	return out
 }
 
 func column(label string) int {

@@ -110,7 +110,7 @@ var cveReportMsgs = map[string]msg{
 	"cve.none_positive":        {"No positive asset.", "Aucun actif positif."},
 	"cve.recap.title":          {"Summary", "Récapitulatif"},
 	"cve.report.title":         {"Report", "Rapport"},
-	"cve.recap.asset":          {"Asset(s)", "Actif(s)"},
+	"cve.recap.n_assets":       {"%d assets", "%d actifs"},
 	"cve.recap.state":          {"As is", "En l'état"},
 	"cve.recap.unknown":        {"Undetermined (could not be checked)", "Indéterminés (non vérifiés)"},
 	"cve.recap.why":            {"Why positive", "Pourquoi positif"},
