@@ -78,3 +78,13 @@ func TestImagePath(t *testing.T) {
 		}
 	}
 }
+
+func TestCVEReportTitle(t *testing.T) {
+	ids := []string{"CVE-2026-11111", "CVE-2026-22222"}
+	if got := cveReportTitle("fr", ids); got != "Rapport CVE-2026-11111, CVE-2026-22222" {
+		t.Fatalf("fr: %q", got)
+	}
+	if got := cveReportTitle("en", ids); got != "Report CVE-2026-11111, CVE-2026-22222" {
+		t.Fatalf("en: %q", got)
+	}
+}

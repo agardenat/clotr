@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Corrigé
+- Export d'un rapport CVE portant sur plusieurs identifiants : le titre du document cite toutes les CVE (« Rapport CVE-…, CVE-… ») au lieu de reprendre la section de la première.
+
 ## [0.82.0] - 2026-11-19
 
 ### Ajouté
