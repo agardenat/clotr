@@ -72,18 +72,25 @@ func TestRecap(t *testing.T) {
 	got := Recap(recapReport)
 	want := `# Récapitulatif CVE-2026-11111, CVE-2026-22222
 
-| CVE | Actif(s) | En l'état | Pourquoi positif | Mitigation immédiate | Correctif définitif (fix / patch) |
-|---|---|---|---|---|---|
-| CVE-2026-11111 | vm-a | 🚨 exposée : port 8443 publié | openjdk 17.0.1, dans la plage touchée < 17.0.9 | filtrer le port 8443 \| ou couper le service | openjdk 17.0.9 par le dépôt RHEL |
-| CVE-2026-11111 | vm-d | 🟡 neutralisée par la configuration : module jmx non chargé | openjdk 17.0.2 | aucune, service interne | openjdk 17.0.9 |
+## 🚨 CVE-2026-11111 · vm-a
+
+- **En l'état** : 🚨 exposé
+- **Pourquoi positif** : openjdk 17.0.1, dans la plage touchée < 17.0.9
+- **Mitigation immédiate** : filtrer le port 8443 | ou couper le service
+- **Correctif définitif (fix / patch)** : openjdk 17.0.9 par le dépôt RHEL
+
+## 🟡 CVE-2026-11111 · vm-d
+
+- **En l'état** : 🟡 neutralisée par la configuration
+- **Pourquoi positif** : openjdk 17.0.2
+- **Mitigation immédiate** : aucune, service interne
+- **Correctif définitif (fix / patch)** : openjdk 17.0.9
 
 Sans actif positif : CVE-2026-22222.
 
 ## ❓ Indéterminés (non vérifiés)
 
-| CVE | Actif(s) | Ce qui manque |
-|---|---|---|
-| CVE-2026-11111 | vm-b | accès SSH refusé |
+- **vm-b** (CVE-2026-11111) : accès SSH refusé
 `
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
@@ -95,7 +102,7 @@ func TestRecapEnglishLabels(t *testing.T) {
 	i18n.SetReport("en")
 	md := "# CVE-2026-33333 — foo\n\n## 6. Action plan\n\n1. **web-1**\n   - Why positive: foo 1.2 in the affected range\n   - Immediate mitigation: none\n   - Fix: upgrade to foo 1.3\n"
 	got := Recap(md)
-	if !strings.Contains(got, "| CVE-2026-33333 | web-1 | — | foo 1.2 in the affected range | none | upgrade to foo 1.3 |") || !strings.Contains(got, "| CVE | Asset(s) | As is | Why positive | Immediate mitigation | Permanent fix (fix / patch) |") {
+	if !strings.Contains(got, "## CVE-2026-33333 · web-1\n\n- **As is**: —\n- **Why positive**: foo 1.2 in the affected range\n- **Immediate mitigation**: none\n- **Permanent fix (fix / patch)**: upgrade to foo 1.3\n") {
 		t.Fatalf("got:\n%s", got)
 	}
 }
@@ -127,6 +134,26 @@ func TestExposureIcons(t *testing.T) {
 	for _, want := range []string{"🚨 1 exposé(s)", "🚨 1 exposition non mesurée", "🟠 1 à exposition limitée", "🟡 1 neutralisé(s) par la configuration"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("verdict sans %q :\n%s", want, v)
+		}
+	}
+}
+
+func TestRecapGroupsUnknown(t *testing.T) {
+	defer i18n.SetReport(i18n.Report())
+	i18n.SetReport("fr")
+	md := "# CVE-2026-44444 — bar\n\n## 4. Actifs indéterminés\n\n"
+	for _, h := range []string{"w0", "w1", "w2"} {
+		md += "**❓ api/dh/" + h + "** (hôte)\n\n- **Ce qui manque** : cluster arrêté [E001]\n\n"
+	}
+	md += "**❓ vm/solo** (hôte)\n\n- **Ce qui manque** : SSH refusé\n"
+	got := Recap(md)
+	for _, want := range []string{
+		"- **api/dh** (CVE-2026-44444, 3 actifs : w0, w1, w2) : cluster arrêté\n",
+		"- **vm/solo** (CVE-2026-44444) : SSH refusé\n",
+		"Sans actif positif : CVE-2026-44444.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("absent : %q\n%s", want, got)
 		}
 	}
 }

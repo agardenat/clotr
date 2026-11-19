@@ -1,5 +1,13 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Corrigé
+- Récapitulatif CVE illisible quand une entrée du plan d'action ne reprend pas le nom exact de ses actifs : les conditions et constats de tous les positifs du sujet étaient recopiés dans chaque ligne.
+
+### Modifié
+- Récapitulatif CVE : une fiche par positif au lieu d'un tableau. Le titre donne l'icône, la CVE et les actifs ; les puces donnent « En l'état », « Pourquoi positif », « Mitigation immédiate » et « Correctif définitif », sans troncature. « En l'état » donne l'icône et le niveau, sans les conditions. Les entrées sans mitigation ni correctif sont écartées. Les indéterminés d'un même périmètre sont regroupés en une ligne à partir de trois.
+
 ## [0.83.0] - 2026-11-19
 
 ### Modifié
