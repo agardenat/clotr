@@ -142,7 +142,12 @@ func (p *Pool) signer(ctx context.Context, e Endpoint) (gossh.Signer, error) {
 	return s, nil
 }
 
-func (p *Pool) hostKeyCallback(e Endpoint) (gossh.HostKeyCallback, error) {
+type hostKeyChange struct {
+	host     string
+	old, new gossh.PublicKey
+}
+
+func (p *Pool) hostKeyCallback(replace bool, change *hostKeyChange) (gossh.HostKeyCallback, error) {
 	if p.opts.HostKey == Insecure {
 		return gossh.InsecureIgnoreHostKey(), nil
 	}
@@ -155,7 +160,7 @@ func (p *Pool) hostKeyCallback(e Endpoint) (gossh.HostKeyCallback, error) {
 		return nil, err
 	}
 	f.Close()
-	replace := p.opts.HostKey == AcceptChanged && e.Password == nil
+	replace = replace && p.opts.HostKey == AcceptChanged
 	return func(hostname string, remote net.Addr, key gossh.PublicKey) error {
 		p.khMu.Lock()
 		defer p.khMu.Unlock()
@@ -172,19 +177,26 @@ func (p *Pool) hostKeyCallback(e Endpoint) (gossh.HostKeyCallback, error) {
 		switch {
 		case len(ke.Want) == 0 && (p.opts.HostKey == AcceptNew || p.opts.HostKey == AcceptChanged):
 			return appendKnownHost(path, host, key)
-		case len(ke.Want) > 0 && replace:
-			if err := replaceKnownHost(path, host, key); err != nil {
-				return err
-			}
-			if p.opts.OnReplace != nil {
-				p.opts.OnReplace(host, gossh.FingerprintSHA256(ke.Want[0].Key), gossh.FingerprintSHA256(key))
-			}
+		case len(ke.Want) > 0 && replace && change != nil:
+			*change = hostKeyChange{host: host, old: ke.Want[0].Key, new: key}
 			return nil
 		case len(ke.Want) > 0:
 			return i18n.E("ssh.host_changed", hostname, path)
 		}
 		return err
 	}, nil
+}
+
+func (p *Pool) commitHostKey(c hostKeyChange) error {
+	p.khMu.Lock()
+	defer p.khMu.Unlock()
+	if err := replaceKnownHost(p.opts.KnownHosts, c.host, c.new); err != nil {
+		return err
+	}
+	if p.opts.OnReplace != nil {
+		p.opts.OnReplace(c.host, gossh.FingerprintSHA256(c.old), gossh.FingerprintSHA256(c.new))
+	}
+	return nil
 }
 
 func appendKnownHost(path, host string, key gossh.PublicKey) error {
@@ -227,10 +239,6 @@ func (p *Pool) client(ctx context.Context, e Endpoint) (*gossh.Client, error) {
 	if ok {
 		return c, nil
 	}
-	hk, err := p.hostKeyCallback(e)
-	if err != nil {
-		return nil, err
-	}
 	if e.KeyPath == "" && e.KeyVault == "" && e.Password == nil {
 		return nil, i18n.E("ssh.no_auth")
 	}
@@ -239,10 +247,27 @@ func (p *Pool) client(ctx context.Context, e Endpoint) (*gossh.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		c, err = p.connect(ctx, e, hk, gossh.PublicKeys(signer))
-		if err != nil && (e.Password == nil || !errors.Is(err, ErrAuth)) {
+		var change hostKeyChange
+		hk, err := p.hostKeyCallback(true, &change)
+		if err != nil {
 			return nil, err
 		}
+		c, err = p.connect(ctx, e, hk, gossh.PublicKeys(signer))
+		switch {
+		case err == nil && change.new != nil:
+			if err := p.commitHostKey(change); err != nil {
+				c.Close()
+				return nil, err
+			}
+		case err != nil && change.new != nil:
+			return nil, i18n.E("ssh.host_key_refused", net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), p.opts.KnownHosts, err)
+		case err != nil && (e.Password == nil || !errors.Is(err, ErrAuth)):
+			return nil, err
+		}
+	}
+	hk, err := p.hostKeyCallback(false, nil)
+	if err != nil {
+		return nil, err
 	}
 	for attempt := 1; c == nil; attempt++ {
 		pw, err := e.Password(ctx)

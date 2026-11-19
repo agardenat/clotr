@@ -188,16 +188,26 @@ func TestPoolExecAndKnownHosts(t *testing.T) {
 	withPassword.Password = func(context.Context) (string, error) { return "x", nil }
 	other := "[other.example]:22 " + strings.Fields(string(data))[1] + " " + strings.Fields(string(data))[2] + "\n"
 	os.WriteFile(kh, []byte(other+strings.Replace(string(data), "]:"+p, "]:"+p2, 1)), 0o600)
+	before, _ := os.ReadFile(kh)
+	_, wrongKey := testutil.NewSSHKey(t)
+	wrong := withPassword
+	wrong.KeyPath = filepath.Join(dir, "wrong")
+	os.WriteFile(wrong.KeyPath, wrongKey, 0o600)
+	sent := false
+	wrong.Password = func(context.Context) (string, error) { sent = true; return "x", nil }
 	pw, _ := NewPool(Options{KnownHosts: kh, HostKey: AcceptChanged})
 	defer pw.Close()
-	if _, err := pw.Exec(context.Background(), withPassword, "true", 10); err == nil || !strings.Contains(err.Error(), "differs from the one recorded") {
-		t.Fatalf("clé changée acceptée avec un mot de passe possible: %v", err)
+	if _, err := pw.Exec(context.Background(), wrong, "true", 10); err == nil || !strings.Contains(err.Error(), "no password sent") || sent {
+		t.Fatalf("clé changée acceptée sans authentification par clé: %v (mot de passe envoyé: %v)", err, sent)
+	}
+	if now, _ := os.ReadFile(kh); string(now) != string(before) {
+		t.Fatalf("known_hosts modifié sans authentification par clé:\n%s", now)
 	}
 	var replaced []string
 	changed, _ := NewPool(Options{KnownHosts: kh, HostKey: AcceptChanged, OnReplace: func(host, old, new string) { replaced = append(replaced, host, old, new) }})
 	defer changed.Close()
-	if _, err := changed.Exec(context.Background(), ep2, "true", 10); err != nil {
-		t.Fatalf("clé changée refusée en accept-changed: %v", err)
+	if _, err := changed.Exec(context.Background(), withPassword, "true", 10); err != nil {
+		t.Fatalf("clé changée refusée en accept-changed avec un mot de passe de secours: %v", err)
 	}
 	after, _ := os.ReadFile(kh)
 	lines := strings.Split(strings.TrimSpace(string(after)), "\n")
