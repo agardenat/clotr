@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.82.0] - 2026-11-19
 
 ### Ajouté
 - Mode CVE : récapitulatif des positifs en PDF en plus du rapport complet, produit par `run`, `session --synthesize` et `session --export` sur un tour CVE. Pour chaque sujet, il ne garde que les actifs positifs (tableau, ce qui a été trouvé, la version corrigée, l'exposition, l'arbitrage) et le plan d'action, sans références de preuves ; il est rendu avec le template de document de `report_export.template` (Markdown gardé, avec un avertissement, si l'export échoue).
