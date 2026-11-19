@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.83.0] - 2026-11-19
 
 ### Modifié
 - Nom de session : `<client>-<mot>-<adjectif>-<nom>`. Le client est celui que cite la demande ou `-t`. Le mot résume le run : `cve`, `dat` ou `schema` dans ces modes, sinon un mot donné par le modèle du rôle le plus rapide, avec repli sur le nom du mode. La partie aléatoire est gardée.
