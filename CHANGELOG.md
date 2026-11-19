@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.81.1] - 2026-11-19
 
 ### Corrigé
 - `host_key: accept-changed` : une clé d'hôte changée est de nouveau remplacée quand le connecteur SSH a aussi un mot de passe de secours (bloc `auth`, présent par exemple sur toutes les instances CDP) ; jusqu'ici elle restait refusée dès qu'un mot de passe pouvait être envoyé, même si l'authentification se faisait par clé. La nouvelle clé n'est acceptée que pendant la tentative par clé et n'est enregistrée qu'après son succès ; si la clé est refusée, la connexion échoue sans envoyer de mot de passe à l'hôte dont la clé a changé.
