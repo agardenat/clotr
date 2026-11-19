@@ -67,6 +67,13 @@ func exportTitle(md, request string) string {
 	return string(r)
 }
 
+func cveReportTitle(lang string, ids []string) string {
+	prev := i18n.Report()
+	i18n.SetReport(lang)
+	defer i18n.SetReport(prev)
+	return i18n.R("cve.report.title") + " " + strings.Join(ids, ", ")
+}
+
 func reportLanguage(lang, md string) string {
 	if lang == "fr" || lang == "en" {
 		return lang
@@ -127,13 +134,18 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	if clientDocument(turn) {
 		request, ticket = "", ""
 	}
+	lang := reportLanguage(cmp.Or(o.langFlag, sess.Language), md)
+	title := exportTitle(md, request)
+	if len(turn.CVE) > 1 {
+		title = cveReportTitle(lang, turn.CVE)
+	}
 	return renderExport(ctx, o, cfg, exportJob{
 		input: template.DocumentInput{
 			Images:   reportImages(md, sess.TurnDir(n), false),
 			Markdown: md,
-			Title:    exportTitle(md, request),
+			Title:    title,
 			Mode:     mode,
-			Language: reportLanguage(cmp.Or(o.langFlag, sess.Language), md),
+			Language: lang,
 			Request:  request,
 			Ticket:   ticket,
 			Date:     turn.Time.Local().Format("2006-01-02"),
