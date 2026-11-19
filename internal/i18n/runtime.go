@@ -62,6 +62,7 @@ var runtimeMsgs = map[string]msg{
 	"ssh.passphrase":          {"SSH key %s is protected by a passphrase: not supported", "clé SSH %s protégée par une passphrase : non supporté"},
 	"ssh.key_path":            {"SSH key %s: %w", "clé SSH %s : %w"},
 	"ssh.host_changed":        {"SSH host key of %s differs from the one recorded in %s (VM reinstalled? delete the line to accept the new one)", "clé d'hôte SSH de %s différente de celle enregistrée dans %s (réinstallation de la VM ? supprimer la ligne pour accepter la nouvelle)"},
+	"ssh.host_key_refused":    {"SSH host key of %s differs from the one recorded in %s and the key authentication failed: new key not recorded, no password sent (%w)", "clé d'hôte SSH de %s différente de celle enregistrée dans %s et authentification par clé refusée : nouvelle clé non enregistrée, aucun mot de passe envoyé (%w)"},
 	"ssh.no_auth":             {"no SSH key (ssh_key_path, ssh_key_vault) nor password (auth) configured", "aucune clé SSH (ssh_key_path, ssh_key_vault) ni mot de passe (auth) configuré"},
 	"ssh.paths_absolute":      {"ssh_paths.allow: %q must be absolute", "ssh_paths.allow : %q doit être absolu"},
 	"ssh.paths_required":      {"ssh_paths.allow: at least one path is required", "ssh_paths.allow : au moins un chemin requis"},
