@@ -19,6 +19,7 @@ import (
 	"unicode"
 
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/cve"
 	"github.com/agardenat/clotr/internal/export"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/report"
@@ -108,11 +109,13 @@ func reportLanguage(lang, md string) string {
 type exportJob struct {
 	input        template.DocumentInput
 	keepDir      string
+	keepName     string
+	format       string
 	confidential bool
 }
 
 func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *session.Session, n int, md string) error {
-	turn := sess.Turns[n-1]
+	turn := withClients(sess, n)
 	mode := turn.Mode
 	if mode == "" && len(turn.CVE) > 0 {
 		mode = report.ModeCVE
@@ -137,8 +140,54 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 			Session:  sess.Name,
 		},
 		keepDir:      sess.TurnDir(n),
+		keepName:     turn.ReportName(),
 		confidential: sess.Confidential,
 	})
+}
+
+func withClients(sess *session.Session, n int) session.Turn {
+	if t := &sess.Turns[n-1]; len(t.Clients) == 0 {
+		t.Clients = clientsFromAudit(filepath.Join(sess.TurnDir(n), "audit.jsonl"))
+	}
+	return sess.Turns[n-1]
+}
+
+func exportRecap(ctx context.Context, o *options, cfg *config.Config, sess *session.Session, n int, md string) {
+	turn := withClients(sess, n)
+	if len(turn.CVE) == 0 || md == "" {
+		return
+	}
+	lang := reportLanguage(cmp.Or(o.langFlag, sess.Language), md)
+	prev := i18n.Report()
+	i18n.SetReport(lang)
+	recap := cve.Recap(md)
+	i18n.SetReport(prev)
+	if recap == "" {
+		return
+	}
+	err := renderExport(ctx, o, cfg, exportJob{
+		input: template.DocumentInput{
+			Markdown: recap,
+			Title:    exportTitle(recap, ""),
+			Mode:     report.ModeCVE,
+			Language: lang,
+			Date:     turn.Time.Local().Format("2006-01-02"),
+			Session:  sess.Name,
+		},
+		keepDir:      sess.TurnDir(n),
+		keepName:     turn.RecapName(),
+		format:       "pdf",
+		confidential: sess.Confidential,
+	})
+	if err == nil {
+		return
+	}
+	path := sess.RecapPath(n, "md")
+	if werr := os.WriteFile(path, []byte(recap), 0o600); werr != nil {
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.recap_failed", err, werr))
+		return
+	}
+	fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.recap_markdown", err, path))
 }
 
 func cmdExport(ctx context.Context, o *options, src string) error {
@@ -190,6 +239,10 @@ func cmdExport(ctx context.Context, o *options, src string) error {
 
 func renderExport(ctx context.Context, o *options, cfg *config.Config, job exportJob) error {
 	md := job.input.Markdown
+	format, dest := cmp.Or(job.format, o.exportFmt), o.exportPath
+	if job.format != "" {
+		dest = ""
+	}
 	name := cmp.Or(o.exportTpl, cfg.Export.Template)
 	if name == "" {
 		return i18n.E("export.no_template")
@@ -226,7 +279,7 @@ func renderExport(ctx context.Context, o *options, cfg *config.Config, job expor
 	} else {
 		defer closeMCP()
 	}
-	fmt.Fprintln(os.Stderr, i18n.T("export.start", o.exportFmt, t.Name))
+	fmt.Fprintln(os.Stderr, i18n.T("export.start", format, t.Name))
 	data, err := in.RenderDocument(ctx, job.input)
 	if err != nil {
 		return i18n.E("export.failed", err)
@@ -235,18 +288,18 @@ func renderExport(ctx context.Context, o *options, cfg *config.Config, job expor
 	if err != nil {
 		return i18n.E("export.failed", err)
 	}
-	if o.exportFmt == "pdf" {
+	if format == "pdf" {
 		pdf, err := export.PDF(ctx, data)
 		if err != nil {
 			path := ""
 			if job.keepDir != "" {
-				path = filepath.Join(job.keepDir, "report.docx")
+				path = filepath.Join(job.keepDir, cmp.Or(job.keepName, "report")+".docx")
 				if werr := os.WriteFile(path, data, 0o600); werr != nil {
 					return err
 				}
 			}
-			if o.exportPath != "" {
-				alt := strings.TrimSuffix(o.exportPath, filepath.Ext(o.exportPath)) + ".docx"
+			if dest != "" {
+				alt := strings.TrimSuffix(dest, filepath.Ext(dest)) + ".docx"
 				if werr := os.WriteFile(alt, data, 0o644); werr == nil {
 					path = alt
 				}
@@ -260,16 +313,16 @@ func renderExport(ctx context.Context, o *options, cfg *config.Config, job expor
 	}
 	path := ""
 	if job.keepDir != "" {
-		path = filepath.Join(job.keepDir, "report."+o.exportFmt)
+		path = filepath.Join(job.keepDir, cmp.Or(job.keepName, "report")+"."+format)
 		if err := os.WriteFile(path, data, 0o600); err != nil {
 			return err
 		}
 	}
-	if o.exportPath != "" {
-		if err := os.WriteFile(o.exportPath, data, 0o644); err != nil {
+	if dest != "" {
+		if err := os.WriteFile(dest, data, 0o644); err != nil {
 			return err
 		}
-		path = o.exportPath
+		path = dest
 	}
 	res := export.Compare(md, doc)
 	switch {

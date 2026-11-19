@@ -1957,6 +1957,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		rt.saveTurn(sess, n, turnDir, nil, err, nil, nil)
 		return turnOutcome{err: err, n: n, dir: turnDir}
 	}
+	sess.Turns[n-1].Clients = rt.clientsIn(reg)
 	if levels := accessSummary(rt.instances, reg); levels != "" {
 		sess.Turns[n-1].Access = levels
 		fmt.Fprintln(os.Stderr, i18n.T("access.line", levels))
@@ -2227,6 +2228,7 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 			}
 		}
 	}
+	exportRecap(ctx, o, rt.cfg, sess, len(sess.Turns), report.Markdown)
 	return runErr
 }
 
@@ -2281,6 +2283,39 @@ func withRequest(md string, turns []session.Turn) string {
 		}
 	}
 	return b.String() + "\n---\n\n" + stripRequest(md)
+}
+
+func (rt *app) clientsIn(reg *tools.Registry) []string {
+	groups := reg.Groups()
+	var out []string
+	for _, in := range rt.instances {
+		if in.Client != "" && slices.Contains(groups, in.ToolPrefix()) && !slices.Contains(out, in.Client) {
+			out = append(out, in.Client)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func clientsFromAudit(path string) []string {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	for sc.Scan() {
+		var ev struct {
+			Kind    string   `json:"kind"`
+			Clients []string `json:"clients"`
+		}
+		if json.Unmarshal(sc.Bytes(), &ev) == nil && ev.Kind == "instances_scope" {
+			slices.Sort(ev.Clients)
+			return ev.Clients
+		}
+	}
+	return nil
 }
 
 func clientDocument(t session.Turn) bool {
@@ -2369,7 +2404,7 @@ func cmdChat(ctx context.Context, o *options, args []string) error {
 			out := progress.TurnResult{Info: res.info, Err: res.err}
 			if res.report != nil && res.report.Markdown != "" {
 				out.Markdown = res.report.Markdown
-				out.Path = filepath.Join(res.dir, "report.md")
+				out.Path = sess.ReportPath(res.n, "md")
 				out.Info = append(out.Info, i18n.T("chat.report", out.Path))
 			}
 			return out
@@ -2560,7 +2595,7 @@ func (rt *app) saveTurn(sess *session.Session, n int, dir string, report *orches
 		warn(sess.WriteJSON(dir, "results.json", report.Results))
 		if report.Markdown != "" {
 			report.Markdown = withRequest(report.Markdown, sess.Turns[:n])
-			warn(sess.WriteReport(dir, report.Markdown))
+			warn(sess.WriteReport(n, report.Markdown))
 		} else if t.Status == "ok" {
 			t.Status = "partial"
 		}
@@ -2672,6 +2707,9 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	if rt.cves != nil {
 		rt.cves.Restore(cveFromAudit(filepath.Join(dir, "audit.jsonl")))
 	}
+	if t := &sess.Turns[n-1]; len(t.Clients) == 0 {
+		t.Clients = clientsFromAudit(filepath.Join(dir, "audit.jsonl"))
+	}
 	if rt.dat != nil {
 		rt.dat.Restore(dir)
 		rt.dat.Instances, rt.dat.IaCOnes = datScopeFromAudit(filepath.Join(dir, "audit.jsonl"))
@@ -2705,7 +2743,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 		return err
 	}
 	md = withRequest(md, sess.Turns[:n])
-	if err := sess.WriteReport(dir, md); err != nil {
+	if err := sess.WriteReport(n, md); err != nil {
 		return err
 	}
 	if t := &sess.Turns[n-1]; t.Status == "partial" {
@@ -2714,6 +2752,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	if err := sess.Save(); err != nil {
 		return err
 	}
+	exportRecap(ctx, o, rt.cfg, sess, n, md)
 	fmt.Fprintln(os.Stderr, i18n.T("models.used", model))
 	for _, c := range rt.budget.Summary() {
 		fmt.Fprintln(os.Stderr, i18n.T("cost.line", c.String()))
@@ -2919,7 +2958,9 @@ func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error
 	if o.sovereign == "" {
 		o.sovereign = s.Sovereign
 	}
-	return exportReport(ctx, o, cfg, s, n, report)
+	err = exportReport(ctx, o, cfg, s, n, report)
+	exportRecap(ctx, o, cfg, s, n, report)
+	return err
 }
 
 type usedModel struct {

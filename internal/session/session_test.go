@@ -36,7 +36,7 @@ func TestLifecycle(t *testing.T) {
 		t.Fatal("un tour en cours ne doit pas apparaître dans l'historique")
 	}
 	s.Turns[0].Status = "ok"
-	if err := s.WriteReport(dir, "# Rapport prod\n3 nodes"); err != nil {
+	if err := s.WriteReport(1, "# Rapport prod\n3 nodes"); err != nil {
 		t.Fatal(err)
 	}
 	m := memory.NewStore()
@@ -115,5 +115,52 @@ func TestGenerateNameFrench(t *testing.T) {
 	adj, noun, _ := strings.Cut(name, "-")
 	if !slices.Contains(adjectivesFR, adj) || !slices.Contains(nounsFR, noun) {
 		t.Fatalf("nom %q hors des listes françaises", name)
+	}
+}
+
+func TestReportName(t *testing.T) {
+	at := time.Date(2026, 11, 19, 10, 0, 0, 0, time.Local)
+	for _, c := range []struct {
+		turn Turn
+		want string
+	}{
+		{Turn{Time: at, CVE: []string{"CVE-2026-114938"}, Clients: []string{"acme"}}, "ACME-CVE-2026-114938-20261119"},
+		{Turn{Time: at, CVE: []string{"cve-2026-1", "CVE-2026-2"}, Clients: []string{"acme", "beta"}}, "ACME-BETA-CVE-2026-1_2026-2-20261119"},
+		{Turn{Time: at, Mode: "dat", Clients: []string{"acme"}}, "ACME-DAT-20261119"},
+		{Turn{Time: at, Mode: "diagram", Clients: []string{"a b/c"}}, "A-B-C-DIAGRAM-20261119"},
+		{Turn{Time: at, Mode: "dat"}, "DAT-20261119"},
+		{Turn{Time: at, Mode: "incident", Clients: []string{"acme"}}, "report"},
+	} {
+		if got := c.turn.ReportName(); got != c.want {
+			t.Errorf("%+v : %q, attendu %q", c.turn, got, c.want)
+		}
+	}
+}
+
+func TestReportNamedAndLegacy(t *testing.T) {
+	root := t.TempDir()
+	s, err := Create(root, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, dir, _ := s.NewTurn("CVE-2026-1 sur acme")
+	s.Turns[0].CVE, s.Turns[0].Clients = []string{"CVE-2026-1"}, []string{"acme"}
+	if err := s.WriteReport(1, "# CVE"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, s.Turns[0].ReportName()+".md")); err != nil {
+		t.Fatalf("rapport nommé absent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "report.md")); err == nil {
+		t.Fatal("report.md écrit en plus du rapport nommé")
+	}
+	if r, _ := s.Report(1); r != "# CVE" {
+		t.Fatalf("relecture: %q", r)
+	}
+	_, dir2, _ := s.NewTurn("CVE-2026-2")
+	s.Turns[1].CVE = []string{"CVE-2026-2"}
+	os.WriteFile(filepath.Join(dir2, "report.md"), []byte("# ancien"), 0o600)
+	if r, _ := s.Report(2); r != "# ancien" {
+		t.Fatalf("rapport d'un ancien tour: %q", r)
 	}
 }

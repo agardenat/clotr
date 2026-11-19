@@ -1,5 +1,14 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- Mode CVE : récapitulatif des positifs en PDF en plus du rapport complet, produit par `run`, `session --synthesize` et `session --export` sur un tour CVE. Pour chaque sujet, il ne garde que les actifs positifs (tableau, ce qui a été trouvé, la version corrigée, l'exposition, l'arbitrage) et le plan d'action, sans références de preuves ; il est rendu avec le template de document de `report_export.template` (Markdown gardé, avec un avertissement, si l'export échoue).
+- Noms parlants pour les rapports CVE, DAT et schéma : `<CLIENT>-CVE-<identifiant>-<AAAAMMJJ>`, `<CLIENT>-DAT-<AAAAMMJJ>`, `<CLIENT>-DIAGRAM-<AAAAMMJJ>` (et `…-RECAP-…` pour le récapitulatif CVE), pour le rapport Markdown du tour et les documents exportés dans le tour. Le client est celui des instances du tour, enregistré dans la session (`clients`), ou lu dans l'audit pour un tour plus ancien ; les autres rapports gardent `report.md`, et le rapport d'un ancien tour reste lu sous son ancien nom.
+
+### Modifié
+- Modèle de rapport CVE : le plan d'action ne contient plus que les actifs positifs ; ce qui lève l'incertitude des actifs indéterminés reste dans leur section.
+
 ## [0.81.1] - 2026-11-19
 
 ### Corrigé

@@ -65,6 +65,7 @@ type Turn struct {
 	Mode    string    `json:"mode,omitempty"`
 	DAT     string    `json:"dat,omitempty"`
 	Ticket  string    `json:"ticket,omitempty"`
+	Clients []string  `json:"clients,omitempty"`
 	Status  string    `json:"status"`
 	Error   string    `json:"error,omitempty"`
 	Models  []string  `json:"models,omitempty"`
@@ -221,23 +222,68 @@ func (s *Session) WriteJSON(dir, name string, v any) error {
 	return writeAtomic(filepath.Join(dir, name), data)
 }
 
-func (s *Session) WriteReport(dir, report string) error {
-	if err := writeAtomic(filepath.Join(dir, "report.md"), []byte(report)); err != nil {
+var unsafeName = regexp.MustCompile(`[^A-Za-z0-9_]+`)
+
+func (t Turn) ReportName() string { return t.name("") }
+
+func (t Turn) RecapName() string { return t.name("RECAP") }
+
+func (t Turn) name(suffix string) string {
+	var kind string
+	switch {
+	case len(t.CVE) > 0:
+		ids := make([]string, len(t.CVE))
+		for i, id := range t.CVE {
+			ids[i] = strings.TrimPrefix(strings.ToUpper(id), "CVE-")
+		}
+		kind = "CVE-" + strings.Join(ids, "_")
+	case t.Mode == "dat":
+		kind = "DAT"
+	case t.Mode == "diagram":
+		kind = "DIAGRAM"
+	default:
+		return "report"
+	}
+	var parts []string
+	for _, c := range t.Clients {
+		if c = strings.Trim(unsafeName.ReplaceAllString(strings.ToUpper(c), "-"), "-"); c != "" {
+			parts = append(parts, c)
+		}
+	}
+	if suffix != "" {
+		kind += "-" + suffix
+	}
+	return strings.Join(append(parts, kind, t.Time.Local().Format("20060102")), "-")
+}
+
+func (s *Session) RecapPath(n int, ext string) string {
+	return filepath.Join(s.TurnDir(n), s.Turns[n-1].RecapName()+"."+ext)
+}
+
+func (s *Session) ReportPath(n int, ext string) string {
+	return filepath.Join(s.TurnDir(n), s.Turns[n-1].ReportName()+"."+ext)
+}
+
+func (s *Session) WriteReport(n int, report string) error {
+	if err := writeAtomic(s.ReportPath(n, "md"), []byte(report)); err != nil {
 		return err
 	}
 	return writeAtomic(filepath.Join(s.dir, "report.md"), []byte(report))
 }
 
 func (s *Session) Report(n int) (string, error) {
-	path := filepath.Join(s.dir, "report.md")
+	paths := []string{filepath.Join(s.dir, "report.md")}
 	if n > 0 {
-		path = filepath.Join(s.TurnDir(n), "report.md")
+		paths = []string{s.ReportPath(n, "md"), filepath.Join(s.TurnDir(n), "report.md")}
 	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		return string(data), err
 	}
-	return string(data), err
+	return "", nil
 }
 
 func (s *Session) LoadMemory() ([]memory.Entry, error) {
