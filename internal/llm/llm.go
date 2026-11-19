@@ -562,7 +562,7 @@ func NewPool(cfg *config.Config, hc *http.Client) *Pool {
 	for _, prov := range cfg.Providers {
 		p.clients[prov.Name] = NewClient(prov, cfg.Limits, hc)
 		p.sems[prov.Name] = semaphore.NewWeighted(int64(prov.MaxConcurrency))
-		p.gates[prov.Name] = newRateGate(prov.MaxRequestsPerMinute)
+		p.gates[prov.Name] = newSharedRateGate(prov.MaxRequestsPerMinute, prov.Name)
 	}
 	return p
 }

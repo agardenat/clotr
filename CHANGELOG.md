@@ -1,5 +1,11 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Modifié
+- `max_requests_per_minute` d'un provider et la pause qui suit un 429 sont partagés entre toutes les instances de clotr lancées en même temps sur le poste, plus seulement entre les agents d'un run. L'état de chaque provider est tenu dans `rate/<provider>.json` du répertoire d'état de clotr, sous verrou de fichier.
+- Mode CVE : le récapitulatif des positifs et le document exporté (`--export pdf|docx`) sont aussi copiés dans le répertoire courant, sous leur nom `<CLIENT>-CVE-…`, en plus du tour de la session. `-o` garde la priorité pour le document exporté.
+
 ## [0.83.1] - 2026-11-19
 
 ### Corrigé
