@@ -7,7 +7,6 @@ import (
 	"net"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -123,8 +122,7 @@ func (t *Tunnel) connect(ctx context.Context) (*ssh.Chain, error) {
 	}
 	user := t.cfg.User
 	if user == "" && t.cfg.KeyVault != "" {
-		path, _, _ := strings.Cut(t.cfg.KeyVault, "#")
-		u, err := creds.ReadVault(ctx, path+"#username")
+		u, err := creds.ReadVaultUser(ctx, t.cfg.KeyVault)
 		if err == nil {
 			user = u
 		}

@@ -142,17 +142,19 @@ func ValidUILanguage(l string) bool {
 }
 
 func PeekUILanguage(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
+	for _, p := range []string{filepath.Join(LocalDir(path), "config.yaml"), path} {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var c struct {
+			UILang string `yaml:"ui_language"`
+		}
+		if yaml.Unmarshal(data, &c) == nil && c.UILang != "" {
+			return c.UILang
+		}
 	}
-	var c struct {
-		UILang string `yaml:"ui_language"`
-	}
-	if yaml.Unmarshal(data, &c) != nil {
-		return ""
-	}
-	return c.UILang
+	return ""
 }
 
 type TemplatesConf struct {
@@ -612,7 +614,24 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parse(data, ClientsDir(path))
+	local := LocalDir(path)
+	over, err := readOverlay(filepath.Join(local, "config.yaml"), &Config{})
+	if err != nil {
+		return nil, err
+	}
+	merged := data
+	if over != nil {
+		if merged, err = mergeYAML(data, over); err != nil {
+			return nil, i18n.E("config.local", filepath.Join(local, "config.yaml"), err)
+		}
+	}
+	c, err := parse(merged, ClientsDir(path), local)
+	if err != nil && !strings.Contains(err.Error(), local) {
+		if _, plain := parse(data, ClientsDir(path), ""); plain == nil {
+			return nil, i18n.E("config.local_merged", err, local)
+		}
+	}
+	return c, err
 }
 
 func ClientsDir(configPath string) string {
@@ -620,10 +639,10 @@ func ClientsDir(configPath string) string {
 }
 
 func Parse(data []byte) (*Config, error) {
-	return parse(data, "")
+	return parse(data, "", "")
 }
 
-func parse(data []byte, clientsDir string) (*Config, error) {
+func parse(data []byte, clientsDir, localDir string) (*Config, error) {
 	if min, hint := PeekVersion(data); min != "" {
 		if err := RequireVersion("config", min, hint); err != nil {
 			return nil, err
@@ -639,7 +658,7 @@ func parse(data []byte, clientsDir string) (*Config, error) {
 		i18n.DefaultUI(c.UILang)
 	}
 	if clientsDir != "" {
-		if err := c.loadClients(clientsDir); err != nil {
+		if err := c.loadClients(clientsDir, localDir); err != nil {
 			return nil, err
 		}
 	}
@@ -653,16 +672,39 @@ func parse(data []byte, clientsDir string) (*Config, error) {
 	return &c, nil
 }
 
-func (c *Config) loadClients(dir string) error {
+func (c *Config) loadClients(dir, localDir string) error {
 	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return err
 	}
-	slices.Sort(files)
+	var locals []string
+	if localDir != "" {
+		if locals, err = filepath.Glob(filepath.Join(localDir, "clients", "*.yaml")); err != nil {
+			return err
+		}
+	}
+	for _, l := range locals {
+		if !slices.ContainsFunc(files, func(f string) bool { return filepath.Base(f) == filepath.Base(l) }) {
+			files = append(files, l)
+		}
+	}
+	slices.SortFunc(files, func(a, b string) int { return strings.Compare(filepath.Base(a), filepath.Base(b)) })
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
 			return err
+		}
+		if l := filepath.Join(localDir, "clients", filepath.Base(f)); localDir != "" && l != f {
+			over, err := readOverlay(l, &Client{})
+			if err != nil {
+				return err
+			}
+			if over != nil {
+				if data, err = mergeYAML(data, over); err != nil {
+					return i18n.E("config.local", l, err)
+				}
+				f = f + " + " + l
+			}
 		}
 		var cl Client
 		dec := yaml.NewDecoder(bytes.NewReader(data))

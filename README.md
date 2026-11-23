@@ -437,7 +437,7 @@ Dans les tests de templates, le jeton vaut `test-token`, sans lecture Vault ni r
 - adresse : `VAULT_ADDR` (variable exportée ; une fonction ou un alias du shell n'est pas visible), sinon `vault.addr` de la configuration ;
 - jeton : `VAULT_TOKEN`, sinon `~/.vault-token` écrit par `vault login` (un `token_helper` n'est pas pris en charge) ; `VAULT_NAMESPACE` si défini, sinon `vault.namespace` ;
 - moteur KV v1 ou v2, détecté comme le fait `vault kv get` (`sys/internal/ui/mounts`) ;
-- utilisateur non fixé (`ssh_user` vide, ou `user_env` absent pour un connecteur `http`) : lu dans le champ `username` du même secret, sinon saisi ; un connecteur `http` avec `auth.header` n'a pas d'utilisateur, seul le secret (jeton) est lu ou saisi ;
+- utilisateur non fixé (`ssh_user` vide, ou `user_env` absent pour un connecteur `http`) : lu dans le même secret, sinon saisi. Le champ du compte se déduit de celui du mot de passe : pour un champ qui contient `password` (autre que `password`), `password` y est remplacé par `username`, puis par `user` (`admin_password` : `admin_username`, puis `admin_user`) ; sinon, ou si ces champs sont absents, `username`. Même règle pour `key_vault` ; un connecteur `http` avec `auth.header` n'a pas d'utilisateur, seul le secret (jeton) est lu ou saisi ;
 - lecture seulement quand le mot de passe est nécessaire, une fois par utilisateur. Vide, l'option est ignorée. Un secret illisible (variable absente, jeton expiré, accès refusé, champ absent) est signalé sur le terminal et le mot de passe est saisi ; un mot de passe Vault refusé par SSH ou sudo est oublié et le suivant est saisi.
 
 Le secret est lu par clotr et n'est jamais transmis aux modèles ni archivé dans les preuves. Ne pas faire lire un secret par un outil MCP : sa réponse irait au modèle et dans les preuves. Le chemin peut reprendre les `vars` du client (voir Clients).
@@ -623,6 +623,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true ; false : activée seulement par `-t <instance>`), `describes` (instance IaC : ce que décrit le dépôt, `<instance>` ou `<instance>/<cible>`, une valeur ou une liste ; sert au plan des modes `--dat` et `--diagram`) |
 | `vault` | `addr`, `namespace` : adresse et namespace Vault utilisés quand `VAULT_ADDR` / `VAULT_NAMESPACE` ne sont pas définis ; `login` (`method: oidc`, `path` défaut `oidc`, `role`, `port` défaut 8250, `min_ttl` défaut 4h) : connexion Vault au démarrage, voir Secrets Vault |
 | `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
+| `local/` | réglages propres au poste, non versionnés, qui l'emportent sur la configuration partagée : voir Surcharge personnelle |
 | `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
 | `report_export` | `template` (template `kind: document`) et `params`. Voir Export du rapport en document. |
 | `diagram` | `template` (template `kind: diagram`) et `params` : rendu des schémas des modes `--dat` et `--diagram`. Voir Templates de schéma. |
@@ -744,6 +745,44 @@ projects:
 `{{.tunnel_url}}` vaut `socks5h://127.0.0.1:<port>` dans les `params` des instances du client ou du projet. Les champs du tunnel acceptent les `vars` ; dans un projet, `{{.project}}` vaut son nom. Le proxy local écoute dès qu'une instance du client ou du projet est activée par les filtres du run. Les connexions SSH ne s'ouvrent qu'à la première connexion qui passe par le tunnel et se rouvrent après une coupure. Le tunnel se ferme à la fin de clotr. Rebonds injoignables ou identifiants refusés : avertissement, et les connexions par le tunnel échouent. Port fixe déjà ouvert (un tunnel lancé à la main, ou un autre clotr) : clotr l'utilise tel quel, avec un avertissement.
 
 Nommer le client ou l'un de ses alias dans une demande propose toutes ses instances (voir Activation d'une instance). Nommer un projet ou l'un de ses alias propose les instances de ce projet et celles du client hors projet, pas celles de ses autres projets. `-t <client>` et `-x <client>` valent pour toutes ses instances activées, `-t <projet>` et `-x <projet>` pour celles du projet ; une instance `enabled: false` ne se force que par son nom. Les instances du fichier principal n'ont pas de client et se comportent comme avant.
+
+### Surcharge personnelle
+
+Le répertoire `local/`, à côté du fichier de configuration (`~/.config/clotr/local/` par défaut), contient des réglages propres au poste, qui l'emportent sur la configuration partagée. Il n'est pas versionné : quand la configuration est un clone git tenu à jour au démarrage (voir Templates de démarrage), le mettre dans le `.gitignore` du dépôt. Les fichiers non suivis n'empêchent pas la mise à jour.
+
+| Fichier | Effet |
+|---|---|
+| `local/config.yaml` | fusionné dans le fichier principal |
+| `local/clients/<client>.yaml` | fusionné dans `clients/<client>.yaml` ; sans fichier partagé du même nom, ajoute un client |
+
+Fusion :
+
+- une table est fusionnée clé par clé, récursivement ; une clé absente de la surcharge garde la valeur partagée ;
+- une valeur simple remplace la valeur partagée ; `~` (null) supprime la clé ;
+- une liste dont tous les éléments ont un `name` (providers, profiles, instances, projets, startup, mcp…), ou à défaut un `alias`, est fusionnée élément par élément sur ce nom ; un élément nouveau est ajouté à la fin, un élément marqué `!remove` est retiré ;
+- toute autre liste est remplacée entière.
+
+Chaque fichier de surcharge est vérifié seul (clés inconnues rejetées) avant la fusion, puis le résultat est validé comme une configuration ordinaire. Une erreur qui n'existe qu'avec la surcharge le signale.
+
+```yaml
+# local/config.yaml
+ui_language: fr
+providers:
+  - name: main
+    max_concurrency: 2
+  - !remove {name: backup}
+params:
+  kubeconfig: ~/.kube/mine
+```
+
+```yaml
+# local/clients/acme.yaml
+projects:
+  - name: P-0000
+    instances:
+      - name: acme-legacy
+        enabled: true
+```
 
 ## Usage
 

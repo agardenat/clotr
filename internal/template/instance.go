@@ -887,7 +887,7 @@ func (in *Instance) vaultUser(ctx context.Context, ref string) string {
 	if u, ok := in.vaultUsers.Load(path); ok {
 		return u.(string)
 	}
-	u, err := creds.ReadVault(ctx, path+"#username")
+	u, err := creds.ReadVaultUser(ctx, ref)
 	if err != nil {
 		return ""
 	}

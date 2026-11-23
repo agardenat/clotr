@@ -110,6 +110,27 @@ func Reject(label, user, pass, reason string) {
 
 var ReadVault = vault.Secret
 
+func VaultUserFields(ref string) []string {
+	_, field, _ := strings.Cut(ref, "#")
+	var fields []string
+	if field != "" && field != "password" && strings.Contains(field, "password") {
+		fields = append(fields, strings.Replace(field, "password", "username", 1), strings.Replace(field, "password", "user", 1))
+	}
+	return append(fields, "username")
+}
+
+func ReadVaultUser(ctx context.Context, ref string) (string, error) {
+	path, _, _ := strings.Cut(ref, "#")
+	var err error
+	for _, f := range VaultUserFields(ref) {
+		var u string
+		if u, err = ReadVault(ctx, path+"#"+f); err == nil && u != "" {
+			return u, nil
+		}
+	}
+	return "", err
+}
+
 type Console struct {
 	In  *os.File
 	Out *os.File
@@ -195,8 +216,7 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 			return p, nil
 		}
 		if vaultErr == nil && p.User == "" {
-			path, _, _ := strings.Cut(passVault, "#")
-			if u, err := ReadVault(ctx, path+"#username"); err == nil {
+			if u, err := ReadVaultUser(ctx, passVault); err == nil {
 				p.User = u
 			}
 		}

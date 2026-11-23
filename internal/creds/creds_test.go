@@ -170,3 +170,39 @@ func TestRejectOnKeepsAcceptedCredentials(t *testing.T) {
 		t.Fatalf("hôte écarté pour un mot de passe jamais accepté : %v", err)
 	}
 }
+
+func TestResolveVaultUserField(t *testing.T) {
+	readVault := ReadVault
+	ReadVault = func(_ context.Context, ref string) (string, error) {
+		switch ref {
+		case "kv/tf#admin_password", "kv/db#db_password":
+			return "fromvault", nil
+		case "kv/tf#admin_user":
+			return "admin", nil
+		case "kv/db#db_username":
+			return "dbadm", nil
+		case "kv/db#username":
+			return "other", nil
+		}
+		return "", errors.New("introuvable")
+	}
+	OpenTTY = func() (*Console, error) { return nil, errors.New("pas de terminal") }
+	t.Cleanup(func() { ReadVault, OpenTTY = readVault, openConsole })
+	ctx := context.Background()
+	if p, err := Resolve(ctx, "", "", "kv/tf#admin_password", "tf (SSH)"); err != nil || p.User != "admin" || p.Pass != "fromvault" {
+		t.Fatalf("admin_user: %+v %v", p, err)
+	}
+	if p, err := Resolve(ctx, "", "", "kv/db#db_password", "db (SSH)"); err != nil || p.User != "dbadm" {
+		t.Fatalf("db_username prioritaire: %+v %v", p, err)
+	}
+	for ref, want := range map[string][]string{
+		"kv/x":                {"username"},
+		"kv/x#password":       {"username"},
+		"kv/x#token":          {"username"},
+		"kv/x#admin_password": {"admin_username", "admin_user", "username"},
+	} {
+		if got := VaultUserFields(ref); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: %v", ref, got)
+		}
+	}
+}

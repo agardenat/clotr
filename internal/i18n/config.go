@@ -10,6 +10,8 @@ var configMsgs = map[string]msg{
 	"config.budget.undeclared":       {"not declared", "non déclaré"},
 	"config.budget.unlimited":        {"unlimited", "illimité"},
 	"config.budget.limited":          {"limited", "limité"},
+	"config.local":                   {"personal overlay %s: %v", "surcharge personnelle %s : %v"},
+	"config.local_merged":            {"%v (comes from the personal overlay in %s)", "%v (vient de la surcharge personnelle de %s)"},
 	"config.client_file":             {"client %s: name %q differs from the file name (%s)", "client %s : name %q différent du nom du fichier (%s)"},
 	"config.providers":               {"providers: at least one provider is required", "providers : au moins un provider requis"},
 	"config.provider_name":           {"providers[%d].name: required", "providers[%d].name : requis"},
