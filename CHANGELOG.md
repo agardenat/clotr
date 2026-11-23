@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.85.1] - 2026-11-23
+
+### Modifié
+- Clé SSH lue dans Vault (`key_vault`, tunnel) : une clé encodée en base64 (par exemple `base64 -w 0 id_rsa`) est décodée avant usage.
+
 ## [0.85.0] - 2026-11-23
 
 ### Ajouté
