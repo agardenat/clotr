@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net"
 	"os"
@@ -391,5 +392,19 @@ func TestPoolKeyFromVault(t *testing.T) {
 	defer nov.Close()
 	if _, err := nov.Exec(context.Background(), Endpoint{Host: h, Port: port, User: "admin", KeyVault: "kv/acme/adm#key"}, "true", 10); err == nil {
 		t.Fatal("clé Vault sans lecteur acceptée")
+	}
+}
+
+func TestDecodeKey(t *testing.T) {
+	_, pemKey := testutil.NewSSHKey(t)
+	enc := base64.StdEncoding.EncodeToString(pemKey)
+	wrapped := enc[:40] + "\n" + enc[40:] + "\n"
+	for name, in := range map[string]string{"pem": string(pemKey), "base64": enc, "base64 sur plusieurs lignes": wrapped} {
+		if _, err := gossh.ParsePrivateKey(decodeKey(in)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if got := string(decodeKey("pas une clé")); got != "pas une clé" {
+		t.Fatalf("valeur non clé modifiée: %q", got)
 	}
 }

@@ -3,6 +3,7 @@ package ssh
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -123,7 +124,7 @@ func (p *Pool) signer(ctx context.Context, e Endpoint) (gossh.Signer, error) {
 		if err != nil {
 			return nil, i18n.E("ssh.vault_key", ref, err)
 		}
-		data = []byte(pem)
+		data = decodeKey(pem)
 	} else {
 		var err error
 		if data, err = os.ReadFile(path); err != nil {
@@ -140,6 +141,16 @@ func (p *Pool) signer(ctx context.Context, e Endpoint) (gossh.Signer, error) {
 	}
 	p.signers[path] = s
 	return s, nil
+}
+
+func decodeKey(v string) []byte {
+	if strings.Contains(v, "-----BEGIN") {
+		return []byte(v)
+	}
+	if d, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(v), "")); err == nil && bytes.Contains(d, []byte("-----BEGIN")) {
+		return d
+	}
+	return []byte(v)
 }
 
 type hostKeyChange struct {
