@@ -1,5 +1,11 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [0.85.0] - 2026-11-23
+
+### Ajouté
+- Surcharge personnelle de la configuration : `local/config.yaml` et `local/clients/<client>.yaml`, à côté du fichier de configuration, sont fusionnés par-dessus la configuration partagée. Tables fusionnées clé par clé, `~` supprime une clé, listes d'éléments nommés fusionnées par `name` (ou `alias`) avec `!remove` pour retirer un élément, autres listes remplacées. Le répertoire n'est pas versionné et ne gêne pas la mise à jour au démarrage. `ui_language` y est aussi pris en compte.
+- Secret Vault dont les champs ne s'appellent pas `username`/`password` : le compte se lit dans le champ déduit de celui du mot de passe. Avec `password_vault: chemin#admin_password`, clotr lit `admin_username`, puis `admin_user`, puis `username`. La même règle vaut pour `key_vault` et le tunnel.
+
 ## [0.84.0] - 2026-11-19
 
 ### Modifié
