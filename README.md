@@ -938,10 +938,34 @@ clotr run --upgrade "mode opératoire de mise à jour du cluster prod vers 2.4, 
 clotr run --suivi "connexion refusée depuis le poste client, client acme"
 ```
 
-- préparation (tâche `watch`) : un agent repère la chaîne de l'action dans le périmètre (client, point d'entrée, service, dépendances), vérifie les sources où elle laissera une trace et les déclare avec l'outil `watch_source` : fichier de log d'un hôte en SSH (`file`, chemin autorisé par `ssh_paths`), journal systemd d'une unité ou du noyau (`journal`), relevé périodique de mémoire, CPU ou connexions (`sample`), outil suivable d'une instance (`tool`, par exemple les logs d'un pod ou les événements d'un cluster Kubernetes). Chaque source a un `filter` (lignes affichées en direct) ; les `modes.watch` des templates donnent l'emplacement des logs propres au produit ;
+- préparation (tâche `watch`) : un agent repère la chaîne de l'action dans le périmètre (client, point d'entrée, service, dépendances), vérifie les sources où elle laissera une trace et les déclare avec l'outil `watch_source` : fichier de log d'un hôte en SSH (`file`, chemin autorisé par `ssh_paths`), journal systemd d'une unité ou du noyau (`journal`), relevé système périodique d'un hôte (`sample`, voir ci-dessous), outil suivable d'une instance (`tool`, par exemple les logs d'un pod ou les événements d'un cluster Kubernetes). Chaque source a un `filter` (lignes affichées en direct) ; les `modes.watch` des templates donnent l'emplacement des logs propres au produit ;
 - attente (tâche `capture`, sans modèle de langage) : clotr affiche `en attente : reproduisez l'action maintenant`, lit chaque source toutes les 5 s (`--watch-every`) à partir de son état au début de l'attente (fichier lu par octet, rotation suivie, curseur du journal, curseur de l'outil), et affiche en direct chaque ligne retenue par le filtre. Toutes les lignes sont archivées, une preuve par source, chaque ligne précédée de l'heure de réception ; elles s'écrivent aussi au fil de l'eau dans `turns/NNN/watch/<source>.log`. Une source en échec de lecture est signalée sur sa ligne et la capture continue sur les autres ;
 - le premier Ctrl-C arrête l'attente (`--watch-for 10m` l'arrête après une durée), puis le planner organise l'analyse des captures : ce que l'action a produit à chaque maillon, chronologie de bout en bout, cause ; un Ctrl-C pendant l'analyse demande la conclusion, le suivant coupe tout ;
 - le rapport suit le modèle `watch` : synthèse, capture (fenêtre, sources, lignes captées), chronologie de l'action, cause, constats annexes, résolution, points non vérifiés.
+
+#### Relevés système (`kind: sample`)
+
+Pour voir ce qui met une VM à genoux, clotr mesure lui-même l'état de l'hôte : une commande SSH par relevé lit les compteurs du noyau (`/proc`, `/sys/block`, `df -P -l`, `ps`, `ss`), sans rien installer sur l'hôte (ni sysstat, ni agent, ni binaire déposé). Les débits sont calculés par clotr entre deux relevés, sur l'intervalle mesuré par l'hôte (`/proc/uptime`). Un premier relevé est pris au début de l'attente, puis un toutes les `every` secondes (15 par défaut).
+
+| `probe` | contenu |
+|---|---|
+| `system` | tout ce qui suit sauf la liste des connexions, plus les descripteurs de fichiers ouverts : la sonde à déclarer quand on ne sait pas quelle ressource sature |
+| `cpu` | répartition user, system, iowait, steal, irq ; charge par vCPU, tâches en attente d'E/S, commutations de contexte ; pression CPU (PSI) ; processus par CPU ; threads bloqués en E/S |
+| `memory` | mémoire disponible, cache, pages sales, slab, mémoire engagée ; swap utilisé et actif ; défauts de page majeurs, récupération directe, kswapd, OOM killer ; pression mémoire ; processus par mémoire résidente |
+| `disk` | par disque (noms LVM résolus) : lectures et écritures/s, débits, attente moyenne, occupation, file, E/S en cours ; systèmes de fichiers et inodes ; pression E/S ; attribution de l'iowait (ci-dessous) |
+| `network` | par interface : débit, paquets, erreurs, pertes ; TCP : retransmissions, ouvertures, échecs, resets, files d'écoute débordées, expirations ; erreurs UDP ; sockets ; conntrack ; `ss -s` |
+| `connections` | `network` plus la liste des connexions TCP (`ss -tan`), à filtrer sur un port ou une IP |
+
+Attribution de l'iowait (`disk`, `system`), pour savoir qui fait attendre l'hôte (montage NFS lent, indexeur qui parcourt un disque, sauvegarde…) :
+
+- threads bloqués en E/S (état D) avec leur point d'attente noyau (`wchan`, pile du noyau avec sudo) et la famille reconnue : NFS/RPC, CIFS, FUSE, journal ext4, XFS, attente de page, écriture bridée par les pages sales ;
+- NFS par montage (`/proc/self/mountstats`) : opérations/s, octets lus et écrits sur le serveur, aller-retour et temps d'exécution moyens par opération, expirations et retransmissions ; un iowait sans activité des disques locaux mais avec un NFS lent se voit directement ;
+- processus par E/S disque (`read_bytes`/`write_bytes`) et par lectures et écritures applicatives (`rchar`/`wchar`, cache, NFS et sockets compris) ; processus par temps d'attente d'E/S quand le comptage des délais est activé (`kernel.task_delayacct = 1`, sinon le relevé le dit) ;
+- fichiers ouverts par les processus en tête des E/S ou bloqués (20 chemins au plus par processus, hors `/dev`, `/proc`, `/sys`), avec le système de fichiers de chaque chemin.
+
+Avec sudo sur l'instance, tout le relevé passe par un seul `sudo -n sh -c` ; sans sudo, les E/S, points d'attente et fichiers des processus des autres comptes sont illisibles et le relevé le signale. Les noyaux sans PSI (avant 4.20) ou sans conntrack sont indiqués comme tels.
+
+Chaque relevé est archivé en entier dans la preuve de la source. Le tableau affiche en continu les chiffres clés du dernier relevé (CPU, iowait, steal, mémoire disponible, disque le plus occupé, interface la plus chargée) et une ligne `⚠` seulement quand un seuil est franchi : CPU occupé ≥ 90 %, iowait ≥ 20 %, steal ≥ 10 %, charge ≥ 2 × vCPU, pression ≥ 20 % (some) ou ≥ 5 % (full), mémoire disponible < 5 %, swap ≥ 10 pages/s, OOM killer, récupération directe, défauts majeurs ≥ 100/s, disque occupé ≥ 90 % ou attente ≥ 50 ms, opération NFS ≥ 50 ms ou expirée, système de fichiers ou inodes ≥ 95 %, pertes réseau ≥ 10/s, erreurs réseau, retransmissions TCP ≥ 2 %, files d'écoute débordées, conntrack ou descripteurs ≥ 90 %, hôte qui répond en 5 s ou plus, redémarrage. Ces seuils servent à l'affichage ; l'analyse porte sur toutes les valeurs. `filter` s'applique aux lignes du relevé (processus, utilisateur, disque, interface, port).
 
 Une ligne écrite dans un fichier juste avant sa rotation, entre deux lectures, peut manquer : la capture le note à l'endroit de la rotation. `--watch` est incompatible avec `--incident`, `--panic`, `--change`, `--upgrade`, `--cve`, `--ticket`, `--dat`, `--diagram`, `--direct` et `--chat`.
 

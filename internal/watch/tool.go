@@ -13,6 +13,7 @@ import (
 	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/progress"
+	"github.com/agardenat/clotr/internal/sysprobe"
 	"github.com/agardenat/clotr/internal/tools"
 )
 
@@ -29,7 +30,7 @@ type sourceTool struct {
 func (sourceTool) Name() string { return ToolName }
 
 func (t sourceTool) Description() string {
-	d := "Déclare une source à suivre en direct pendant l'attente : clotr la lit en boucle, sans toi, dès que l'action est reproduite, et archive tout ce qui arrive (une preuve par source). kind file : fichier de log d'un hôte en SSH (instance, host, path absolu autorisé par l'instance, lu à partir de sa taille au début de l'attente, rotations suivies) ; kind journal : journal systemd d'un hôte (unit, ou kernel=true pour les messages du noyau dont l'OOM killer ; sans les deux : tout le journal) ; kind sample : relevé périodique de l'état d'un hôte (probe memory : free et processus par mémoire ; cpu : charge et processus par CPU ; connections : ss -s et connexions TCP), toutes les every secondes (défaut 15) ; kind tool : outil d'une instance qui accepte le suivi (tool, args comme pour l'outil)."
+	d := "Déclare une source à suivre en direct pendant l'attente : clotr la lit en boucle, sans toi, dès que l'action est reproduite, et archive tout ce qui arrive (une preuve par source). kind file : fichier de log d'un hôte en SSH (instance, host, path absolu autorisé par l'instance, lu à partir de sa taille au début de l'attente, rotations suivies) ; kind journal : journal systemd d'un hôte (unit, ou kernel=true pour les messages du noyau dont l'OOM killer ; sans les deux : tout le journal) ; kind sample : relevé périodique de l'état d'un hôte calculé par clotr à partir des compteurs du noyau (/proc, df, ps : rien à installer sur l'hôte), débits entre deux relevés et alertes au-delà des seuils affichées en direct ; probe system : tout (VM lente, saturée, qui ne répond plus ou dont on ne sait pas ce qui la met à genoux) ; cpu : répartition user/system/iowait/steal, charge, pression CPU, processus par CPU, processus bloqués en E/S ; memory : mémoire disponible, cache, swap actif, défauts de page, récupération directe, OOM killer, pression mémoire, processus par mémoire résidente ; disk : par disque lectures et écritures/s, débits, attente moyenne, occupation, file, systèmes de fichiers et inodes, pression E/S, processus par E/S et bloqués en E/S ; network : débit, paquets, erreurs et pertes par interface, retransmissions et compteurs TCP/UDP (files d'écoute débordées, resets), sockets, conntrack ; connections : network plus la liste des connexions TCP (ss -tan, à filtrer sur un port ou une IP) ; toutes les every secondes (défaut 15, 5 pour une saturation brève) ; filter s'applique aux lignes du relevé (nom ou utilisateur d'un processus, interface, disque, port) ; kind tool : outil d'une instance qui accepte le suivi (tool, args comme pour l'outil)."
 	if followable, _ := t.s.scope(); len(followable) > 0 {
 		d += " Outils qui acceptent le suivi : " + strings.Join(followable, ", ") + "."
 	} else {
@@ -39,7 +40,7 @@ func (t sourceTool) Description() string {
 }
 
 func (sourceTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","enum":["file","journal","sample","tool"]},"instance":{"type":"string","description":"nom de l'instance (sans suffixe d'outil)"},"target":{"type":"string","description":"cible de l'instance, si le nom d'hôte est ambigu"},"host":{"type":"string","description":"hôte (file, journal, sample)"},"path":{"type":"string","description":"fichier absolu (file)"},"unit":{"type":"string","description":"unité systemd (journal)"},"kernel":{"type":"boolean","description":"messages du noyau (journal)"},"probe":{"type":"string","enum":["memory","cpu","connections"],"description":"relevé (sample)"},"every":{"type":"integer","description":"secondes entre deux relevés (sample, défaut 15)"},"tool":{"type":"string","description":"outil suivable, nom complet (tool)"},"args":{"type":"object","description":"arguments de l'outil (tool)"},"filter":{"type":"string","description":"expression régulière des lignes affichées en direct"},"why":{"type":"string","description":"rôle de la source dans l'action suivie"}},"required":["kind","instance","why"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","enum":["file","journal","sample","tool"]},"instance":{"type":"string","description":"nom de l'instance (sans suffixe d'outil)"},"target":{"type":"string","description":"cible de l'instance, si le nom d'hôte est ambigu"},"host":{"type":"string","description":"hôte (file, journal, sample)"},"path":{"type":"string","description":"fichier absolu (file)"},"unit":{"type":"string","description":"unité systemd (journal)"},"kernel":{"type":"boolean","description":"messages du noyau (journal)"},"probe":{"type":"string","enum":["system","cpu","memory","disk","network","connections"],"description":"relevé (sample)"},"every":{"type":"integer","description":"secondes entre deux relevés (sample, défaut 15)"},"tool":{"type":"string","description":"outil suivable, nom complet (tool)"},"args":{"type":"object","description":"arguments de l'outil (tool)"},"filter":{"type":"string","description":"expression régulière des lignes affichées en direct"},"why":{"type":"string","description":"rôle de la source dans l'action suivie"}},"required":["kind","instance","why"]}`)
 }
 
 func (t sourceTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
@@ -122,15 +123,19 @@ func (t sourceTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 		}
 		state = "journal lisible"
 	case KindProbe:
-		if _, ok := ssh.Probe(a.Probe); !ok {
-			return "", fmt.Errorf("probe %q invalide (%s)", a.Probe, strings.Join(ssh.Probes(), ", "))
+		if !sysprobe.Valid(a.Probe) {
+			return "", fmt.Errorf("probe %q invalide (%s)", a.Probe, strings.Join(sysprobe.Names(), ", "))
 		}
 		src.Probe = a.Probe
 		src.Every = defaultEvery
 		if a.Every > 0 {
 			src.Every = max(time.Duration(a.Every)*time.Second, s.Interval)
 		}
-		state = fmt.Sprintf("relevé toutes les %s", src.Every)
+		snap, err := sample(ctx, src)
+		if err != nil {
+			return "", err
+		}
+		state = fmt.Sprintf("relevé toutes les %s, hôte lisible (%s)", src.Every, snap.Describe())
 	case KindTool:
 		if _, _, err := inst.Follow(ctx, src.Tool, src.Args, nil); err != nil {
 			return "", err

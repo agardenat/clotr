@@ -106,9 +106,16 @@ func TestCallSites(t *testing.T) {
 				}
 				return true
 			}
-			lit, ok := call.Args[0].(*ast.BasicLit)
+			arg := call.Args[0]
+			if sel.Sel.Name == "In" {
+				if len(call.Args) < 2 {
+					return true
+				}
+				arg = call.Args[1]
+			}
+			lit, ok := arg.(*ast.BasicLit)
 			if !ok || lit.Kind != token.STRING {
-				if b, ok := call.Args[0].(*ast.BinaryExpr); ok {
+				if b, ok := arg.(*ast.BinaryExpr); ok {
 					x := b.X
 					for {
 						inner, ok := x.(*ast.BinaryExpr)
@@ -138,6 +145,12 @@ func TestCallSites(t *testing.T) {
 			switch sel.Sel.Name {
 			case "T", "E", "Key":
 				m, found = msgs[key]
+			case "In":
+				m, found = msgs[key]
+				if found && arity(m.en) != len(call.Args)-2 && !call.Ellipsis.IsValid() {
+					t.Errorf("%s : %q attend %d argument(s)", fset.Position(lit.Pos()), key, arity(m.en))
+				}
+				return true
 			case "R", "All":
 				m, found = reportMsgs[key]
 			default:

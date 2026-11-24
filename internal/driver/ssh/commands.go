@@ -324,17 +324,6 @@ func (b Builder) Journal(unit string, kernel bool, cursor string, since int64) s
 	return fmt.Sprintf("date +%%s; %sjournalctl --no-pager -q -o short-iso --show-cursor%s -n 1", b.prefix(), sel)
 }
 
-var probes = map[string]string{
-	"memory":      "free -m && ps -eo pid,user,rss,vsz,pcpu,etime,args --sort=-rss | head -n 25",
-	"cpu":         "uptime && ps -eo pid,user,pcpu,rss,etime,args --sort=-pcpu | head -n 25",
-	"connections": "ss -s && ss -tan",
-}
-
-func Probes() []string {
-	return []string{"memory", "cpu", "connections"}
-}
-
-func Probe(name string) (string, bool) {
-	cmd, ok := probes[name]
-	return cmd, ok
+func (b Builder) Shell(script string) string {
+	return b.prefix() + "sh -c " + Quote(script)
 }

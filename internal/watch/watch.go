@@ -18,6 +18,7 @@ import (
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/progress"
+	"github.com/agardenat/clotr/internal/sysprobe"
 )
 
 const (
@@ -74,6 +75,10 @@ type Source struct {
 	lines    int
 	matched  int
 	samples  int
+	alerts   int
+	prev     *sysprobe.Snapshot
+	initial  string
+	summary  string
 	shown    int
 	lastErr  string
 	errors   []string
@@ -132,6 +137,7 @@ type Captured struct {
 	Lines    int      `json:"lines"`
 	Matched  int      `json:"matched"`
 	Samples  int      `json:"samples,omitempty"`
+	Alerts   int      `json:"alerts,omitempty"`
 	Filter   string   `json:"filter,omitempty"`
 	Errors   []string `json:"errors,omitempty"`
 }
@@ -240,7 +246,14 @@ func (s *Store) Capture(ctx context.Context, limit time.Duration) Summary {
 		if src.Filter != "" {
 			fmt.Fprintf(&src.content, "# filtre d'affichage : %s\n", src.Filter)
 		}
+		if src.Kind == KindProbe {
+			fmt.Fprintf(&src.content, "# sonde %s, relevé toutes les %s : compteurs du noyau lus par clotr (/proc, df, ps ; rien d'installé sur l'hôte), débits calculés entre deux relevés sur l'horloge de l'hôte\n# %s\n", src.Probe, src.Every, sysprobe.Legend())
+		}
 		fmt.Fprintf(&src.content, "# début de la capture : %s (heure du poste clotr, avant chaque ligne)\n", sum.Start.Format(time.RFC3339))
+		if src.initial != "" {
+			src.content.WriteString(src.initial)
+			s.writeLive(src, src.initial)
+		}
 	}
 	s.audit.Log("watch_start", map[string]any{"sources": len(srcs), "interval": s.Interval.String(), "limit": limit.String()})
 	msg := i18n.T("watch.waiting")
@@ -310,7 +323,7 @@ func (s *Store) Capture(ctx context.Context, limit time.Duration) Summary {
 		}
 		args := fmt.Sprintf(`{"source":%q,"instance":%q,"kind":%q,"start":%q,"end":%q}`, src.Label(), src.Instance, src.Kind, sum.Start.Format(time.RFC3339), sum.End.Format(time.RFC3339))
 		src.evidence = s.ev.Add(TaskID, ToolName, args, src.content.String(), nil)
-		c := Captured{ID: src.ID, Label: src.Label(), Why: src.Why, Evidence: src.evidence, Lines: src.lines, Matched: src.matched, Samples: src.samples, Filter: src.Filter, Errors: src.errors}
+		c := Captured{ID: src.ID, Label: src.Label(), Why: src.Why, Evidence: src.evidence, Lines: src.lines, Matched: src.matched, Samples: src.samples, Alerts: src.alerts, Filter: src.Filter, Errors: src.errors}
 		sum.Sources = append(sum.Sources, c)
 		s.Events.Emit(progress.Event{Task: src.ID, Kind: "done", Model: src.where(), Detail: src.detail() + " [" + src.evidence + "]"})
 	}
@@ -320,7 +333,14 @@ func (s *Store) Capture(ctx context.Context, limit time.Duration) Summary {
 
 func (src *Source) detail() string {
 	if src.Kind == KindProbe {
-		return i18n.N(src.samples, "sample") + ", " + i18n.N(src.matched, "retained")
+		d := i18n.N(src.samples, "sample") + ", " + i18n.N(src.alerts, "alert")
+		if src.Filter != "" {
+			d += ", " + i18n.N(src.matched, "retained")
+		}
+		if src.summary != "" {
+			d += " · " + src.summary
+		}
+		return d
 	}
 	return i18n.N(src.lines, "line") + ", " + i18n.N(src.matched, "retained")
 }
@@ -362,7 +382,16 @@ func (s *Store) baseline(ctx context.Context, src *Source) {
 		src.since, _ = strconv.ParseInt(strings.TrimSpace(first), 10, 64)
 		_, src.cursor = splitCursor(rest)
 	case KindProbe:
-		src.next = time.Time{}
+		snap, err := sample(ctx, src)
+		if err != nil {
+			src.next = time.Time{}
+			s.fail(src, err)
+			return
+		}
+		src.prev, src.next = snap, s.now().Add(src.Every)
+		rep := sysprobe.Diff(nil, snap, src.Probe)
+		src.initial = fmt.Sprintf("=== état initial, %s (réponse en %s) ===\n%s\n", s.now().Format("15:04:05"), snap.Took.Round(10*time.Millisecond), ssh.Redact(rep.Text()+openFiles(ctx, src, snap, rep)))
+		src.summary = rep.Summary(i18n.UI())
 	case KindTool:
 		_, next, err := src.inst.Follow(ctx, src.Tool, src.Args, nil)
 		if err != nil {
@@ -488,20 +517,58 @@ func (s *Store) pollTool(ctx context.Context, src *Source) {
 	}
 }
 
-func (s *Store) pollProbe(ctx context.Context, src *Source) {
-	cmd, _ := ssh.Probe(src.Probe)
-	res, err := src.host.Run(ctx, ToolName, func(ssh.Builder) string { return cmd }, 256<<10)
+func sample(ctx context.Context, src *Source) (*sysprobe.Snapshot, error) {
+	start := time.Now()
+	res, err := src.host.Run(ctx, ToolName, func(b ssh.Builder) string {
+		cmd, _ := sysprobe.Command(src.Probe, b)
+		return cmd
+	}, sysprobe.MaxBytes)
 	if err = runErr(res, err); err != nil {
+		return nil, err
+	}
+	snap := sysprobe.Parse(res.Stdout)
+	snap.Took = time.Since(start)
+	if err := snap.Check(); err != nil {
+		return nil, err
+	}
+	return snap, nil
+}
+
+func openFiles(ctx context.Context, src *Source, snap *sysprobe.Snapshot, rep sysprobe.Report) string {
+	if len(rep.Hot) == 0 {
+		return ""
+	}
+	res, err := src.host.Run(ctx, ToolName, func(b ssh.Builder) string { return sysprobe.FilesCommand(rep.Hot, b) }, 1<<20)
+	if err = runErr(res, err); err != nil {
+		return "\nfichiers ouverts des processus en tête des E/S : lecture en échec : " + err.Error()
+	}
+	return "\n" + sysprobe.FilesText(snap, sysprobe.ParseFiles(res.Stdout), rep.Hot)
+}
+
+func (s *Store) pollProbe(ctx context.Context, src *Source) {
+	snap, err := sample(ctx, src)
+	if err != nil {
 		s.fail(src, err)
 		return
 	}
 	s.recover(src)
+	rep := sysprobe.Diff(src.prev, snap, src.Probe)
+	interval := ""
+	if src.prev != nil {
+		interval = fmt.Sprintf("intervalle %s, ", snap.Since(src.prev))
+	}
+	src.prev = snap
 	src.samples++
 	now := s.now()
-	out := strings.TrimRight(ssh.Redact(res.Stdout), "\n")
-	block := fmt.Sprintf("=== relevé %d, %s ===\n%s\n", src.samples, now.Format("15:04:05"), out)
+	out := ssh.Redact(rep.Text() + openFiles(ctx, src, snap, rep))
+	block := fmt.Sprintf("=== relevé %d, %s (%sréponse en %s) ===\n%s\n", src.samples, now.Format("15:04:05"), interval, snap.Took.Round(10*time.Millisecond), out)
 	src.content.WriteString(block)
 	s.writeLive(src, block)
+	src.summary = rep.Summary(i18n.UI())
+	if len(rep.Alerts) > 0 {
+		src.alerts++
+		s.Events.Emit(progress.Event{Task: src.ID, Kind: "captured", Detail: src.short() + " · ⚠ " + oneLine(rep.AlertLine(i18n.UI()), 600)})
+	}
 	var hits []string
 	if src.re != nil {
 		for _, l := range strings.Split(out, "\n") {

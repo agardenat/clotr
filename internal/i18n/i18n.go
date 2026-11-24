@@ -274,6 +274,7 @@ var plurals = map[string]msg{
 	"line":      {"line|lines", "ligne|lignes"},
 	"sample":    {"sample|samples", "relevé|relevés"},
 	"retained":  {"retained|retained", "retenue|retenues"},
+	"alert":     {"alert|alerts", "alerte|alertes"},
 	"source":    {"source|sources", "source|sources"},
 }
 
@@ -312,6 +313,17 @@ func T(key string, args ...any) string {
 		return pick(m, ui)
 	}
 	return fmt.Sprintf(pick(m, ui), args...)
+}
+
+func In(lang, key string, args ...any) string {
+	m, ok := msgs[key]
+	if !ok {
+		return key
+	}
+	if len(args) == 0 {
+		return pick(m, norm(lang))
+	}
+	return fmt.Sprintf(pick(m, norm(lang)), args...)
 }
 
 func E(key string, args ...any) error {

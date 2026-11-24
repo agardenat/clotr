@@ -1,5 +1,12 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- Mode suivi, relevés système embarqués (`watch_source kind: sample`) : clotr calcule lui-même l'état d'un hôte à partir des compteurs du noyau (`/proc`, `/sys/block`, `df`, `ps`, `ss`), sans rien installer sur l'hôte, en une commande SSH par relevé. Nouvelles sondes `system` (tout), `disk` (IOPS, débits, attente, occupation, file par disque, systèmes de fichiers et inodes) et `network` (débit, erreurs et pertes par interface, retransmissions et compteurs TCP/UDP, conntrack) ; `cpu` (iowait, steal, pression, processus par CPU), `memory` (swap actif, défauts majeurs, récupération directe, OOM killer, pression) et `connections` refaites. Débits calculés entre deux relevés sur l'horloge de l'hôte, premier relevé au début de l'attente.
+- Attribution de l'iowait : threads bloqués en état D avec leur point d'attente noyau (NFS, CIFS, FUSE, journal ext4, XFS…), statistiques NFS par montage (opérations, aller-retour, temps d'exécution, expirations), processus par E/S disque, par lectures et écritures applicatives et par temps d'attente d'E/S (delayacct), fichiers ouverts par les processus en tête avec leur système de fichiers.
+- Seuils d'alerte des relevés : ligne `⚠` en direct quand un seuil est franchi, chiffres clés du dernier relevé dans le tableau, nombre de relevés au-delà des seuils transmis à l'analyse.
+
 ## [0.86.0] - 2026-11-24
 
 ### Ajouté

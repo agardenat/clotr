@@ -200,7 +200,7 @@ func TestCaptureToolAndProbe(t *testing.T) {
 	if _, err := call(t, s, `{"kind":"tool","instance":"vm","tool":"vm_logs","args":{"pod":"a"},"filter":"Error","why":"pod"}`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := call(t, s, `{"kind":"sample","instance":"vm","host":"h1","probe":"disk","why":"x"}`); err == nil {
+	if _, err := call(t, s, `{"kind":"sample","instance":"vm","host":"h1","probe":"gpu","why":"x"}`); err == nil {
 		t.Fatal("sonde inconnue acceptée")
 	}
 	done := make(chan Summary)
@@ -269,5 +269,44 @@ func appendTo(t *testing.T, path, text string) {
 	defer f.Close()
 	if _, err := f.WriteString(text); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCaptureSystemProbe(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc requis")
+	}
+	s, _, ev, ek := newStore(t)
+	out, err := call(t, s, `{"kind":"sample","instance":"vm","host":"h1","probe":"system","every":1,"filter":"^charge","why":"VM lente"}`)
+	if err != nil || !strings.Contains(out, "hôte lisible (") || !strings.Contains(out, "vCPU") {
+		t.Fatalf("%s %v", out, err)
+	}
+	var sum Summary
+	done := make(chan struct{})
+	go func() {
+		sum = s.Capture(context.Background(), 0)
+		close(done)
+	}()
+	waitFor(t, s.Waiting)
+	waitFor(t, func() bool { return strings.Contains(strings.Join(ek.kind("stream"), "\n"), "1 sample") })
+	s.Stop()
+	<-done
+	c := sum.Sources[0]
+	if c.Samples < 1 || c.Matched < 1 {
+		t.Fatalf("%+v", c)
+	}
+	it, _ := ev.Item(c.Evidence)
+	data, _ := os.ReadFile(it.File)
+	text := string(data)
+	for _, want := range []string{"# sonde system, relevé toutes les 1s", "# seuils d'alerte", "=== état initial", "=== relevé 1, ", "(intervalle ", "cpu (", "occupé ", "disques :", "interfaces réseau", "processus par CPU"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("preuve sans %q :\n%s", want, text)
+		}
+	}
+	if !strings.Contains(strings.Join(ek.kind("captured"), "\n"), "h1:system · charge : ") {
+		t.Errorf("ligne filtrée non affichée : %v", ek.kind("captured"))
+	}
+	if !strings.Contains(strings.Join(ek.kind("stream"), "\n"), "cpu ") {
+		t.Errorf("résumé absent : %v", ek.kind("stream"))
 	}
 }
