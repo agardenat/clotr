@@ -87,6 +87,7 @@ var configMsgs = map[string]msg{
 	"config.vault_login_port":        {"vault.login.port: %d is invalid (1-65535)", "vault.login.port : %d invalide (1-65535)"},
 	"config.vault_login_ttl":         {"vault.login.min_ttl: negative duration", "vault.login.min_ttl : durée négative"},
 	"config.vault_addr":              {"vault.addr: invalid URL %q", "vault.addr : URL invalide %q"},
+	"config.vault_cache":             {"vault.credentials_cache: %q must be a path under cubbyhole/ (private to the Vault token)", "vault.credentials_cache : %q doit être un chemin sous cubbyhole/ (propre au jeton Vault)"},
 	"config.continuations":           {"limits.continuations: between 0 and 3", "limits.continuations : entre 0 et 3"},
 	"config.cache_ttl":               {"templates.cache_ttl: negative", "templates.cache_ttl : négatif"},
 	"config.ui_language":             {"ui_language: %q is invalid (en|fr)", "ui_language : %q invalide (en|fr)"},

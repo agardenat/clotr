@@ -193,6 +193,7 @@ var msgs = map[string]msg{
 	"prompt.password":      {"%s — password for %s: ", "%s — mot de passe de %s : "},
 	"prompt.secret":        {"%s — token: ", "%s — jeton : "},
 	"prompt.vault_failed":  {"%s — Vault %s: %v\n", "%s — Vault %s : %v\n"},
+	"prompt.store_failed":  {"%s — credentials cache: %v\n", "%s — cache d'identifiants : %v\n"},
 	"instance.discovering": {"instance %s: activation (template %s)…", "instance %s : activation (template %s)…"},
 	"templates.head":       {"TEMPLATE\tVERSION\tSOURCE\tINSTANCES\tDESCRIPTION", "TEMPLATE\tVERSION\tSOURCE\tINSTANCES\tDESCRIPTION"},
 	"templates.dir":        {"templates directory: %s (clotr templates <name> prints a template)", "répertoire des templates : %s (clotr templates <nom> affiche un template)"},

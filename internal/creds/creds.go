@@ -169,13 +169,14 @@ func ResolveSecret(ctx context.Context, passEnv, passVault, label string) (Pair,
 
 func Forget(label, user string) {
 	mu.Lock()
-	defer mu.Unlock()
 	delete(cache, userKey(label, user))
 	delete(accepted, userKey(label, user))
 	skipVault[label] = true
 	if c, ok := cache[label]; ok && c.User == user {
 		delete(cache, label)
 	}
+	mu.Unlock()
+	storeDrop(label)
 }
 
 func userKey(label, user string) string {
@@ -226,6 +227,23 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 			return p, nil
 		}
 	}
+	var storeErr error
+	if storeRoot != "" && !skipVault[label] {
+		var c Pair
+		var ok bool
+		c, ok, storeErr = storeLoad(ctx, label)
+		if err := ctx.Err(); err != nil {
+			return Pair{}, err
+		}
+		if ok && (p.User == "" || c.User == p.User) && (p.Pass == "" || c.Pass == p.Pass) && (secretOnly || c.User != "") {
+			cache[key] = c
+			if !secretOnly {
+				cache[userKey(label, c.User)] = c
+				lastUser[label] = c.User
+			}
+			return c, nil
+		}
+	}
 	missing := i18n.T("creds.missing", label, orNone(userEnv), orNone(passEnv))
 	if secretOnly {
 		missing = i18n.T("creds.missing_secret", label, orNone(passEnv))
@@ -255,6 +273,9 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 	}
 	if vaultErr != nil {
 		notice += i18n.T("prompt.vault_failed", label, passVault, vaultErr)
+	}
+	if storeErr != nil {
+		notice += i18n.T("prompt.store_failed", label, storeErr)
 	}
 	if p.User == "" && !secretOnly {
 		question := i18n.T("prompt.user", label)
@@ -289,6 +310,9 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 	if !secretOnly {
 		cache[userKey(label, p.User)] = p
 		lastUser[label] = p.User
+	}
+	if storeRoot != "" {
+		storeSave(ctx, label, p)
 	}
 	return p, nil
 }

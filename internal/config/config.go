@@ -105,9 +105,10 @@ type ReportExport struct {
 var ExportFormats = []string{"docx", "pdf"}
 
 type VaultConf struct {
-	Addr      string      `yaml:"addr"`
-	Namespace string      `yaml:"namespace"`
-	Login     *VaultLogin `yaml:"login"`
+	Addr             string      `yaml:"addr"`
+	Namespace        string      `yaml:"namespace"`
+	Login            *VaultLogin `yaml:"login"`
+	CredentialsCache string      `yaml:"credentials_cache"`
 }
 
 type VaultLogin struct {
@@ -1148,6 +1149,9 @@ func (c *Config) validate() error {
 		if u, err := url.Parse(c.Vault.Addr); err != nil || u.Scheme == "" || u.Host == "" {
 			fail(i18n.T("config.vault_addr", c.Vault.Addr))
 		}
+	}
+	if cc := strings.Trim(strings.TrimSpace(c.Vault.CredentialsCache), "/"); cc != "" && (!strings.HasPrefix(cc, "cubbyhole/") || strings.Contains(cc, "..")) {
+		fail(i18n.T("config.vault_cache", c.Vault.CredentialsCache))
 	}
 	if l := c.Vault.Login; l != nil {
 		if l.Method != "oidc" {

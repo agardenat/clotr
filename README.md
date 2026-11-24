@@ -450,6 +450,15 @@ vault:
   addr: https://vault.example.com
   login: {method: oidc, path: oidc}
 ```
+
+Identifiants saisis conservés : avec `vault.credentials_cache`, un compte et un mot de passe (ou un jeton) saisis au terminal sont écrits dans Vault sous ce chemin, un secret par libellé d'identifiants (champs `label`, `username`, `password`, `saved_at`). Aux runs suivants, ils sont relus avant toute saisie : un même libellé n'est plus demandé qu'une fois tant que le jeton Vault vit. Le chemin doit être sous `cubbyhole/` : ce stockage est propre au jeton, aucun autre jeton ni utilisateur ne peut le lire, et il disparaît avec le jeton (nouvelle connexion OIDC, expiration, révocation). Des identifiants refusés par un hôte ou un tunnel sont effacés de Vault, puis redemandés et enregistrés à nouveau. `password_env` et `password_vault` restent prioritaires. Une lecture impossible (jeton absent, Vault injoignable) est signalée avec la question, et la saisie se fait comme sans cache.
+
+```yaml
+vault:
+  addr: https://vault.example.com
+  login: {method: oidc, path: oidc}
+  credentials_cache: cubbyhole/clotr
+```
 ### Outils SSH
 
 - Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `grep -c -E -I` (comptage), `df -hP`, `du -xh`, `getent ahosts` (résolution d'un nom), `gzip -t` et `gzip -cd` (fichier `.gz`). Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
@@ -621,7 +630,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
 | `params` | valeurs par défaut des paramètres de toutes les instances, propres au poste (par exemple `kubeconfig: ~/.kube/all-clusters`) : appliquées seulement aux paramètres que le template de l'instance déclare ; les `params` du client, du projet puis de l'instance l'emportent. Les fichiers `clients/` partagés n'ont ainsi pas à contenir de chemin propre à un poste |
 | `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true ; false : activée seulement par `-t <instance>`), `describes` (instance IaC : ce que décrit le dépôt, `<instance>` ou `<instance>/<cible>`, une valeur ou une liste ; sert au plan des modes `--dat` et `--diagram`) |
-| `vault` | `addr`, `namespace` : adresse et namespace Vault utilisés quand `VAULT_ADDR` / `VAULT_NAMESPACE` ne sont pas définis ; `login` (`method: oidc`, `path` défaut `oidc`, `role`, `port` défaut 8250, `min_ttl` défaut 4h) : connexion Vault au démarrage, voir Secrets Vault |
+| `vault` | `addr`, `namespace` : adresse et namespace Vault utilisés quand `VAULT_ADDR` / `VAULT_NAMESPACE` ne sont pas définis ; `login` (`method: oidc`, `path` défaut `oidc`, `role`, `port` défaut 8250, `min_ttl` défaut 4h) : connexion Vault au démarrage ; `credentials_cache` (chemin sous `cubbyhole/`) : identifiants saisis conservés dans Vault ; voir Secrets Vault |
 | `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
 | `local/` | réglages propres au poste, non versionnés, qui l'emportent sur la configuration partagée : voir Surcharge personnelle |
 | `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |

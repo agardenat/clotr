@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- `vault.credentials_cache` : les identifiants saisis au terminal sont conservés dans Vault, sous un chemin `cubbyhole/` propre au jeton, et relus aux runs suivants au lieu d'être redemandés. Des identifiants refusés y sont effacés puis remplacés par la nouvelle saisie. Le cache disparaît avec le jeton Vault.
+
 ## [0.85.1] - 2026-11-23
 
 ### Modifié

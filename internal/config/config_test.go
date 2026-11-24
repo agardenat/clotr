@@ -228,6 +228,14 @@ func TestVaultConf(t *testing.T) {
 	if _, err := Parse([]byte(base + "vault: {addr: vault.example.com}\n")); err == nil {
 		t.Error("vault.addr sans schéma accepté")
 	}
+	if c, err := Parse([]byte(base + "vault: {credentials_cache: cubbyhole/clotr}\n")); err != nil || c.Vault.CredentialsCache != "cubbyhole/clotr" {
+		t.Fatalf("credentials_cache: %v %+v", err, c)
+	}
+	for _, bad := range []string{"secret/team/clotr", "cubbyhole/../secret", "cubbyhole"} {
+		if _, err := Parse([]byte(base + "vault: {credentials_cache: " + bad + "}\n")); err == nil {
+			t.Errorf("credentials_cache %s accepté", bad)
+		}
+	}
 }
 
 func TestReportExport(t *testing.T) {

@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -134,4 +135,50 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg)
 	}
 	return json.Unmarshal(data, out)
+}
+
+func escapePath(path string) string {
+	segs := strings.Split(strings.Trim(path, "/"), "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.Join(segs, "/")
+}
+
+func (c *Client) ReadData(ctx context.Context, path string) (map[string]string, error) {
+	var body struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, escapePath(path), nil, &body); err != nil {
+		var se *statusError
+		if errors.As(err, &se) && se.code == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	out := map[string]string{}
+	for k, v := range body.Data {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out, nil
+}
+
+func (c *Client) Write(ctx context.Context, path string, data map[string]string) error {
+	if err := c.do(ctx, http.MethodPost, escapePath(path), data, nil); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
+}
+
+func (c *Client) Delete(ctx context.Context, path string) error {
+	if err := c.do(ctx, http.MethodDelete, escapePath(path), nil, nil); err != nil {
+		var se *statusError
+		if errors.As(err, &se) && se.code == http.StatusNotFound {
+			return nil
+		}
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
 }

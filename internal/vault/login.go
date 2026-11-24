@@ -69,7 +69,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		msg := http.StatusText(resp.StatusCode)
 		var e struct {
 			Errors []string `json:"errors"`
@@ -79,7 +79,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		}
 		return &statusError{code: resp.StatusCode, msg: msg}
 	}
-	if out == nil {
+	if out == nil || len(data) == 0 {
 		return nil
 	}
 	return json.Unmarshal(data, out)

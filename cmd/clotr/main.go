@@ -447,6 +447,7 @@ func loadConfig(o *options) (*config.Config, error) {
 		cfg, _ = runStartup(ctx, path, cfg, false, o.quiet, os.Stderr)
 	}
 	applyVaultEnv(cfg.Vault)
+	creds.UseVaultStore(cfg.Vault.CredentialsCache)
 	for _, l := range []struct {
 		flag string
 		v    int
