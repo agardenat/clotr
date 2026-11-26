@@ -95,14 +95,14 @@ func TestPlanRuleByVariant(t *testing.T) {
 func TestMainDiagramFirst(t *testing.T) {
 	s := New(Clean, true, renderer{}, audit.Nop())
 	s.Begin(t.TempDir())
-	for _, n := range []string{"api", "vm", "architecture", "api"} {
+	for _, n := range []string{"aws", "vm", "architecture", "aws"} {
 		call(t, s, map[string]any{"name": n, "cloud": "azure", "title": n, "spec": map[string]any{"nodes": []any{}}})
 	}
 	var names []string
 	for _, d := range s.Diagrams() {
 		names = append(names, d.Name)
 	}
-	if strings.Join(names, " ") != "architecture architecture-api architecture-vm" {
+	if strings.Join(names, " ") != "architecture architecture-aws architecture-vm" {
 		t.Fatal(names)
 	}
 }

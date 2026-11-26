@@ -143,12 +143,12 @@ func TestRecapGroupsUnknown(t *testing.T) {
 	i18n.SetReport("fr")
 	md := "# CVE-2026-44444 — bar\n\n## 4. Actifs indéterminés\n\n"
 	for _, h := range []string{"w0", "w1", "w2"} {
-		md += "**❓ api/dh/" + h + "** (hôte)\n\n- **Ce qui manque** : cluster arrêté [E001]\n\n"
+		md += "**❓ k8s/prod/" + h + "** (hôte)\n\n- **Ce qui manque** : cluster arrêté [E001]\n\n"
 	}
 	md += "**❓ vm/solo** (hôte)\n\n- **Ce qui manque** : SSH refusé\n"
 	got := Recap(md)
 	for _, want := range []string{
-		"- **api/dh** (CVE-2026-44444, 3 actifs : w0, w1, w2) : cluster arrêté\n",
+		"- **k8s/prod** (CVE-2026-44444, 3 actifs : w0, w1, w2) : cluster arrêté\n",
 		"- **vm/solo** (CVE-2026-44444) : SSH refusé\n",
 		"Sans actif positif : CVE-2026-44444.",
 	} {
