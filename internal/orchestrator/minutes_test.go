@@ -31,7 +31,7 @@ func TestMinutesPlanRolesAndRules(t *testing.T) {
 	if !strings.Contains(o.modeRule(), "Mode compte rendu de réunion : lis la transcription entière") {
 		t.Fatalf("consigne des agents absente : %q", o.modeRule())
 	}
-	if sys := tl.system["synthesizer"]; !strings.Contains(sys, "rédige le compte rendu de réunion") || !strings.Contains(sys, "## 4. Actions") {
+	if sys := tl.system["synthesizer"]; !strings.Contains(sys, "rédige le compte rendu de réunion") || !strings.Contains(sys, "## 3. Suivi du compte rendu précédent") {
 		t.Fatalf("modèle de rapport minutes absent : %q", sys)
 	}
 }

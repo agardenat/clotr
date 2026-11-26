@@ -12,28 +12,32 @@ Sinon, rédige le compte rendu de réunion en Markdown selon le modèle ci-desso
 
 ---
 
-## 3. Décisions
+## 3. Suivi du compte rendu précédent
 
-<!-- Une puce par décision prise en réunion, le sujet en gras, avec qui l'a prise ou validée et le passage [hh:mm:ss]. Une proposition sans accord exprimé n'est pas une décision : elle va en section 5. Sans décision, écrire « Aucune décision actée ». -->
+<!-- Tableau | Point du compte rendu précédent | Responsable | Statut | Passage | : une ligne par action ou point ouvert du dernier compte rendu reçu (date et auteur dans la phrase qui précède le tableau) ; statut d'après ce qui a été dit en réunion : traité, en cours, reporté, non abordé ; passage = horodatage [hh:mm:ss], vide pour un point non abordé. Sans compte rendu précédent, écrire « Pas de compte rendu précédent reçu ». -->
 
-## 4. Actions
+## 4. Décisions
+
+<!-- Une puce par décision prise en réunion, le sujet en gras, avec qui l'a prise ou validée et le passage [hh:mm:ss]. Une proposition sans accord exprimé n'est pas une décision : elle va en section 6. Sans décision, écrire « Aucune décision actée ». -->
+
+## 5. Actions
 
 <!-- Tableau | Action | Responsable | Échéance | Passage | : une ligne par action décidée ; responsable et échéance seulement s'ils ont été dits (sinon « non précisé ») ; passage = horodatage [hh:mm:ss]. Sans action, écrire « Aucune action décidée ». -->
 
-## 5. Points ouverts
+## 6. Points ouverts
 
 <!-- Une puce par question restée sans réponse, sujet à trancher, proposition sans accord ou point de l'ordre du jour non abordé, le sujet en gras, avec qui doit y répondre si c'est dit et le passage. -->
 
-## 6. Risques et blocages
+## 7. Risques et blocages
 
 <!-- Une puce par risque, blocage ou dépendance évoqués, le sujet en gras, avec ce qui a été dit de son traitement et le passage. Sans risque évoqué, écrire « Aucun risque évoqué ». -->
 
 ---
 
-## 7. Prochaine échéance
+## 8. Prochaine échéance
 
 <!-- Prochaine réunion, livraison ou date annoncée, avec le passage ; sinon « Non précisée ». -->
 
-## 8. Points non vérifiés et limites
+## 9. Points non vérifiés et limites
 
-<!-- Puces : passages inaudibles ou douteux de la transcription automatique (terme, chiffre, nom), alias non identifiés, transcription absente ou partielle. -->
+<!-- Puces : écarts avec un compte rendu déjà diffusé après la réunion (décision, action, responsable ou échéance absents ou différents, avec le passage qui fait foi) ; passages inaudibles ou douteux de la transcription automatique (terme, chiffre, nom), alias non identifiés, transcription absente ou partielle. -->
