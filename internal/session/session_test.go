@@ -168,11 +168,11 @@ func TestReportNamedAndLegacy(t *testing.T) {
 
 func TestNamePrefix(t *testing.T) {
 	cases := map[string][]string{
-		"globex-nginx-":      {"globex", "nginx"},
+		"globex-nginx-":    {"globex", "nginx"},
 		"acme-certificat-": {"ACME", "Certificat"},
-		"globex-schema-":     {"globex", "schéma", ""},
-		"cve-":            {"", "cve", "cve"},
-		"":                {"", " "},
+		"globex-schema-":   {"globex", "schéma", ""},
+		"cve-":             {"", "cve", "cve"},
+		"":                 {"", " "},
 	}
 	for want, parts := range cases {
 		if got := NamePrefix(parts...); got != want {

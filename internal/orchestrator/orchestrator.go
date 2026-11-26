@@ -106,6 +106,7 @@ type Orchestrator struct {
 	Change          bool
 	Upgrade         bool
 	Minutes         bool
+	CiteEvidence    bool
 	Watch           *watch.Store
 	WatchFor        time.Duration
 	Tickets         *ticket.Store
@@ -1269,8 +1270,11 @@ func (o *Orchestrator) cachedAdvisories() Result {
 }
 
 func (o *Orchestrator) finalize(content string) string {
-	if o.Runner.Evidence == nil || o.DAT != nil && !o.DAT.CitesEvidence() {
+	if o.Runner.Evidence == nil {
 		return content
+	}
+	if !o.citesEvidence() {
+		return stripCitations(content)
 	}
 	content, n := flagNoteOnlyLines(content, o.Runner.Evidence, o.noteContents())
 	if n > 0 {
@@ -1652,6 +1656,9 @@ func (o *Orchestrator) synthesizerSystem() string {
 	sys := synthesizerPrompt + o.reportModel() + synthesizerRules
 	if o.DAT != nil {
 		sys += o.DAT.SynthRule()
+	}
+	if o.Minutes {
+		sys += o.minutesSynthRule()
 	}
 	if strings.TrimSpace(o.Environment) != "" {
 		sys += "\nEnvironnement et consignes (servent à distinguer comportement attendu et anomalie):\n" + o.Environment

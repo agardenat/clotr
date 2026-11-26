@@ -152,6 +152,7 @@ type app struct {
 	change       bool
 	upgrade      bool
 	minutes      bool
+	citeEvidence bool
 	watch        *watch.Store
 	watchFor     time.Duration
 	journal      bool
@@ -972,6 +973,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		rt.change = o.change && len(o.cveIDs) == 0
 		rt.upgrade = o.upgrade
 		rt.minutes = o.minutes
+		rt.citeEvidence = o.withEvidence
 		if o.watch {
 			rt.watch = watch.New(rt.watchInstance, rt.evidence, rt.audit)
 			if o.watchEvery > 0 {
@@ -1534,26 +1536,27 @@ func (rt *app) orchestrator(events progress.Sink, reg *tools.Registry, env strin
 		runner.InboxFormat = cve.InboxFormat
 	}
 	return &orchestrator.Orchestrator{
-		Cfg:         rt.cfg,
-		Router:      rt.router,
-		Runner:      runner,
-		Tools:       reg,
-		Audit:       rt.audit,
-		Events:      events,
-		Environment: env,
-		Memory:      rt.memory,
-		Language:    rt.lang,
-		WebTools:    rt.webTools,
-		Incident:    rt.leads != nil,
-		Change:      rt.change,
-		Upgrade:     rt.upgrade,
-		Minutes:     rt.minutes,
-		Watch:       rt.watch,
-		WatchFor:    rt.watchFor,
-		Tickets:     rt.tickets,
-		CVE:         rt.cves,
-		DAT:         rt.dat,
-		Journal:     rt.journal,
+		Cfg:          rt.cfg,
+		Router:       rt.router,
+		Runner:       runner,
+		Tools:        reg,
+		Audit:        rt.audit,
+		Events:       events,
+		Environment:  env,
+		Memory:       rt.memory,
+		Language:     rt.lang,
+		WebTools:     rt.webTools,
+		Incident:     rt.leads != nil,
+		Change:       rt.change,
+		Upgrade:      rt.upgrade,
+		Minutes:      rt.minutes,
+		CiteEvidence: rt.citeEvidence,
+		Watch:        rt.watch,
+		WatchFor:     rt.watchFor,
+		Tickets:      rt.tickets,
+		CVE:          rt.cves,
+		DAT:          rt.dat,
+		Journal:      rt.journal,
 		PrepareTools: func(ctx context.Context, names []string) {
 			rt.prepareCredentials(ctx, reg, names)
 		},

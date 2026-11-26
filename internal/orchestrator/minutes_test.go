@@ -2,9 +2,11 @@ package orchestrator
 
 import (
 	"context"
-	"github.com/agardenat/clotr/internal/config"
 	"strings"
 	"testing"
+
+	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/evidence"
 )
 
 func TestMinutesPlanRolesAndRules(t *testing.T) {
@@ -48,5 +50,34 @@ func TestMinutesRolesUseStrongestWorker(t *testing.T) {
 		if task.Role != "analyst" {
 			t.Errorf("%s : rôle %q, attendu analyst", task.ID, task.Role)
 		}
+	}
+}
+
+func TestMinutesReportWithoutEvidenceByDefault(t *testing.T) {
+	o, _ := newOrch(t, nil, nil)
+	ev := evidence.Open(t.TempDir(), 1)
+	id := ev.Add("t1", "teams_transcript", `{}`, "transcription", nil)
+	o.Runner.Evidence = ev
+	md := "- **Décision** : migration samedi [" + id + "] [00:12:03].\n- Voir [" + id + ", " + id + "] et ([" + id + "]).\n- Rien à citer."
+	o.Minutes = true
+	got := o.finalize(md)
+	want := "- **Décision** : migration samedi [00:12:03].\n- Voir et.\n- Rien à citer."
+	if got != want {
+		t.Fatalf("compte rendu client :\n%q\nattendu :\n%q", got, want)
+	}
+	if sys := o.synthesizerSystem(); !strings.Contains(sys, "ne cite aucun identifiant de preuve [Exxx]") {
+		t.Fatalf("consigne client absente : %q", sys)
+	}
+	o.CiteEvidence = true
+	got = o.finalize(md)
+	if !strings.Contains(got, "["+id+"] [00:12:03]") || !strings.Contains(got, "Annexe") && !strings.Contains(got, "Appendix") {
+		t.Fatalf("preuves demandées absentes : %q", got)
+	}
+	if sys := o.synthesizerSystem(); strings.Contains(sys, "ne cite aucun identifiant de preuve [Exxx]") || !strings.Contains(sys, "Cite les preuves [Exxx]") {
+		t.Fatalf("consigne avec preuves : %q", sys)
+	}
+	o.Minutes, o.CiteEvidence = false, false
+	if got := o.finalize(md); !strings.Contains(got, "["+id+"]") {
+		t.Fatalf("preuves retirées hors compte rendu : %q", got)
 	}
 }
