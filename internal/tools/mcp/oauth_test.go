@@ -326,7 +326,7 @@ func newFakeGateway(t *testing.T) (*fakeGateway, *httptest.Server) {
 		defer f.mu.Unlock()
 		if r.Form.Get("grant_type") == "refresh_token" {
 			f.refreshes++
-			writeJSON(w, 400, map[string]any{"error": "unsupported_grant_type", "error_description": "the gateway refreshes stored per-user credentials itself"})
+			writeJSON(w, 400, map[string]any{"detail": map[string]any{"error": "unsupported_grant_type", "error_description": "refresh_token grant is disabled on this relay; the gateway refreshes stored per-user credentials itself"}})
 			return
 		}
 		if r.Form.Get("client_id") != "files" || r.Form.Get("client_secret") != "dummy" {

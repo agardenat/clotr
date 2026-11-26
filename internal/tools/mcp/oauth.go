@@ -214,7 +214,7 @@ func (s *savingSource) Token() (*oauth2.Token, error) {
 	t, err := s.base.Token()
 	if err != nil {
 		var re *oauth2.RetrieveError
-		if errors.As(err, &re) && re.ErrorCode == "unsupported_grant_type" {
+		if errors.As(err, &re) && grantError(re) == "unsupported_grant_type" {
 			s.refused.Store(true)
 			return nil, errRefreshRefused
 		}
@@ -222,6 +222,21 @@ func (s *savingSource) Token() (*oauth2.Token, error) {
 	}
 	s.store.setToken(t)
 	return t, nil
+}
+
+func grantError(re *oauth2.RetrieveError) string {
+	if re.ErrorCode != "" {
+		return re.ErrorCode
+	}
+	var body struct {
+		Detail struct {
+			Error string `json:"error"`
+		} `json:"detail"`
+	}
+	if json.Unmarshal(re.Body, &body) == nil {
+		return body.Detail.Error
+	}
+	return ""
 }
 
 func refreshContext(client *http.Client) context.Context {

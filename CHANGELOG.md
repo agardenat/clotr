@@ -1,5 +1,10 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Corrigé
+- Serveurs MCP en OAuth derrière une passerelle : le refus du rafraîchissement est reconnu aussi quand l'erreur est imbriquée dans `detail` (`{"detail":{"error":"unsupported_grant_type"}}`) ; en 0.88.0, la connexion au serveur échouait dès l'expiration du jeton enregistré.
+
 ## [0.88.0] - 2026-11-26
 
 ### Ajouté
