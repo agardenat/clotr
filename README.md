@@ -1,551 +1,6 @@
 # clotr
 
-Agent CLI d'analyse d'infrastructure, en lecture seule par défaut (fichiers de configuration, serveurs MCP et toute cible décrite par un template), exécuté sans interaction une fois lancé. Le niveau d'accès se règle au lancement, voir Niveaux d'accès. Les modèles sont découverts sur un ou plusieurs endpoints OpenAI-compatibles, puis chaque sous-agent reçoit le modèle adapté à son rôle.
-
-Binaire Go statique, sans dépendance d'exécution.
-
-## Fonctionnement
-
-1. **Catalogue** : `GET {base_url}/models` sur chaque provider, en parallèle. Les capacités (tier, contexte, tool-calling) viennent des `profiles` de la config, ou de `/model/info` si le provider est un proxy LiteLLM (`model_info: true`). Le résultat est mis en cache (`~/.cache/clotr/catalog.json`, TTL `catalog.cache_ttl`).
-2. **Planner** (rôle `planner`) : découpe la demande en tâches JSON `{id, role, goal, tools, depends_on}`. Le plan est validé (rôles, outils, dépendances, cycles), avec une nouvelle tentative si le plan est invalide. Une dépendance entre deux tâches du même rôle est retirée (seule une analyse attend des collectes) : la tâche concernée démarre tout de suite et son objectif précise qu'elle ne reçoit pas ces résultats (audit `plan_deps_dropped`). Pour une investigation, le planner découpe par périmètre disjoint (cible, hôte, ressource, composant) et non par type de donnée sur un même composant, chaque objectif nomme les ressources dont la tâche a la charge, et la localisation d'une cible à retrouver reste dans la tâche qui l'investigue.
-3. **Sous-agents** : une goroutine par tâche. Une tâche démarre dès que ses dépendances sont terminées, et reçoit leurs résultats en entrée. La concurrence est bornée globalement (`limits.max_agents`) et par provider (`max_concurrency`). Chaque agent exécute une boucle de tool-calling, et les appels d'outils d'un même tour sont lancés en parallèle.
-4. **Durée des tâches** : une tâche n'est pas arrêtée parce qu'elle dure, mais parce qu'elle ne progresse plus. Une étape progresse si elle lance au moins un appel d'outil nouveau (outil et paramètres jamais utilisés dans la tâche) ; relire une preuve avec `evidence_read` ne compte que si la lecture couvre des lignes pas encore lues dans la tâche. Après `limits.stall_steps` étapes sans appel nouveau (défaut 3), l'agent conclut avec ce qu'il a, et la tâche est marquée « plus de progression ». `limits.max_steps` (défaut 100) n'est qu'un plafond de sécurité contre les boucles. `limits.agent_timeout` est désactivé par défaut ; s'il est réglé, l'agent conclut avant ce délai, avec une réserve de `min(5 min, request_timeout)` pour la conclusion. Seuls les appels individuels restent bornés : `request_timeout` pour un appel trop long, `idle_timeout` pour un flux muet. Une tâche arrêtée par `max_steps` ou `agent_timeout` est poursuivie par une suite (`tN.2`, `limits.continuations`, défaut 1) qui reçoit le résultat partiel ; pas de suite après un arrêt pour absence de progression. Une tâche encore limitée après ses suites reçoit un gap « investigation incomplète ».
-5. **Contrôle des preuves** (par clotr) : la réponse d'un sous-agent doit contenir `findings`, `evidence` ou `gaps`, et chaque constat citer dans son texte une preuve existante ; sinon la réponse est renvoyée à l'agent (deux reprises au plus). Un constat encore sans preuve est marqué « [NON PROUVÉ] ». Un appel d'outil écrit dans le texte au format harmony (`to=functions.<outil>{…}`) est exécuté comme un appel d'outil.
-6. **Vérification** (`limits.verify_findings`, activée par défaut) : pour chaque tâche, un agent de vérification (rôle `analyst`, sinon le premier rôle outillé) relit, avec `evidence_read` et `evidence_search` uniquement, les preuves citées par les constats CRITIQUE et MAJEUR. Il les marque « [VÉRIFIÉ] », « [PARTIEL : raison] » ou « [NON ÉTAYÉ : raison] ». Les verdicts partiels et négatifs sont enregistrés en mémoire de session. Le synthesizer ne reprend un constat non étayé que dans les points non vérifiés.
-7. **Synthesizer** : produit le rapport Markdown à partir des résultats `{findings, evidence, gaps}`, avec une mise en page fixe (demande en citation, ajoutée par clotr, puis conclusion en puces, constats numérotés par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) sauf si la demande impose une forme. Une ligne du rapport qui ne s'appuie que sur une note de mémoire, sans preuve existante, est suffixée « ⚠ non vérifié ».
-
-Une tâche en échec n'interrompt pas les autres. Elle apparaît dans le rapport comme point non vérifié.
-
-### Routage
-
-Pour chaque rôle, `roles.<nom>` définit `tier` minimal (`fast` < `balanced` < `deep`), `tools` (tool-calling requis) et `min_context`. Chaque modèle reçoit un score égal au `weight` de son provider plus la `priority` de son profil. Les modèles éligibles sont triés par tier croissant (le plus léger suffisant d'abord), puis par score décroissant, puis par ordre des providers et par nom.
-
-Chaque modèle porte aussi un indicateur souverain : `sovereign` du provider, surchargeable par profil. La politique souveraine se règle à trois niveaux, du moins au plus prioritaire : `routing.sovereign`, puis `roles.<nom>.sovereign`, puis `--sovereign`. Elle prend l'une de ces valeurs :
-- `any` (défaut) : sans effet sur le tri ;
-- `prefer` : les modèles souverains passent en tête, quel que soit leur tier, et les autres restent en fallback ;
-- `require` : seuls les modèles souverains sont éligibles. Un `--model` non souverain est alors refusé.
-
-Cette liste ordonnée sert aussi de chaîne de fallback :
-- sur 408/425/429/5xx ou une erreur réseau, le même modèle est retenté une fois (backoff, ou `Retry-After` plafonné à 30 s), puis l'appel bascule sur le suivant. Le modèle reste candidat pour les appels suivants, y compris en cas de 429 quota. Si tous les candidats sont en échec temporaire, un second tour a lieu après 30 s ; avec `persistent_retry: true` sur le provider d'un modèle qui a échoué ainsi, les tours continuent jusqu'à une réponse ou une interruption (Ctrl-C), avec une pause doublée à chaque tour de 30 s à 5 min (`Retry-After` respecté dans cette limite) ;
-- débit d'un provider : `max_requests_per_minute: N` retient chaque requête (relances comprises) tant que N requêtes sont parties dans les 61 dernières secondes, pour tous les agents du run et toutes les instances de clotr lancées en même temps sur le poste (état partagé par provider dans `rate/<provider>.json` du répertoire d'état, `~/.local/state/clotr` par défaut, sous verrou de fichier). Un 429 met toutes les requêtes du provider en attente, dans toutes ces instances, jusqu'à la reprise indiquée (`Retry-After`, ou « Limit resets at » d'une passerelle LiteLLM), plafonnée à 61 s. Cette attente compte dans `queue_ms` de l'audit ;
-- sur 400/404/422, on bascule directement ;
-- sur 401/403, l'exécution s'arrête ;
-- sur 403 lié au quota ou au budget (corps contenant quota, budget ou insufficient), la bascule est immédiate ;
-- sur 404, la bascule est immédiate et le modèle est écarté pour le reste du run ;
-- sortie épuisée sans réponse (limite de sortie atteinte pendant le raisonnement, sans texte ni appel d'outil) : bascule sur un modèle disponible qui n'a pas encore échoué ainsi pour cette étape ; s'il n'y en a plus, l'appel échoue aussitôt, sans demande de suite ni nouvel essai, qui reproduiraient le même raisonnement. Le `max_tokens` envoyé figure dans l'événement `llm_call` de l'audit.
-
-Les profils sont évalués dans l'ordre : le premier glob qui correspond à `model` ou `provider/model` (insensible à la casse) s'applique. `exclude: true` retire le modèle du catalogue. Un modèle sans profil reçoit `tier=balanced` et `tools=false`. Un profil final `match: "*"` avec `exclude: true` transforme la liste en liste blanche.
-
-## Sessions
-
-Chaque `run` ouvre une session dans `sessions.dir` (défaut `~/.local/state/clotr/sessions`). Son nom est fait du client cité, d'un mot qui résume le run et d'une partie aléatoire dans la langue de l'interface (`ui_language`), par exemple `acme-kerberos-fieffe-coquin`. Le client est trouvé comme pour la conformité : nom ou alias du client, d'un de ses projets, ou d'une de ses instances, dans la demande ou `-t`. Le mot vaut `cve`, `dat` ou `schema` dans ces modes. Sinon, il est demandé au modèle du rôle le plus rapide (anonymisation et souveraineté appliquées comme pour les agents, 30 secondes au plus) ; s'il manque, c'est le nom du mode (`incident`, `change`, `upgrade`, `suivi`, `cr`, `ticket`) ou rien. Sans client cité, le nom commence par le mot, par exemple `kerberos-fieffe-coquin` :
-
-```
-<session>/
-  session.json        méta, politique souveraine et confidentialité, liste des tours (demande, statut, modèles, coût)
-  memory.json         mémoire partagée cumulée de la session
-  report.md           dernier rapport
-  turns/001/          request.txt, plan.json, results.json, report.md, summary.json, audit.jsonl
-    evidence/         E001.txt… (sortie complète de chaque appel d'outil), index.json
-```
-
-Le rapport d'un tour CVE, DAT, schéma ou compte rendu porte un nom parlant au lieu de `report.md` : `<CLIENT>-CVE-<identifiant>-<AAAAMMJJ>.md` (plusieurs CVE séparées par `_`, sans leur préfixe `CVE-`), `<CLIENT>-DAT-<AAAAMMJJ>.md`, `<CLIENT>-DIAGRAM-<AAAAMMJJ>.md`, `<CLIENT>-CR-<AAAAMMJJ>.md`, avec les clients des instances du tour (plusieurs séparés par `-`, aucun si les instances n'en ont pas) et la date de début du tour ; les documents exportés dans le tour prennent le même nom.
-
-`clotr run -s <session|last> "…"` ajoute un tour à une session existante pour l'affiner. Le nouveau tour démarre avec :
-- la mémoire de la session ;
-- les demandes précédentes et le dernier rapport, transmis au planner et au synthesizer ;
-- le mode du dernier tour lancé en mode incident (`--incident` ou `--panic`), demande de changement, mode opératoire de mise à jour, suivi en direct, DAT ou schéma d'architecture (avec sa variante), et son ticket si la nouvelle demande n'en cite pas (message `Mode … repris du tour N`). Un mode passé explicitement (`--incident`, `--change`, `--upgrade`, `--watch`, `--cve`), `--ticket`, `--direct` ou `--chat` l'emporte ; un tour CVE plus récent arrête la reprise. Le journal de `--panic` n'est pas repris.
-
-Le planner ne planifie que ce qui manque. Le synthesizer répond à la nouvelle demande, ou produit le rapport complet mis à jour si c'est ce qui est demandé.
-
-`clotr session <nom|last> --synthesize [--turn N] [-o fichier]` régénère le rapport d'un tour à partir de son `results.json`, sans relancer les tâches (par exemple après un rapport coupé ou une synthèse en échec). Seuls les connecteurs du tour d'origine sont préparés (même filtre `-t`, modifiable avec `-t`), car le contexte des templates sert à la synthèse. Aucune instance n'est activée : la synthèse n'appelle pas d'outil.
-
-Une session ouverte avec `--confidential` (ou `--sovereign require`) reste confidentielle pour tous ses tours. Un `--sovereign any` ou `prefer` y est refusé.
-
-Un client dont le type de plateforme (`compliance`) est confidentiel rend le run confidentiel dès que la demande, un tour précédent de la session ou `-t` le cite (nom ou alias du client, d'un de ses projets, nom d'une de ses instances) : la bascule est faite avant le premier appel de modèle et affichée (`run confidentiel : client …`), et un `--sovereign any` ou `prefer` est alors refusé. Hors run confidentiel, ses instances ne sont jamais proposées, même pour une demande générique.
-
-```sh
-clotr run "état du cluster prod"
-```
-
-```sh
-clotr run -s last "détaille les pods en CrashLoopBackOff"
-```
-
-```sh
-clotr sessions
-```
-
-```sh
-clotr session cosmic-walrus --turn 1
-```
-
-## Preuves
-
-Pendant un `run`, chaque sortie d'outil (hors mémoire) est archivée en entier dans `turns/NNN/evidence/` sous un identifiant : `E001`, `E002`… au premier tour, `E2.001`… aux tours suivants. Le fichier contient la tâche, l'outil, les arguments, l'heure et la sortie telle que le modèle l'a reçue.
-
-- L'identifiant est placé en tête de la sortie transmise au modèle.
-- Les sous-agents citent cet identifiant dans `evidence` et `findings`, et le synthesizer le reprend dans le rapport.
-- clotr ajoute ensuite une annexe « preuves citées » : outil, arguments et fichier de chaque identifiant cité. Un identifiant absent de l'archive y est signalé.
-
-```sh
-clotr session <nom|last> --evidence E012
-```
-
-`--with-evidence` (`run`, `session`, `session --synthesize`) remplace cette annexe par la sortie complète de chaque preuve citée, sans troncature. Le `report.md` de la session n'est pas modifié : l'annexe complète est produite à l'affichage depuis l'archive, et peut donc être demandée après coup, sans appel au modèle. Le rapport est alors en Markdown brut, et `-o` est l'usage naturel : les preuves citées pèsent couramment dix fois le rapport. Ce sont des sorties brutes (hôtes, adresses, comptes, extraits de configuration) : un rapport complet est plus sensible que le rapport seul.
-
-```sh
-clotr session last --with-evidence -o rapport-complet.md
-```
-
-Les preuves de tous les tours d'une session restent consultables : `evidence_search` les retrouve (termes sur l'outil et ses arguments, filtre optionnel sur le contenu, heure de collecte), et l'annexe d'un rapport résout aussi les identifiants des tours précédents. Pendant un run, les agents relisent une preuve avec l'outil `evidence_read` (`id`, puis `pattern` pour garder et `exclude` pour retirer des lignes, en expressions régulières RE2, ou `offset`/`lines`), sans refaire l'appel distant.
-
-### Historique allégé
-
-Chaque étape d'un agent renvoie toute sa conversation au modèle. Pour éviter que le contexte enfle à chaque appel d'outil (plus de 100 000 tokens sur les longues tâches), les sorties d'outils plus anciennes que `limits.history_keep_steps` étapes (défaut 2) sont raccourcies à `limits.history_tool_chars` caractères (défaut 1500), suivies de l'identifiant de preuve à relire avec `evidence_read`. Les agents notent au fil de l'eau avec `memory_write` les faits nécessaires à leur conclusion, et ces notes leur sont rendues dans le message de conclusion. `history_tool_chars: 0` désactive le raccourcissement. Mesuré sur un run réel de 11 tâches : 62 % de caractères de sorties d'outils renvoyés en moins.
-
-Le raccourcissement se renforce selon la place prise dans le contexte du modèle (tokens d'entrée de l'appel précédent rapportés à son contexte, 128 000 s'il est inconnu) : au-delà de la moitié, les étapes anciennes gardent 300 caractères de sortie, les sorties sans preuve (relectures, mémoire) sont raccourcies aussi (« refaire l'appel si besoin »), le texte et les arguments des appels d'outils anciens sont réduits à 300 caractères (arguments remplacés par un JSON `{"raccourci": "…"}`) ; au-delà des trois quarts, 120 caractères. Audit `history_compacted`. Une longue tâche (plusieurs centaines d'appels) ne dépasse ainsi plus le contexte du modèle.
-
-## Mémoire partagée
-
-Pendant un run, les agents partagent une mémoire interne :
-- `memory_write` enregistre un fait (`key`, `content`, `tags`) ; réutiliser la même `key` met l'entrée à jour ;
-- `memory_search` interroge la mémoire par mots-clés et tags.
-
-Ces deux outils sont ajoutés à chaque tâche outillée. Les constats de chaque tâche terminée y sont versés automatiquement, et les notes (`kind: note`) sont transmises au synthesizer. La mémoire n'écrit que dans le processus clotr, jamais sur l'infrastructure.
-
-Chaque entrée garde la tâche, le modèle et l'indicateur souverain de son auteur. À la fin du `run`, stderr affiche le nombre d'entrées, dont les souveraines, ainsi que le nombre d'entrées souveraines lues via `memory_search` par un modèle non souverain. La mémoire est sauvegardée dans le `memory.json` de la session, puis rechargée au tour suivant.
-
-## Résolution DNS
-
-L'outil intégré `dns_resolve` résout un nom depuis le poste qui exécute clotr, par le résolveur du système : nom canonique (CNAME) et adresses IPv4/IPv6. Il est proposé à toutes les tâches, et `-x dns` l'écarte. Pour un incident d'accès à une URL (inaccessible, erreur TLS, authentification inattendue), la consigne des agents est de vérifier d'abord la chaîne d'accès : résoudre le nom et comparer l'IP obtenue au point d'entrée attendu (load balancer de l'ingress, proxy, VM) ; une IP inattendue est signalée comme cause. Le résultat reflète la vue DNS du poste : un nom résolu seulement par le DNS interne d'un autre réseau apparaît comme inexistant. Pour la vue d'un réseau joint par un proxy, `<instance>_ssh_resolve` (templates SSH) résout le nom sur un hôte de ce réseau ; la consigne des agents le cite quand une instance le propose.
-
-## Recherche web
-
-Les agents doivent rester factuels : chaque affirmation repose sur une preuve `[Exxx]`, et aucune valeur par défaut, aucun comportement de produit ni aucune signification de message n'est supposé. En cas de doute, ils cherchent sur le web si la recherche est autorisée pour le run. Sinon, le point va dans les non vérifiés.
-
-- `web_search.mcp` désigne le serveur MCP qui fournit la recherche. Ce serveur n'est connecté que si la recherche est autorisée, même avec `-t`. Sans `web_search.model`, `-x mcp_<serveur>` (ou `-x mcp`) l'écarte comme `--web no`.
-- `web_search.model` (`provider/modèle`) et `web_search.api` (`messages` ou `responses`) désignent un modèle doté d'une recherche web native, interrogé par l'outil `web_search`. Les agents gardent leur modèle en `/chat/completions` : l'outil pose la question au modèle de recherche par l'API indiquée (`/messages` avec l'outil serveur `web_search_20250305`, ou `/responses` avec l'outil `web_search`) et renvoie sa réponse, les URL citées, les requêtes lancées, le nombre de recherches et les tokens consommés. Le modèle sert quand le serveur MCP n'est pas utilisable : `web_search.mcp` vide, serveur désactivé (`enabled: false`) ou exclu par `-x`. La politique, `--web` et la règle des sessions confidentielles s'appliquent de la même façon. La question part chez le fournisseur du modèle : les consignes sur les identifiants internes valent aussi pour elle.
-- `web_search.policy` : `ask` (défaut, question au démarrage de `run` et `plan`, refus sans terminal), `allow` ou `deny`. `--web yes|no` l'emporte sur la politique pour un run.
-- `web_search` sur un client (`ask`, `allow` ou `deny`) remplace la politique pour les runs qui citent ce client (nom ou alias du client, d'un projet, nom d'une instance, dans la demande, un tour précédent ou `-t`). Si plusieurs clients sont cités, la politique la plus stricte l'emporte (`deny`, puis `ask`, puis `allow`) ; `--web yes|no` l'emporte toujours, sauf le refus en session confidentielle.
-- Une session confidentielle refuse la recherche web (`--web yes` y est refusé), sauf si elle cite au moins un client de type confidentiel et que la politique de chaque client confidentiel cité (son `web_search`, sinon `web_search.policy`) est `allow` ou `ask` ; la recherche passe alors par `web_search.mcp`, ou par `web_search.model` seulement si son fournisseur est souverain. Les requêtes restent génériques, mais elles sortent du périmètre souverain : ce réglage est une décision du responsable de la plateforme.
-- Les outils web sont ajoutés à chaque tâche outillée. Les consignes demandent de privilégier la documentation officielle de l'éditeur, et de ne jamais mettre d'identifiant interne (hôte, IP, cluster, compte, domaine) dans les requêtes.
-- Chaque page lue est archivée comme preuve, comme toute sortie d'outil.
-
-## Export du rapport en document
-
-`--export docx|pdf` (`run`, `session`, `session --synthesize`) produit aussi le rapport en document Word ou PDF avec le template de document désigné par `report_export.template` (voir Templates de document). `-o rapport.docx` ou `-o rapport.pdf` vaut `--export` avec ce fichier pour destination ; sinon le document est écrit dans le tour de la session (`turns/NNN/report.docx`, ou le nom parlant d'un tour CVE, DAT ou schéma). Le rapport d'une session existante s'exporte sans relancer d'analyse :
-
-```sh
-clotr session last -o rapport.pdf
-```
-
-Un fichier Markdown quelconque se met en forme de la même façon, sans session, modèle ni instance :
-
-```sh
-clotr export procedure.md
-clotr export procedure.md -o procedure.pdf
-cat notes.md | clotr export - -o notes.docx
-```
-
-- Le format vient de `-o` (`.docx` ou `.pdf`), sinon de `-f docx|pdf` (`docx` par défaut) ; sans `-o`, le document est écrit à côté du fichier source, sous le même nom. `-` lit le Markdown sur stdin et exige `-o`.
-- Le titre est l'unique titre de niveau 1, sinon le nom du fichier ; la date est celle du jour ; la langue est `--lang`, sinon déduite du texte. Le template reçoit le mode `document`.
-- Les images citées par un chemin relatif (`![Figure 1](img/schema.png)`) sont lues à partir du dossier du fichier source, sans en sortir (`..`, chemin absolu et URL ignorés).
-- `--export-template` et `--confidential` s'appliquent comme pour une session.
-
-```yaml
-report_export:
-  template: rapport-doc
-  params: {team: "Équipe plateforme"}
-```
-
-- Le document est construit sur le poste, sans modèle ni service tiers : rien ne sort du poste, l'export est donc permis en session confidentielle. Un template de document doté d'un connecteur `mcp` ou `http` envoie le rapport hors du poste : il est refusé en session confidentielle.
-- `--export-template <nom>` utilise un autre template de document que `report_export.template`, par exemple pour comparer deux rendus du même rapport ; `report_export.params` ne s'applique qu'au template configuré.
-- Le template reçoit le rapport Markdown et ses métadonnées (titre, mode, langue, demande, ticket, date, session) et rend un `.docx`.
-- Le PDF est converti depuis ce `.docx` par LibreOffice (`soffice`, cherché dans le `PATH`, puis aux emplacements d'installation habituels sous Windows et macOS), avec un profil temporaire ; les index (table des matières) et les champs (renvois de page) sont mis à jour avant la conversion. Sans LibreOffice, ou si la conversion échoue, le `.docx` est enregistré à la place (même nom, extension `.docx`) et l'erreur le signale.
-- clotr compare ensuite le texte du `.docx` au rapport : passages absents ou modifiés, passages hors de leur place, titres rendus comme texte ordinaire, syntaxe Markdown restée littérale. Les numéros placés en tête de titre (`1.`, `2.3`) sont ignorés, le document pouvant numéroter ses titres lui-même. Le rapport Markdown fait foi.
-
-## Passage souverain → non souverain
-
-Tout ce qu'un agent envoie à un modèle non souverain passe par un point unique de l'agent, l'interface `agent.Boundary`, qui couvre :
-- le prompt ;
-- les résultats d'outils ;
-- les résultats de dépendances ;
-- le contenu lu dans la mémoire.
-
-`Outbound` transforme les messages sortants, `Inbound` la réponse, arguments d'appels d'outils compris. La mémoire stocke la version souveraine, en clair. L'implémentation fournie, `Passthrough`, ne transforme rien : c'est le point d'insertion d'une anonymisation.
-
-## Templates
-
-Un template décrit un type de cible ; une instance de la config l'applique à un environnement réel. Le binaire n'embarque aucun template : il charge à chaque exécution les fichiers `*.yaml` de `templates.dir` (défaut `~/.config/clotr/templates`) et les scripts qu'ils référencent. Deux fichiers portant le même `name` sont refusés, et un fichier invalide est ignoré avec un avertissement. `clotr templates` liste les templates chargés et les instances, `clotr templates <nom>` affiche le YAML et le script.
-
-Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appels d'API, authentification, découverte, interprétation des réponses, outils) est écrite dans le script du template, en [Starlark](https://github.com/google/starlark-go/blob/master/doc/spec.md). Le moteur fournit des primitives génériques et applique les garde-fous de lecture seule et des niveaux d'accès. Les templates ne sont pas fournis avec l'outil ; `templates.dir` peut être un clone d'un dépôt de templates.
-
-### Format
-
-- `checklist` : liste des faits d'architecture que l'instance permet d'établir (ex. appairages, passerelles, objets nommés des règles de filtrage) ; en `--dat` et `--diagram`, l'objectif de chaque tâche reprend la liste de ses instances, et l'agent doit établir chaque point par un constat ou dire dans ses manques pourquoi il ne l'est pas ;
-- `modes` : consignes propres à un mode du run, par nom de mode (`upgrade`, `watch`, `minutes`) : `hints` (texte ajouté aux `hints` de l'instance) et `checklist` (points à relever, chacun établi par un constat ou signalé comme non relevé), présentés aux agents seulement quand le run est dans ce mode, par exemple les pages de documentation de mise à jour du produit et les versions à relever pour `--upgrade`, ou l'emplacement des logs de chaque maillon pour `--watch` ; un mode inconnu est refusé ;
-- `architecture` : `false` pour une source qui ne décrit pas l'architecture (alertes, tickets) : ses instances n'ont pas de tâche dans le plan des modes `--dat` et `--diagram` (défaut true) ;
-- `min_version` : version minimale de clotr (`X.Y.Z`), vérifiée avant le reste du fichier : un clotr plus ancien ignore le template avec un avertissement explicite au lieu d'une erreur sur un champ inconnu (les builds hors release, `dev` ou `vX.Y.Z-…`, ne sont pas contrôlés) ;
-- `keywords` : termes qui, présents dans une demande, font proposer l'instance aux agents (en plus du nom de l'instance, du template et des cibles), voir Activation d'une instance ;
-- `params` : paramètres de l'instance, typés (`string`, `url`, `int`, `bool`, `env`, `path`, `enum`, `list` avec `item`), avec `required` et `default`. Un paramètre inconnu est rejeté ;
-- `connectors` : connexions nommées, dont les options sont rendues avec les paramètres (`{{.proxy_url}}`). `when` : condition rendue avec les paramètres, comme pour `tools` ; un connecteur dont la condition est fausse n'est pas créé et ses identifiants ne sont jamais demandés :
-  - `http` : `base_url`, `methods` (défaut `[GET]`), `allow` (expressions régulières sur le chemin), `headers`, `auth` (`user_env`, `password_env`, `password_vault`, `label` : authentification basic, saisie sur le terminal si les variables sont vides, voir Secrets Vault ; avec `header`, le secret seul est envoyé dans cet en-tête, précédé de `scheme` s'il est donné, ex. `header: Authorization` et `scheme: Bearer`, sans utilisateur ; ou `oauth2` seul, voir ci-dessous), `deny` (expressions régulières de chemins refusés, voir Garde-fous), `proxy`, `proxy_port`, `verify_tls`, `ca_file`, `ca_vault` (autorité de certification en PEM lue dans Vault, référence `chemin#champ`, lue au premier appel puis gardée en mémoire ; exclusif avec `ca_file`), `timeout` (défaut 60s), `max_bytes` (défaut 32 Mio), `levels` (chemins et méthodes ouverts seulement à partir d'un niveau d'accès : `exec` avec `allow` et `argv_param`, `create` avec `methods` et `allow`, voir Niveaux d'accès), `via` (`host`, `command`, `headers` : les requêtes `GET` et `HEAD` passent par une commande lancée sur `host` à travers le connecteur `ssh`, `local` ou `shell` du template, au lieu d'une connexion directe ; dans `command`, `%u` est remplacé par le chemin et la requête, `%a` par l'en-tête `Accept` ; avec `headers: stdin`, tous les en-têtes de la requête, authentification comprise, sont écrits sur l'entrée standard de la commande, un par ligne `Nom: valeur` (`curl -H @-`), jamais dans sa ligne de commande ; la commande écrit une réponse HTTP complète, ligne d'état, en-têtes et corps, comme `curl -i`. `allow`, `deny` et `max_bytes` s'appliquent ; `base_url`, `auth`, `headers` autres qu'`Accept`, `proxy` et TLS ne sont pas transmis à la commande ; `http.stream` et les autres méthodes sont refusés. Un `host` rendu vide désactive `via`) ;
-  - `ssh` (un seul par template) : `user`, `key`, `key_vault` (clé privée lue dans un secret Vault, `chemin[#champ]`, champ par défaut `private_key`), `auth` (`user_env`, `password_env`, `password_vault`, `label` : mot de passe saisi sur le terminal seulement s'il est nécessaire, voir Outils SSH ; `hint` : compte attendu, affiché à la saisie), `port`, `proxy`, `proxy_port`, `host_key`, `sudo`, `exec_sudo` (`ssh_exec` lancé en `sudo -n`, défaut faux), `max_conns`, `known_hosts` ;
-  - `local` (à la place de `ssh`) : `max_conns` seulement. Les outils et primitives SSH s'exécutent sur le poste qui lance clotr, par `sh -c`, avec l'utilisateur et l'environnement de clotr (`PATH` compris), sans sudo ni authentification ; les hôtes de l'inventaire ne servent qu'à la désignation (ex. `localhost`). `ssh_paths`, `commands` et les niveaux d'accès s'appliquent comme en SSH ;
-  - `shell` (à la place de `ssh`, Linux et macOS) : `command` (liste, programme et arguments, `%h` remplacé par le nom de l'hôte, `%s` par son nom court, avant le premier point), `then` (liste de lignes tapées dans la session l'une après l'autre, chacune à l'invite suivante, `%h` et `%s` remplacés : rebond par un hôte intermédiaire, ex. `exec ssh %h` ; une question qui correspond à `prompt` est relayée comme pour `command` ; avec `exec`, un rebond qui échoue ferme la session au lieu de laisser les commandes s'exécuter sur l'hôte intermédiaire), `auth` (`user`, `user_env`, `password_env`, `password_vault`, `label`, `hint` : identifiants du rebond, partagés par les instances qui donnent le même `label` (défaut : propre à l'instance) ; `%u` dans `then` = compte, et une question de mot de passe pendant un rebond reçoit ce mot de passe au lieu d'être relayée ; résolus comme ceux du driver `ssh` : variable, Vault, sinon saisie une fois par run ; oubliés si le mot de passe est redemandé ou si la session se ferme ; voir Saisie des identifiants), `ready` (expression régulière de l'invite du shell distant, défaut `[$#] ?$`), `prompt` (expression régulière d'une question à relayer, défaut : mot de passe ou phrase de passe), `open_timeout` (secondes, défaut 120), `max_conns` (sessions ouvertes en même temps, défaut 4), `sudo`, `exec_sudo`. Pour un outil local qui ouvre un shell interactif sur l'hôte (passerelle d'accès, bastion) et gère lui-même l'authentification : clotr lance `command` dans un pseudo-terminal ; avant l'invite, une question qui correspond à `prompt` est posée sur le terminal de clotr (tableau suspendu, saisie masquée) et la réponse transmise ; à l'invite, le shell distant passe en mode brut et reçoit les commandes, exécutées par `sh -c` sans terminal (pas de pager), stdout, stderr et code retour séparés par des marqueurs. Une session sert une commande à la fois et reste ouverte pour les suivantes ; une commande annulée ferme sa session. Pas de mot de passe sudo : `sudo -n` seulement. `ssh_paths`, `commands` et les niveaux d'accès s'appliquent comme en SSH ;
-  - `mcp` : `server`, nom d'une entrée `mcp` de la configuration, ou le serveur déclaré par le template lui-même : `url` (Streamable HTTP), `headers` (valeurs rendues avec les paramètres, puis `${VAR}` remplacé par la variable d'environnement, ex. `'{{printf "${%s}" .api_key_env}}'` ; un en-tête rendu vide n'est pas envoyé), `allow`, `deny` (mêmes règles que l'entrée `mcp`) et `timeout` (défaut 1m) ; `server` et `url` sont exclusifs. Avec `url`, l'adresse et les identifiants sont des paramètres de l'instance (un serveur par client) et rien n'est déclaré dans la section `mcp` de la configuration. Le script appelle les outils de ce serveur par `mcp.call` ; seuls les outils exposés en lecture (annotés `readOnlyHint` ou listés dans `allow`, `deny` prioritaire) sont accessibles. Le serveur est connecté au démarrage dès qu'une instance active l'utilise, même s'il n'est pas proposé aux agents (`enabled: false`, `-x mcp_<serveur>`), et sa connexion OAuth éventuelle se fait à ce moment-là, voir Serveurs MCP en OAuth ;
-- `targets` : cibles statiques. `foreach: <paramètre list>` crée une cible par élément ; un champ vide de l'élément hérite du paramètre de même nom. Les attributs `ssh_user`, `ssh_key_path`, `ssh_key_vault` et `ssh_port` d'une cible remplacent ceux du connecteur ssh ;
-- `script` : fichier Starlark, chemin relatif au YAML ;
-- `files`, `env` : fichiers et variables d'environnement que le script peut lire ; les chemins de `files` sont rendus avec les paramètres (`"{{.config_path}}"`), une entrée rendue vide est ignorée. Une entrée terminée par `/**` autorise tout le répertoire (`"{{.repo_dir}}/**"`, chemin absolu) : le chemin demandé est résolu, liens symboliques compris, et doit rester dans le répertoire ;
-- `tools` : outils génériques du moteur (`inventory`, `ssh_list`, `ssh_read`, `ssh_tail`, `ssh_grep`, `ssh_disk`, `ssh_resolve`, `log_stats`, et `ssh_exec` à partir du niveau `exec`), avec `name` et `description` optionnels, et `when` : condition rendue avec les paramètres (`"{{.ssh}}"`), l'outil n'est créé que si elle vaut vrai (vide = faux, valeur non booléenne refusée) ;
-  - `kind: mcp` avec `connector: <connecteur mcp>` : publie sous le nom de l'instance (`<instance>_<outil>`, ou `<instance>_<name>_<outil>` si `name` est donné) tous les outils exposés en lecture par le serveur du connecteur (annotés `readOnlyHint` ou listés dans `allow` de l'entrée `mcp`, `deny` prioritaire), avec leur schéma ; `description` est ajoutée en tête de la description de chaque outil. Les outils sont connus à la connexion du serveur, au démarrage : ils figurent dans l'environnement de l'instance et suivent son périmètre (`-t`, `-x`, client cité). Un appel active l'instance comme ses autres outils. Une instance qui n'a que ce type d'outil et dont le connecteur est désactivé par `when` est refusée (aucun outil). Utile pour rattacher à un client un serveur MCP propre à ce client (connecteur avec `url`) ;
-- `companions` : outils ajoutés d'office à toute tâche qui utilise un outil de l'instance ;
-- `ssh_paths` : `allow` et `deny` (globs, `**` récursif), rendus avec les paramètres (`"{{.data_dir}}/logs/**"`) : une entrée rendue vide est ignorée (`"{{if .data_dir}}…{{end}}"`), une entrée rendue doit rester sans `..` et, dans `allow`, absolue ;
-- `commands` : `allow` et `deny`, motifs de commandes exécutées sans confirmation ou refusées à partir du niveau `exec` (voir Niveaux d'accès) ;
-- `hints` : consignes transmises au planner et aux agents.
-
-Les outils sont préfixés par le nom de l'instance (`<instance>_<outil>`).
-
-```yaml
-instances:
-  - name: prod
-    template: mon-template
-    params:
-      api_url: https://api.example.com/
-      proxy_url: socks5h://localhost:1080
-```
-
-`shell` sur une instance dont le template a un connecteur `ssh` ou `shell` le remplace par un connecteur `shell` : `command` (liste, `%h` = hôte, `%s` = nom court), et au besoin `then`, `auth`, `ready`, `prompt`, `open_timeout`, `max_conns` (voir le driver `shell`). Les options `sudo` et `exec_sudo` du connecteur du template sont conservées ; utilisateur, clé et mot de passe ne servent plus. Pour joindre par une passerelle d'accès les hôtes d'un template prévu pour SSH, sans modifier le template.
-
-```yaml
-instances:
-  - name: web-prod
-    template: web-servers
-    params:
-      hosts: [{name: web1}, {name: web2}]
-    shell:
-      command: [gateway-cli, connect, "%h"]
-```
-
-`ssh_paths` sur une instance dont le template a un connecteur `ssh` ajoute des chemins à ceux du template, sans les remplacer : `allow` étend la lecture, `deny` ajoute des interdictions, et les `deny` du template restent appliqués. Les chemins de `allow` sont absolus et sans `..` ; comme dans le template, un répertoire et son contenu s'autorisent séparément (`/srv/data` liste le répertoire, `/srv/data/**` donne accès aux fichiers).
-
-```yaml
-instances:
-  - name: vm-prod
-    template: remote-hosts
-    params:
-      networks: [{cidr: 10.20.0.0/24}]
-    ssh_paths:
-      allow: [/srv/data, /srv/data/**]
-      deny: [/srv/data/private/**]
-```
-
-`commands` sur une instance ajoute de même des motifs à ceux du template (`allow`, `deny`).
-
-### Script
-
-Le script définit `discover(ctx)` et déclare ses outils au chargement :
-
-```python
-def discover(ctx):
-    nodes = http.request("api", "GET", "/v1/nodes", jq = ".nodes").data[0]
-    return {"targets": [{
-        "name": n["name"],
-        "kind": "node",
-        "status": n["state"],
-        "summary": "%d services" % len(n["services"]),
-        "hosts": [{"name": n["fqdn"], "ip": n["ip"]}],
-    } for n in nodes]}
-
-def node_status(args):
-    t = instance.target(args["target"])
-    return http.request("api", "GET", "/v1/nodes/" + t["name"]).body
-
-tool(
-    name = "node_status",
-    description = "État d'un nœud",
-    schema = {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]},
-    fn = node_status,
-)
-```
-
-`discover` reçoit `ctx.params` et `ctx.targets` (cibles statiques). Il renvoie :
-- `targets` : `name`, `kind`, `status`, `error`, `summary` (ligne d'environnement), `attrs`, `hosts` (`name`, `ip`, `group`, `state`, `roles`, `attrs`), `networks` (plages CIDR dont toute IP est acceptée par les outils SSH, même hors de `hosts`) et `data` (libre). Une cible avec `error` est retirée pour le run ;
-- `lines` : lignes d'environnement globales ;
-- `warnings` et `data` (libre).
-
-`description` peut être une fonction, appelée après la découverte. `access = "exec"` ou `access = "create"` réserve l'outil à ce niveau d'accès : en dessous, il n'est pas proposé aux agents. Un outil renvoie un texte, ou une valeur convertie en JSON. `fail()` renvoie une erreur à l'agent.
-
-`follow = fn(args, cursor)` rend un outil de niveau `read` suivable par le mode suivi (`run --watch`) : clotr l'appelle en boucle pendant l'attente avec les arguments de l'outil et le curseur rendu par l'appel précédent. Le premier appel reçoit `cursor = None` et fixe le point de départ (ses lignes sont ignorées) ; chaque appel renvoie `{"lines": [...], "cursor": valeur}`, les lignes arrivées depuis le curseur et le curseur suivant (valeur JSON libre : horodatage, identifiants déjà vus…).
-
-| Primitive | Rôle |
-|---|---|
-| `http.request(conn, method, path, base=, query=, json=, body=, headers=, jq=, max_bytes=, tls=, proxy=)` | requête via un connecteur `http` ; renvoie `status`, `headers`, `body`, `url` et `data` (résultats de `jq`). `base` remplace `base_url`, `proxy` le proxy du connecteur, `tls` (`ca`, `cert`, `key` en PEM, `insecure`) l'autorité de certification et ajoute un certificat client, pour cet appel. `track` : chemin de l'objet créé par un POST de `levels.create`, voir Niveaux d'accès |
-| `mcp.call(conn, tool, args={})` | appel d'un outil du serveur MCP d'un connecteur `mcp` ; renvoie `text` (contenu textuel), `data` (contenu structuré décodé, `None` sinon) et `error` (vrai si le serveur signale une erreur de l'outil). Interdit au chargement du script ; tracé dans l'audit (`mcp_call`). Dans les tests, `template.instance(mcp=fn)` : `fn(call)` reçoit `server`, `tool`, `args` et renvoie un dict ou une liste (`data`) ou `struct(text=, data=, error=)` ; `mcp_calls()` liste les appels |
-| `http.stream(conn, path, argv=, label=, query=, protocols=, headers=, base=, max_bytes=, timeout=, tls=, proxy=)` | connexion WebSocket (GET avec upgrade) sur un chemin de `levels.exec.allow`, à partir du niveau `exec` ; `argv` est contrôlé par `commands` puis ajouté à la requête sous le nom `levels.exec.argv_param` ; `label` désigne la cible dans la confirmation. Renvoie `status`, `protocol`, `messages` (bytes, dans l'ordre reçu), `truncated`, `close_code`, `close_reason`, `body` (réponse sans upgrade) ; le protocole applicatif (canaux) est décodé par le script |
-| `http.snippet(text, max)` | résumé d'un corps de réponse (titre si page HTML) |
-| `ssh.list`, `ssh.read`, `ssh.tail` (`filter`), `ssh.grep`, `ssh.disk`, `ssh.stat_tail`, `ssh.recent` | commandes SSH fixes sur un hôte de l'inventaire ; `ssh.format(res)` met en forme un résultat, `ssh.allowed(path)` teste `ssh_paths` |
-| `ssh.exec(host, argv, target=, prefix=)` | commande `argv` sur un hôte de l'inventaire, à partir du niveau `exec`, contrôlée par `commands` ; `prefix` : enveloppe fixe du template placée devant `argv` (ex. `["kubectl", "exec", "-n", ns, pod, "--"]`), hors de l'analyse et de la confirmation, qui portent sur `argv` seul et montrent l'enveloppe ; renvoie `stdout`, `stderr`, `exit`, `truncated` |
-| `jq(expr, data)` | filtre JSON exécuté en Go ; renvoie la liste des résultats |
-| `json`, `yaml`, `time`, `math`, `re`, `url`, `base64` | encodage (`yaml.decode`, `yaml.encode`), dates et durées, calcul, expressions régulières, URL |
-| `crypto.sign(key, msg)`, `crypto.key_type(key)` | signature ed25519 (graine base64 ou PKCS#8) ou RSA SHA-256 ; `key` : texte ou secret de `vault.secret` |
-| `vault.secret("chemin#champ")`, `vault.read("chemin#champ")` | champ d'un secret Vault, lu avec la configuration du poste (voir Secrets Vault), une fois par instance, interdit au chargement et à la découverte hors ligne. `vault.secret` renvoie une valeur opaque : `str()` et les sorties d'outils n'affichent que `<secret chemin#champ>`, seuls `crypto.sign` et `crypto.key_type` s'en servent. `vault.read` renvoie le texte, pour un identifiant qui n'est pas secret (identifiant de clé d'accès, compte) |
-| `file.read`, `file.exists`, `file.list(path, depth=1, max=5000)`, `env` | fichiers et variables déclarés dans `files` et `env` ; `file.list` parcourt un répertoire déclaré avec `/**` et renvoie `entries` (`path`, `type` : `file`, `dir` ou `link`, `size`, `target`), sans suivre les liens, et `truncated` |
-| `parallel(fn, items, limit=4)` | exécution concurrente ; `value` ou `error` par élément |
-| `catch(fn, *args)` | appel protégé ; `value` ou `error` |
-| `sleep(seconds)` | attente (60 s au plus par appel), interrompue avec le run ; interdite au chargement |
-| `instance.name`, `instance.params`, `instance.inventory()`, `instance.target(nom)`, `instance.find_host(hôte, target=)`, `instance.memo(clé, fn)` | instance courante, inventaire, cache par instance |
-| `sprintf`, `compact_json`, `logstats`, `redact` | formatage à la Go, JSON compact, statistiques de log, masquage des secrets |
-| `load("module.star", …)` | bibliothèque `.star` du même répertoire |
-
-### Garde-fous
-
-- `http` : la méthode doit figurer dans `methods`, et toute méthode autre que GET ou HEAD exige une liste `allow`. Le chemin est absolu et sans `..`. Un chemin qui contient `keytab`, `secret`, `password` ou `token` est refusé, sauf si le connecteur déclare `deny` : ses expressions régulières remplacent alors cette liste (`deny: []` la retire, le script devient seul responsable des données sensibles). La réponse est plafonnée à `max_bytes` (512 Mio au plus). Chaque requête est tracée dans l'audit (`http_call`).
-- `ssh` : voir Outils SSH.
-- `levels` : voir Niveaux d'accès. Le `deny` du connecteur reste appliqué à tous les niveaux.
-- Le script n'accède au disque, au réseau et à l'environnement qu'à travers ces primitives. Il est interrompu avec le run et soumis à un plafond de pas d'exécution.
-
-### Tests
-
-`clotr templates test <nom> [--dir <répertoire>]` exécute les fonctions `test_*` de `<script>_test.star`, sans réseau :
-- `template.instance(params=, http=, ssh=, env=, files=, creds=, vault=, now=, access=, confirm=)` crée une instance avec un faux serveur HTTP (dict `"MÉTHODE /chemin"` → réponse, ou fonction ; une réponse avec `messages` répond à `http.stream`) et un faux SSH (fonction `(hôte, commande)`) ; `access` fixe le niveau d'accès (défaut `read`), `confirm` la réponse aux confirmations de commandes (`yes`, `always`, défaut : refus), `vault` les secrets lus par `vault.secret` et `vault.read` (dict `"chemin#champ"` → valeur) ; `sleep` n'attend pas ;
-- `inst.discover()`, `inst.call(outil, args)`, `inst.error(outil, args)`, `inst.follow(outil, args, cursor=None)` (appel de `follow`, renvoie `lines` et `cursor`), `inst.environment()`, `inst.tools()`, `inst.requests()` (requêtes reçues, avec `proxy` et `tls` passés à l'appel), `inst.commands()`, `inst.questions()` (confirmations demandées), `inst.tracked()` (objets suivis), `inst.cleanup()`, `inst.fn(nom, *args)` ;
-- `assert.eq`, `assert.true`, `assert.contains`, `assert.not_contains`, `assert.fails`.
-
-### Activation d'une instance
-
-Au démarrage d'un run, une instance est seulement déclarée : ses outils et son environnement sont transmis au planner, sans identifiants ni appel réseau. L'environnement reprend l'inventaire en cache du même template, script et paramètres, quel que soit son âge. Sans cache, `discover` est exécuté hors ligne (10 s au plus, `http.request` et `ssh.*` refusés) : son résultat est retenu s'il n'a tenté aucun accès réseau, ce qui donne dès le départ les cibles et plages d'un template qui ne dépend que de ses paramètres ; sinon, les cibles statiques de la configuration. Une instance n'est activée qu'au premier appel de l'un de ses outils par une tâche. Un outil `inventory` lit l'inventaire en cache sans activer l'instance, s'il a déjà été découvert (sa date figure dans la réponse).
-
-Une instance n'est proposée aux agents (outils et environnement) que si la demande du tour ou une demande précédente de la session la mentionne : nom de l'instance, nom du template, nom d'une cible de l'inventaire ou l'un des `keywords` du template (mot entier, sans tenir compte de la casse). Une IP comprise dans les `networks` d'une cible compte comme mention. Le nom ou un alias d'un client (voir Clients) mentionne toutes ses instances. Quand la demande nomme un client, le nom du template et les `keywords` ne suffisent plus pour les instances des autres clients ni pour celles sans client : seuls leur nom, une cible ou une IP de leurs `networks` les mentionnent. « pods en erreur sur k8s acme » propose donc l'instance k8s d'acme, pas celle d'un autre client. `-t <instance>` la force, y compris pour les tours suivants de la session (`run -s`), et une instance déjà activée dans le processus (tour précédent d'une conversation) reste proposée. Sinon, l'environnement indique seulement qu'elle existe et comment l'utiliser : une question sans rapport ne peut ni l'activer ni demander ses identifiants. Le choix est tracé dans l'audit (`instances_scope`).
-
-À l'activation :
-
-1. **Identifiants** des connecteurs `http` avec `auth` : `user_env`/`password_env` si les variables sont définies, puis le secret `password_vault` pour le mot de passe, sinon saisie sur le terminal (mot de passe masqué). Pendant la saisie, le tableau de progression est suspendu et la saisie se fait sur l'écran alternatif du terminal. Ctrl-C interrompt le run (en mode conversation : la conversation entière). Des identifiants vides, ou l'absence de terminal et de variables, rendent l'instance indisponible pour le run.
-
-Saisie des identifiants SSH et shell : la première question d'un nom d'identifiants (`label`) indique l'hôte qui la déclenche, l'instance, le chemin de connexion (commande et rebonds, `<compte>` à la place du compte), le partage des identifiants entre les connexions de ce nom pendant le run, le compte attendu (`auth.hint`) s'il est donné, et où les renseigner pour ne plus les saisir. Un mot de passe refusé efface les identifiants ; la question suivante commence par la raison du refus (compte, hôte, dernière ligne affichée par l'hôte, ex. `Permission denied, please try again.`), redonne le contexte et propose le compte précédent (Entrée pour le garder).
-2. **Découverte** (`discover` du script), sauf si l'inventaire en cache (`templates.cache_dir`) a moins de `templates.cache_ttl` et correspond au même template, au même script et aux mêmes paramètres. `--refresh` force la découverte. Un inventaire incomplet (cible injoignable, avertissement) n'est pas mis en cache.
-3. **Cibles injoignables** : retirées pour le run, avec un avertissement. Si aucune cible ne répond, l'instance est indisponible pour le run.
-
-Une instance indisponible renvoie une erreur à chaque appel de ses outils, sans nouvelle saisie ni nouvelle découverte. L'activation est tracée dans l'audit (`instance_activation`).
-
-Pour ne pas avoir à attendre une question en cours de run, les identifiants à saisir sont demandés dès que le plan est établi, avant le lancement des tâches, pour chaque instance que le plan utilise : `auth` des connecteurs `http` (et connexion `oauth2`), mot de passe du connecteur `ssh` sans clé (`key`, `key_vault`) et identifiants du driver `shell`. Rien n'est demandé pour ce que fournissent les variables ou Vault, ni pour le mot de passe de secours d'un connecteur `ssh` à clé. En `--dat` et `--diagram`, le plan étant construit sans planner, les questions arrivent au démarrage. Les réponses servent ensuite à l'activation sans nouvelle question (audit `credentials_prepared`).
-
-### Templates de démarrage
-
-Un template `kind: startup` n'est pas une cible : il s'exécute au lancement de clotr, avant le reste, pour tenir à jour des fichiers locaux, typiquement la configuration (fichier principal, `clients/`) et les templates d'une équipe depuis des dépôts git. Il n'a ni `tools`, ni `targets`, ni `connectors`, ni `companions`, et son script définit une fonction `startup()`. Il est déclaré dans le fichier principal, sous `startup` (et non comme instance) :
-
-```yaml
-startup:
-  - name: equipe
-    template: team-sync
-    every: 1h
-    params: {conf_url: git@git.example.com:team/clotr-conf.git}
-```
-
-```python
-def startup():
-    git.sync(instance.params["conf_url"], ".")
-    git.sync("git@git.example.com:team/clotr-templates.git", "templates", ref = "main")
-```
-
-`git.sync(url, dir, ref="main")`, réservée à ces templates, utilise le binaire `git` du poste et ses accès (clé SSH, agent, `core.sshCommand`), sans saisie interactive (`GIT_TERMINAL_PROMPT=0`, ssh en `BatchMode` si aucune commande ssh n'est configurée), 60 s au plus par dépôt :
-- `dir` est relatif au répertoire du fichier principal, ou absolu ; il doit rester dans ce répertoire ou dans `templates.dir` (`..` et liens sortants refusés) ;
-- répertoire absent ou vide : clone de la branche `ref` ;
-- clone existant d'`url` sur `ref` sans modification de fichier suivi : `fetch` puis avance rapide (`merge --ff-only`) ; les fichiers non suivis (`secrets.env`…) ne gênent pas ;
-- répertoire qui n'est pas un clone, autre `origin`, autre branche, fichiers suivis modifiés, historique divergent : rien n'est touché, avertissement ; commits locaux en avance : laissé tel quel ;
-- renvoie `{status: cloned|updated|current|skipped|failed, from, to, commits, reason, changed}`, tracé dans l'audit (`git_sync`).
-
-Si un dépôt a changé, la configuration et les templates sont rechargés ; si la configuration ne se charge plus ou si un template devient invalide (clé apparue dans une version de clotr plus récente, par exemple), les dépôts mis à jour reviennent à leur commit précédent et un avertissement demande de mettre clotr à jour. Une erreur de cette étape n'empêche jamais le run.
-
-`every` est mémorisé par entrée dans `~/.cache/clotr/startup/`, avec le résultat de la dernière vérification. Chaque lancement affiche une ligne par entrée : `configuration (acme-sync) : à jour — ~/.config/clotr (1a2b3c4), …` quand la vérification vient d'avoir lieu, sinon le résultat de la précédente (`configuration (acme-sync) : à jour, dernière vérification il y a 12 min`) ; une dernière vérification en échec ou un dépôt laissé tel quel (modification locale) s'affichent en avertissement à chaque lancement jusqu'à la suivante. `--quiet` masque les lignes « à jour », pas les avertissements. `clotr sync` exécute les templates de démarrage sans attendre `every` et affiche l'état de chaque dépôt (code de sortie non nul en cas d'échec ou de retour arrière). `--no-startup` ou `CLOTR_NO_STARTUP=1` désactivent l'étape (poste de développement de templates, par exemple). Dans les tests (`clotr templates test`), `template.instance(git=…)` remplace `git.sync` (dict `url` → statut ou résultat, ou fonction `(url, chemin, ref)`), `inst.startup()` exécute `startup()` et `inst.git_calls()` liste les appels ; les chemins y sont relatifs à `/config`.
-
-### Templates de tickets
-
-Un template `kind: tickets` n'est pas une cible non plus : il relie clotr à un outil de tickets (ITSM) pour les modes incident et demande de changement. Il n'a ni `tools`, ni `targets`, ni `companions` ; ses connecteurs sont de driver `mcp` ou `http`. Il déclare `id_pattern`, l'expression régulière des identifiants de ticket (reconnus sans tenir compte de la casse, en mot entier), et son script définit deux fonctions :
-
-- `get(id)` : le ticket, ou `None` s'il n'existe pas ;
-- `search(q)` : liste de tickets ; `q` est un dict `{query, kind, state, since_days, limit, customer, all_customers, exclude}` (`kind` : `incident`, `change` ou vide ; `state` : `open`, `closed` ou vide ; `customer` : client du ticket de la demande, vide sinon ; `all_customers` : tous clients confondus).
-
-Un ticket est un dict `{id, kind, category, title, status, customer, scope, opened, closed, url, description, resolution, comments: [{time, author, body}]}` ; `kind` vaut `incident`, `change` ou `other` (valeur inconnue : `other`) ; `scope` liste les identifiants ou noms du client et du projet du ticket dans l'outil de tickets. Il est déclaré dans le fichier principal, sous `tickets` :
-
-```yaml
-tickets:
-  template: tracker
-  params: {url_format: "https://tickets.example.com/%s"}
-```
-
-Ses paramètres reçoivent, comme une instance, les `params` globaux puis ceux du client quand les instances du run appartiennent à un seul client (filtre client des recherches sans ticket, par exemple), puis ceux de `tickets.params`. Dans les tests (`clotr templates test`), `inst.ticket_get(id)` et `inst.ticket_search(query=…, kind=…, state=…, since_days=…, limit=…, customer=…, all_customers=…)` appellent les fonctions et normalisent leur résultat comme clotr.
-
-### Templates de document
-
-Un template `kind: document` met en forme le rapport pour `--export`. Il n'a ni `tools`, ni `targets`, ni `companions`, ni `files`, ni `env` ; ses `connectors`, facultatifs, sont de driver `mcp` ou `http` (service de génération de documents), avec `mcp.call` et `http.request` dans le script. Son script définit `render(doc)`, qui renvoie le contenu du `.docx` (`bytes`). Il est désigné par `report_export.template` ; `report_export.params` renseigne ses `params`.
-
-`doc` porte `markdown`, `title`, `mode` (`default`, `incident`, `change`, `upgrade`, `watch`, `minutes`, `cve`, `dat`, `diagram`, ou `document` pour `clotr export`), `images` (dict `{nom: image}` des images du tour citées par le rapport, `![…](nom.png)` : `data` en `bytes`, `format` `png` ou `jpeg`, `width` et `height` en pixels), `language` (`--lang` de l'export, sinon langue de la session, c'est-à-dire celle du run ; `auto` est résolu d'après le texte du rapport, hors blocs de code), `request`, `ticket`, `date` (`AAAA-MM-JJ`), `session` et `params`.
-
-Sans connecteur, le script n'a pas accès au réseau ; il n'a jamais accès aux fichiers du poste. Il dispose des modules sans effet de bord (`json`, `yaml`, `re`, `time`, `math`, `base64`, `struct`, `sprintf`, `catch`, `jq`, `compact_json`) et de :
-
-- `asset(nom)` : contenu (`bytes`) d'un fichier placé à côté du template, par exemple un `.docx` de référence (100 Mio au plus) ;
-- `zip.read(data)` : dict `{nom: bytes}` des fichiers d'une archive, dans l'ordre de l'archive ; `zip.write(fichiers)` : archive (`bytes`) des fichiers d'un dict, dans l'ordre du dict ;
-- `xml.parse(data)` : élément racine d'un document XML ; `xml.fragment(texte)` : liste des éléments d'un fragment (les préfixes d'espace de noms n'ont pas à être déclarés) ; `xml.element(tag, attrs, text)` ; `xml.encode(élément, declaration=True)` : `bytes` ; `xml.escape(texte)`. Un élément expose `tag`, `text`, `parent`, `children`, `get`, `set`, `unset`, `attrs`, `set_text`, `text_content`, `find` et `findall` (chemins etree : `w:body/w:p`, `.//w:t`, `w:p[@w:val='x']`), `append`, `prepend`, `insert`, `add_next`, `add_prev` (un élément ou une liste), `remove`, `index`, `copy` et `encode` ;
-- `markdown.blocks(texte)` (Markdown GFM : tableaux, listes de tâches, liens automatiques ; pas de barré, `~` étant courant dans les numéros de version) : liste de blocs `heading` (`level`), `para` (`indent` et `item` pour un paragraphe qui suit une sous-liste dans un élément de liste : niveau et type de la liste, `0` et `""` sinon), `quote` (`level` : profondeur), `bullet` et `numbered` (`level`, `marker`, `checked`), `table` (`header`, `rows`, `align` ; chaque cellule a `text` et `runs`), `code` (`text`, `lang`), `rule`, `image` (`src`, `alt`, `title`) et `html`. Les blocs de texte ont `text` (texte brut) et `runs` : `{text, bold, italic, code, strike, url, br}`. `markdown.inline(texte)` rend les `runs` d'un texte.
-
-Dans les tests (`clotr templates test`), `inst.render(markdown=…, title=…, mode=…, language=…, request=…, ticket=…, date=…, session=…, images=…)` appelle `render` (`images` : dict `{nom: bytes}` d'images PNG ou JPEG) ; `zip`, `xml` et `markdown` sont disponibles pour examiner le résultat.
-
-### Templates de schéma
-
-Un template `kind: diagram` dessine les schémas d'architecture des modes `--dat` et `--diagram`, en général par un serveur de rendu de schémas. Il n'a ni `tools`, ni `targets`, ni `companions`, ni `files`, ni `env` ; ses connecteurs sont de driver `mcp` ou `http`. Il est désigné par `diagram.template` ; `diagram.params` renseigne ses `params`. Son script définit :
-
-- `render(spec, cloud)` (obligatoire) : rend la spec et renvoie un dict `{drawio, png, warnings, notes}` : le fichier `.drawio` (`bytes` ou texte), l'image PNG (`bytes`, ou texte en base64), la liste des avertissements renvoyés au modèle pour qu'il corrige la spec (types inconnus, règles de lisibilité du template) et des notes affichées à l'utilisateur et consignées dans l'audit, sans être renvoyées au modèle (rendu dégradé, par exemple) ;
-- `reference(cloud)` : format de la spec, types de nœuds et de groupes, règles de placement pour ce cloud ou cette plateforme (texte, ou valeur convertie en JSON) ;
-- `shapes(query, cloud)` : recherche d'un type de nœud.
-
-L'étape de schéma les reçoit comme outils `diagram_reference`, `diagram_shapes` et `diagram_render(name, cloud, title, spec)`. Un rendu sans avertissement écrit `<name>.drawio` et `<name>.png` dans le tour (`name` préfixé par `architecture`). Un template doté d'un connecteur envoie le schéma hors du poste : il est refusé en session confidentielle, et le document est alors produit sans schéma.
-
-Le module `drawio` des scripts retrace et rend un fichier `.drawio` sur le poste, sans programme externe :
-
-- `drawio.route(xml, spread_x=1, spread_y=1)` écarte les éléments (positions et tailles des conteneurs multipliées par `spread_x` et `spread_y`, tailles des icônes conservées) puis trace chaque lien à angles droits, en points de passage : il contourne les icônes et leurs libellés, ne longe pas les bordures des conteneurs, s'écarte des autres liens, et les liens de même libellé vers une même cible (ou depuis une même source) partagent un tronc, libellé une seule fois. Les libellés de liens vont sur un segment libre. Renvoie `{xml, edges, failed}` (`failed` : liens sans passage libre, laissés sans tracé) ;
-- `drawio.png(xml, scale=2)` dessine le fichier en PNG : conteneurs (arrondis, pointillés, remplissage, titre), icônes embarquées (PNG ou JPEG en `data:`), libellés, liens avec flèche et libellé sur fond. Les cellules masquées sont ignorées.
-
-Dans les tests, `inst.diagram_reference(cloud)`, `inst.diagram_shapes(query, cloud)` et `inst.diagram_render(spec, cloud)` appellent ces fonctions ; `template.instance(mcp=…, http=…)` fournit les faux serveurs.
-
-### Jeton OAuth2 lu dans Vault
-
-`auth.oauth2` sur un connecteur `http` obtient un jeton par le flux *client credentials* (RFC 6749, § 4.4), par exemple un principal de service Microsoft Entra, et l'envoie en `Authorization: Bearer` :
-
-```yaml
-auth:
-  oauth2:
-    vault: "{{.sp_vault}}"
-    token_url: "https://login.example.com/{tenant-id}/oauth2/v2.0/token"
-    client_id: "{client-id}"
-    client_secret: "{client-secret}"
-    scope: "https://api.example.com/.default"
-```
-
-- `{champ}` dans `token_url`, `client_id`, `client_secret` et `scope` est remplacé par le champ du secret `vault` (comme `vault kv get -field=<champ>`) ; une valeur sans `{…}` est prise telle quelle. Défauts : `client_id` = `{client_id}`, `client_secret` = `{client_secret}` ; `scope` vide n'est pas envoyé ;
-- `vault` rendu vide : pas d'authentification par le connecteur, le script garde la main (par exemple un autre mode de connexion du même template) ;
-- le secret est lu à l'activation de l'instance, une fois par connecteur ; le jeton est demandé à ce moment-là, puis gardé en mémoire et partagé par les connecteurs qui ont la même demande, et redemandé deux minutes avant son expiration. Rien n'est écrit sur disque ;
-- un refus du fournisseur rend l'instance indisponible, avec son code d'erreur et sa description, jamais le secret. La requête de jeton passe par le `proxy` et le TLS du connecteur.
-
-Dans les tests de templates, le jeton vaut `test-token`, sans lecture Vault ni requête de jeton.
-
-### Secrets Vault
-
-`password_vault` (connecteurs `http` et `ssh`, option `auth`) désigne un secret Vault sous la forme `chemin[#champ]`, comme `vault kv get -field=<champ> <chemin>` ; le champ par défaut est `password`. clotr utilise la configuration du poste, sans appeler le binaire `vault` :
-
-- adresse : `VAULT_ADDR` (variable exportée ; une fonction ou un alias du shell n'est pas visible), sinon `vault.addr` de la configuration ;
-- jeton : `VAULT_TOKEN`, sinon `~/.vault-token` écrit par `vault login` (un `token_helper` n'est pas pris en charge) ; `VAULT_NAMESPACE` si défini, sinon `vault.namespace` ;
-- moteur KV v1 ou v2, détecté comme le fait `vault kv get` (`sys/internal/ui/mounts`) ;
-- utilisateur non fixé (`ssh_user` vide, ou `user_env` absent pour un connecteur `http`) : lu dans le même secret, sinon saisi. Le champ du compte se déduit de celui du mot de passe : pour un champ qui contient `password` (autre que `password`), `password` y est remplacé par `username`, puis par `user` (`admin_password` : `admin_username`, puis `admin_user`) ; sinon, ou si ces champs sont absents, `username`. Même règle pour `key_vault` ; un connecteur `http` avec `auth.header` n'a pas d'utilisateur, seul le secret (jeton) est lu ou saisi ;
-- lecture seulement quand le mot de passe est nécessaire, une fois par utilisateur. Vide, l'option est ignorée. Un secret illisible (variable absente, jeton expiré, accès refusé, champ absent) est signalé sur le terminal et le mot de passe est saisi ; un mot de passe Vault refusé par SSH ou sudo est oublié et le suivant est saisi.
-
-Le secret est lu par clotr et n'est jamais transmis aux modèles ni archivé dans les preuves. Ne pas faire lire un secret par un outil MCP : sa réponse irait au modèle et dans les preuves. Le chemin peut reprendre les `vars` du client (voir Clients).
-
-
-Connexion au démarrage : avec `vault.login`, clotr vérifie le jeton (`~/.vault-token`) avant le run. S'il est absent, refusé ou valable moins de `min_ttl`, il est d'abord renouvelé (`renew-self`) ; si le renouvellement ne suffit pas, clotr fait la connexion OIDC comme `vault login -method=oidc -path=<path>` : il ouvre le navigateur, affiche l'URL sur la sortie d'erreur, attend le retour sur `http://localhost:<port>/oidc/callback` (jusqu'à 5 minutes) et écrit le nouveau jeton dans `~/.vault-token` (droits 600), où le CLI `vault` et les autres outils le retrouvent. Rien n'est demandé pendant le run. Un `VAULT_TOKEN` défini dans l'environnement n'est jamais remplacé. En cas d'échec, un avertissement est affiché et les secrets lus dans Vault échouent.
-
-```yaml
-vault:
-  addr: https://vault.example.com
-  login: {method: oidc, path: oidc}
-```
-
-Identifiants saisis conservés : avec `vault.credentials_cache`, un compte et un mot de passe (ou un jeton) saisis au terminal sont écrits dans Vault sous ce chemin, un secret par libellé d'identifiants (champs `label`, `username`, `password`, `saved_at`). Aux runs suivants, ils sont relus avant toute saisie : un même libellé n'est plus demandé qu'une fois tant que le jeton Vault vit. Le chemin doit être sous `cubbyhole/` : ce stockage est propre au jeton, aucun autre jeton ni utilisateur ne peut le lire, et il disparaît avec le jeton (nouvelle connexion OIDC, expiration, révocation). Des identifiants refusés par un hôte ou un tunnel sont effacés de Vault, puis redemandés et enregistrés à nouveau. `password_env` et `password_vault` restent prioritaires. Une lecture impossible (jeton absent, Vault injoignable) est signalée avec la question, et la saisie se fait comme sans cache.
-
-```yaml
-vault:
-  addr: https://vault.example.com
-  login: {method: oidc, path: oidc}
-  credentials_cache: cubbyhole/clotr
-```
-### Outils SSH
-
-- Commandes possibles : `find` (liste triable par taille ou date, fichiers de log récents, comptage), `head -c`, `sed -n 'A,Bp'`, `tail -n`, `tail -c` et `stat` (statistiques de log), `grep -n -E -I`, `grep -c -E -I` (comptage), `df -hP`, `du -xh`, `getent ahosts` (résolution d'un nom), `gzip -t` et `gzip -cd` (fichier `.gz`). Elles sont construites par clotr et chaque argument fourni par le modèle est quoté ;
-- un fichier `.gz` est vérifié (`gzip -t`) puis décompressé vers `head`, `sed`, `tail` ou `grep` pour la lecture, la fin, la recherche, le comptage et les statistiques de log (taille décompressée) ; un fichier absent, illisible ou corrompu donne une erreur. En recherche récursive, les fichiers compressés restent ignorés comme les autres fichiers binaires ;
-- `host` doit appartenir à l'inventaire de l'instance (FQDN, nom court ou IP), ou être une IP comprise dans les `networks` d'une cible. Une IP de plage présente dans la demande fait proposer l'instance ;
-- `path` doit être absolu, sans `..`, couvert par `ssh_paths.allow` et par aucun `ssh_paths.deny` (keytabs, jceks, jks, clés, `*password*`…). En récursif, les motifs `deny` sont aussi passés en `--exclude` ;
-- `sudo -n` est ajouté si `sudo: true`. Si sudo exige un mot de passe et que le connecteur déclare `auth`, la commande est relancée avec `sudo -S` sous `sh -c` : le mot de passe passe par l'entrée standard, jamais dans la ligne de commande, et l'hôte reste en mode mot de passe pour le run. Un mot de passe refusé est oublié et redemandé à l'appel suivant ;
-- authentification : la clé d'abord (`key_vault`, sinon le fichier `key`), puis le mot de passe si la clé est absente ou refusée et que `auth` est déclaré (méthodes `password` et `keyboard-interactive`). Le mot de passe vient de `password_env`, sinon du secret `password_vault`, sinon il est saisi sur le terminal, une fois par utilisateur ; sans `user`, l'utilisateur est lu dans le champ `username` du secret (`key_vault`, sinon `password_vault`), sinon demandé. Une clé lue dans Vault reste en mémoire, sans fichier ni passphrase ;
-- les valeurs de type `password=…`, `token: …` et `<name>…password…</name><value>…</value>` sont masquées dans les sorties ;
-- connexions via le proxy SOCKS5 de l'instance, clé privée sans passphrase, `max_conns` sessions simultanées par instance. Aucun fichier `ssh_config` n'est lu. Un hôte qui déclare une IP est joint par son IP (le nom ne sert qu'à l'affichage et à la désignation) ; sinon par son nom, résolu par le proxy SOCKS ;
-- `known_hosts` propre à clotr (`~/.local/state/clotr/known_hosts`) : `accept-new` (défaut) enregistre une clé inconnue et refuse une clé changée, `accept-changed` enregistre aussi une clé changée à la place de l'ancienne (VM recréée à chaque mise à jour d'image) avec un avertissement et un événement d'audit `host_key_replaced` (ancienne et nouvelle empreintes), `strict` refuse les hôtes inconnus, `insecure` ne vérifie pas. `accept-changed` ne remplace une clé qu'après une authentification par clé réussie : si la clé est refusée, la connexion échoue sans envoyer de mot de passe à l'hôte dont la clé a changé, et `known_hosts` n'est pas modifié ;
-- chaque commande est tracée dans l'audit (`remote_exec` : hôte, utilisateur, commande, durée, exit, taille).
-
-`<instance>_log_stats` lit la fin d'un log (4 Mio par défaut, 16 Mio au plus) et calcule localement :
-- la taille du fichier ;
-- la période couverte et le débit (lignes et octets par heure, extrapolés par jour) ;
-- la répartition par niveau et par heure ;
-- les loggers les plus bavards ;
-- les messages les plus répétés, après normalisation des nombres, IP, UUID et identifiants hexadécimaux.
-
-Les hôtes SSH peuvent être désignés par leur nom complet, leur IP, leur nom court ou la fin de leur nom court (`node0`) ; un nom ambigu est refusé avec la liste des candidats.
-
-`<instance>_ssh_grep` avec `count` renvoie le nombre exact de lignes correspondantes de chaque fichier, lu en entier, sans le plafond de `max_matches` (en récursif, seuls les fichiers avec au moins une correspondance sont listés). `ssh.grep(…, count=True)` fait de même dans un script. Sans `recursive`, `ssh_grep` et `ssh.grep` sur un répertoire échouent (code 2, message explicite) au lieu de répondre `0` ou « aucune correspondance ».
-
-`<instance>_ssh_disk` donne `df`, les sous-répertoires les plus gros (`du`) et le nombre de fichiers d'un répertoire.
-
-`<instance>_ssh_resolve` résout un nom tel que le voit un hôte : `getent ahosts` sur l'hôte (sans sudo), donc à travers le proxy de l'instance et avec le DNS du réseau de l'hôte, `/etc/hosts` compris. Il donne le nom canonique, les adresses et, si `ssh_paths` autorise `/etc/resolv.conf`, les lignes `nameserver`/`search` de l'hôte. Le nom est validé (lettres, chiffres, `-`, `_`, `.`) avant d'être passé à la commande.
-
-## Niveaux d'accès
-
-Le niveau d'accès borne ce que les agents peuvent faire, quels que soient les droits des comptes utilisés. Il vaut `read` par défaut ; `access` dans le fichier d'un client fixe celui de ses instances, et `run --access` fixe celui de toutes les instances pour ce lancement, en remplaçant celui des clients (`--access read` les ramène en lecture seule). Il n'est pas repris par `run -s`.
-
-| Niveau | Ce qui s'ajoute |
-|---|---|
-| `read` (défaut) | rien : lecture seule, voir ci-dessous |
-| `exec` | commandes sur les hôtes et pods existants : outils `access = "exec"` des templates, `ssh_exec`, `http.stream` sur `levels.exec` |
-| `create` | en plus, ressources éphémères créées par clotr : outils `access = "create"`, méthodes de `levels.create` |
-
-Un outil réservé à un niveau supérieur n'est pas proposé aux agents, sauf en mode CVE où il l'est sous réserve d'autorisation appel par appel (voir Mode CVE) ; une primitive appelée en dessous de son niveau échoue. Les instances proposées pour la demande qui ne sont pas en `read` sont affichées au démarrage avec leur niveau (`Niveau d'accès : exec (k8s-acme, vm-acme)`), enregistrées dans le tour de la session (`access`) et dans l'audit (`access`), et leur niveau est décrit aux agents.
-
-### Commandes (`exec`)
-
-Une commande est un `argv` (programme puis arguments), aucun caractère de contrôle ; un script shell se passe en `["sh", "-c", "…"]`. Sur SSH, chaque argument est quoté et la commande est lancée sans sudo, ou en `sudo -n` si le connecteur déclare `exec_sudo: true` (pas de mot de passe sudo), entrée standard fermée. Elle est contrôlée dans cet ordre :
-1. motifs `commands` du template et de l'instance : un motif est une suite d'arguments séparés par des espaces ; `*` et `?` sont des jokers à l'intérieur d'un argument, `**` en dernière position accepte tous les arguments suivants (`rpm -q *`, `php -v`, `ls **`). `deny` : refusée ; `allow` : exécutée sans question. Ces motifs valent aussi à l'étape 3, pour une commande derrière `sudo` et pour chaque commande simple d'un `sh -c` entièrement littérale : un motif `allow` l'admet, un motif `deny` fait passer tout le script en confirmation ;
-2. en mode CVE, commandes de détection des fiches (`commands` de `cve_advisory`), réputées fiables : exécutées sans question si la commande est identique (espaces normalisés), ou si ses arguments sont ceux de la ligne de la fiche une fois les guillemets retirés (`node -p "process.versions.brotli"` couvre l'argv `node`, `-p`, `process.versions.brotli`) ; dans un `sh -c`, chaque commande simple identique à une commande de la fiche compte comme fiable pour l'analyse de lecture seule ;
-3. analyse de lecture seule : la commande, ou le script de `sh -c` analysé par un analyseur shell (pipes, `;`, `&&`, `||`, `$(…)`, `if`, `for` admis), est exécutée sans question si chaque commande simple est un programme de lecture connu avec des options sans écriture, et si aucune redirection n'écrit ailleurs que dans `/dev/null`. `sudo` et `sudo -n` sont transparents : c'est la commande qui suit qui est analysée (`sudo -n journalctl --since …`, `sudo -n sh -c 'du -sh /var | sort -h'`), et toute autre option de `sudo` est soumise à l'utilisateur. Programmes de lecture : `ls`, `cat`, `head`, `tail`, `grep`, `wc`, `cut`, `stat`, `file`, `readlink`, `which`, `uname`, `id`, `ps`, `df`, `du`, `findmnt`, `lsblk`, `echo`, `test`, `dpkg-query`… ; sous condition : `find` sans `-delete`, `-exec`, `-ok`, `-fprint`, `ss` sans `-K`, `crontab -l`, `systemctl` en consultation (`list-*`, `status`, `show`, `cat`, `is-*`), `journalctl` sans rotation ni purge, `ip` en affichage, `kubectl` et `oc` en consultation (`get`, `describe`, `logs`, `top`, `version`, `api-resources`, `api-versions`, `explain`, `events`, `cluster-info`, `auth can-i`), sans suivi sans fin, accès brut ni changement d'identité, `sort` sans `-o`, `uniq` sans fichier de sortie, `date` sans réglage, `command -v`, `dpkg`, `rpm`, `apk`, `pip`, `npm`, `gem`, `snap`, `flatpak` en interrogation, `ldconfig -p`, `ldd`, les serveurs et interpréteurs connus (`php*`, `php-fpm*`, `java`, `python*`, `nginx`, `httpd`, `apachectl`, `openssl`…) avec leurs seules options de version (`-v`, `-V`, `--version`, `-version`, `version`, `-m`, `-i`, `-M`, `-l`), `node -p` et `node -e` limités à la lecture de `process.version` ou `process.versions` (`node -p process.versions.brotli`, `node -e "console.log(process.versions.openssl)"`), et tout programme appelé avec le seul argument `--version`. Refusés par l'analyse : programme désigné par une variable, une substitution ou un chemin relatif, `awk`, `sed`, `xargs`, `env`, shell imbriqué, fonction, exécution en arrière-plan, écriture, et toute commande qui contient un chemin ou un motif sensible (`/var/run/secrets`, `serviceaccount`, `environ`, clés, `*password*`, `*secret*`, `*token*`…) ;
-4. sinon, la commande exacte est soumise à l'utilisateur sur le terminal (tableau suspendu, comme la saisie d'un mot de passe) avec l'instance, la cible et la raison de l'analyse : `o` l'exécute, `t` l'accepte pour le reste du run (même argv, toutes les instances), toute autre réponse la refuse. Sans terminal, elle est refusée. Sans réponse sous `limits.confirm_timeout` (défaut 60 s, une valeur négative attend sans limite), elle est refusée aussi et la tâche continue : l'agent la note dans ses lacunes et elle n'est plus posée pendant ce run. Une question en attente ne bloque que la tâche qui l'a posée.
-
-Chaque décision est tracée dans l'audit (`exec_decision` : `allowed`, `denied`, `trusted`, `readonly`, `confirmed`, `always`, `refused`, `unanswered`, `own`), chaque exécution dans `remote_exec` ou `http_stream`.
-
-```yaml
-connectors:
-  api:
-    driver: http
-    methods: [GET]
-    allow: ["^/v1/"]
-    levels:
-      exec:
-        allow: ["^/v1/boxes/[^/]+/exec$"]
-        argv_param: command
-      create:
-        methods: [POST, DELETE]
-        allow: ["^/v1/boxes(/[^/]+)?$"]
-commands:
-  allow: ["php -v", "openssl version", "rpm -q *"]
-  deny: ["rm **"]
-```
-
-### Ressources éphémères (`create`)
-
-Au niveau `create`, une méthode de `levels.create.methods` sur un chemin de `levels.create.allow` (hors `deny` du connecteur) est permise ainsi :
-- un POST doit déclarer `track`, le chemin de l'objet qu'il crée, placé sous le chemin du POST et couvert par `levels.create.allow` ; l'objet n'est suivi que si la création réussit (2xx), un conflit ne le fait pas suivre ;
-- les autres méthodes d'écriture (DELETE, PUT, PATCH…) ne visent qu'un objet suivi : clotr ne modifie ni ne supprime rien qu'il n'a pas créé pendant le run ;
-- les commandes envoyées par `http.stream` sous un objet suivi ne sont pas soumises à `commands` : cet objet est propre au run ;
-- en fin de tour (réponse, erreur ou Ctrl-C), clotr supprime les objets encore suivis (DELETE, avec l'adresse, le proxy, le TLS et les en-têtes de la création) ; chaque suppression est tracée (`cleanup`) et affichée, un échec avec l'objet à supprimer à la main.
-
-### Lecture seule (`read`)
-
-Le CLI n'expose aucun outil d'écriture. Les seules commandes, distantes ou locales, sont celles des outils SSH des templates (connecteur `ssh`, `local` ou `shell`), construites par clotr à partir d'une liste fixe (voir Templates).
-
-| Groupe | Outils | Mécanisme |
-|---|---|---|
-| `fs` | `fs_list`, `fs_read`, `fs_grep` | chemins résolus (`EvalSymlinks`) et confinés à `files.roots`. Fichiers binaires et fichiers au-delà de `max_file_bytes` refusés. |
-| `mcp_<serveur>` | outils du serveur | seuls sont exposés les outils annotés `readOnlyHint: true` ou listés dans `allow`. `deny` est prioritaire. |
-| `<instance>_*` | outils du template | voir Templates : requêtes HTTP limitées par les garde-fous des connecteurs, SSH limité à des commandes fixes, aux hôtes de l'inventaire et aux chemins autorisés. |
-
-Les groupes `fs` et `mcp_<serveur>` restent en lecture seule à tous les niveaux. Les sorties d'outils envoyées au modèle sont tronquées à `limits.tool_output_max_chars` ; la preuve archive la sortie complète, que `evidence_read` relit par motif ou par plage de lignes sans refaire l'appel. Les droits effectifs dépendent des comptes utilisés (connecteurs des templates, serveurs MCP).
+Agent CLI d'analyse d'infrastructure, en lecture seule par défaut, multi-modèles sur endpoints OpenAI-compatibles. Binaire Go statique.
 
 ## Installation
 
@@ -553,25 +8,21 @@ Les groupes `fs` et `mcp_<serveur>` restent en lecture seule à tous les niveaux
 brew install agardenat/clotr/clotr
 ```
 
-Debian, Ubuntu :
-
 ```sh
 sudo apt install ./clotr_<version>_amd64.deb
 ```
-
-RHEL, Fedora, Rocky, SUSE :
 
 ```sh
 sudo dnf install ./clotr-<version>-1.x86_64.rpm
 ```
 
-Windows : extraire `clotr.exe` de `clotr_<version>_windows_amd64.zip` (ou `_arm64`) dans un répertoire du `PATH`.
+Windows : `clotr.exe` de `clotr_<version>_windows_amd64.zip` dans le `PATH`.
 
-La page Releases du dépôt publie les paquets `.deb` et `.rpm` (amd64 et arm64 ; `aarch64` pour le `.rpm`), les archives `clotr_<version>_<os>_<arch>.tar.gz` (linux et darwin, amd64 et arm64), les archives `.zip` Windows (amd64 et arm64) et `SHA256SUMS`. Les paquets installent `/usr/bin/clotr` et la documentation dans `/usr/share/doc/clotr/`, dont `clotr.example.yaml`.
+Releases : `.deb`, `.rpm`, archives linux/darwin/windows (amd64, arm64), `SHA256SUMS`.
 
 ## Build
 
-Prérequis : Go ≥ 1.27.
+Go ≥ 1.27.
 
 ```sh
 make build
@@ -585,14 +36,14 @@ make test
 make cross
 ```
 
-Les binaires sont produits dans `bin/` (`clotr`, puis `clotr-<os>-<arch>` pour linux, darwin et windows, amd64 et arm64, avec `.exe` pour windows). La version est injectée par `VERSION=...`, sinon `git describe`, sinon `dev`.
-
-`make dist` produit les archives, les bottles Homebrew (macOS arm64 et Intel étiquetés `BOTTLE_MACOS`, `ventura` par défaut, version minimale de macOS des binaires Go ; Linux arm64 et x86_64), les paquets `.deb` et `.rpm` (via nfpm, lancé avec `go run`) et `SHA256SUMS` dans `dist/`, `make formula` la formule Homebrew `dist/clotr.rb` à partir de `SHA256SUMS`, et `make notes` la section du CHANGELOG correspondant à `VERSION`.
+```sh
+make dist
+```
 
 ## Release
 
-1. Dans [CHANGELOG.md](CHANGELOG.md), renommer `[Unreleased]` en `[X.Y.Z] - AAAA-MM-JJ` et rouvrir une section `[Unreleased]` vide.
-2. Committer, puis tagger et pousser :
+1. Ajouter la section `## [X.Y.Z] - AAAA-MM-JJ` dans [CHANGELOG.md](CHANGELOG.md).
+2. Committer, tagger, pousser :
 
 ```sh
 git tag vX.Y.Z
@@ -602,588 +53,147 @@ git tag vX.Y.Z
 git push origin main vX.Y.Z
 ```
 
-Le workflow `release` vérifie que la section `[X.Y.Z]` existe dans le CHANGELOG, lance `vet` et les tests, publie la release GitHub (notes = section du CHANGELOG, archives, bottles, `SHA256SUMS`), puis pousse `Formula/clotr.rb` dans le dépôt `agardenat/homebrew-clotr`. Un tag avec suffixe (`v1.2.0-rc.1`) donne une pré-release, sans mise à jour du tap.
-
-La publication dans le tap utilise le secret `HOMEBREW_TAP_TOKEN` du dépôt : jeton fine-grained limité au dépôt `homebrew-clotr`, permission Contents en lecture et écriture.
+Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et met à jour le tap Homebrew (`HOMEBREW_TAP_TOKEN`).
 
 ## Configuration
 
-Le fichier est cherché dans cet ordre : `--config`, puis `$CLOTR_CONFIG`, puis `~/.config/clotr/config.yaml` (`%AppData%\clotr\config.yaml` sous Windows). Voir [clotr.example.yaml](clotr.example.yaml).
+`--config`, puis `$CLOTR_CONFIG`, puis `~/.config/clotr/config.yaml` (`%AppData%\clotr\config.yaml` sous Windows). Référence : [clotr.example.yaml](clotr.example.yaml).
 
-Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration et les templates, `%LocalAppData%\clotr` pour le cache, les sessions, l'audit et `known_hosts`. Les chemins de la configuration acceptent `~\` comme `~/`. Les clés inconnues sont rejetées. Si le fichier contient des clés en clair, le protéger avec `chmod 600`.
+- `providers`, `profiles`, `roles`, `routing` : endpoints, capacités des modèles, rôles, politique souveraine.
+- `limits`, `catalog`, `audit`, `sessions` : limites d'exécution, cache, répertoires.
+- `language`, `ui_language` : langue des rapports, langue de l'interface.
+- `instances`, `params`, `templates` : cibles et paramètres par défaut.
+- `clients/<client>.yaml` : instances d'un client, projets, `vars`, `params`, `tunnel`, `access`, `compliance`.
+- `local/` : surcharge personnelle non versionnée.
+- `vault` : adresse, connexion OIDC, cache d'identifiants.
+- `mcp` : serveurs MCP (stdio, HTTP, SSE, OAuth, passerelle `servers`).
+- `web_search`, `report_export`, `diagram`, `report_models`, `tickets`, `cve`, `compliance`, `startup`, `min_version`.
 
-| Section | Rôle |
+## Commandes
+
+| Commande | Effet |
 |---|---|
-| `providers` | endpoints OpenAI-compatibles : `name`, `base_url` (jusqu'à `/v1`), `api_key` (clé en clair ou `${VAR}`) ou `api_key_env` (nom de variable), `weight`, `sovereign`, `budget`, `session_header`, `stream` (défaut true), `max_concurrency` (appels simultanés, défaut 4), `max_requests_per_minute` (requêtes par minute, 0 ou absent : pas de limite, voir Routage), `model_info`, `headers`, `persistent_retry` (erreurs temporaires retentées sans limite de tours, voir Routage) |
-| `profiles` | `match` (glob), `tier`, `context`, `tools`, `priority`, `sovereign`, `exclude`, `reasoning_effort` (niveau de raisonnement par rôle pour ce modèle, par exemple `{planner: max}`, envoyé tel quel au provider ; rôle absent : paramètre omis, le modèle garde son défaut ; ignoré pour un modèle forcé par `-m` ; un appel qui épuise la limite de sortie en raisonnant est relancé sur le même modèle en `high`, puis `medium`, puis `low`, avant le modèle suivant) |
-| `routing` | `sovereign` : `any`, `prefer` ou `require` |
-| `roles` | `tier`, `tools`, `min_context`, `sovereign`, `description`. `planner` et `synthesizer` obligatoires, plus au moins un rôle de travail. Défauts : `collector` (fast, outils) et `analyst` (balanced, outils, 32k) |
-| `limits` | `max_agents`, `max_tasks` (par tour de planification), `max_steps` (plafond de sécurité, défaut 100), `stall_steps` (étapes sans appel nouveau avant conclusion, défaut 3, 0 désactive), `verify_findings` (vérification des constats CRITIQUE et MAJEUR, défaut true), `continuations` (défaut 1), `confirm_timeout` (attente d'une réponse à une question de commande ou d'accès, défaut 60 s, négatif = sans limite), `agent_timeout` (désactivé par défaut), `request_timeout` (plafond par appel LLM, défaut 10m ; dépassé, l'appel bascule sur le modèle suivant sans nouvel essai), `idle_timeout` (silence max du flux, défaut 2m), `tool_output_max_chars`, `history_keep_steps` (défaut 2), `history_tool_chars` (défaut 1500, 0 désactive), voir Historique allégé |
-| `catalog` | `cache_ttl` |
-| `audit` | `dir` (défaut `~/.local/state/clotr/audit`), utilisé par `plan`. L'audit d'un `run` est écrit dans le tour de sa session. |
-| `sessions` | `dir` (défaut `~/.local/state/clotr/sessions`) |
-| `language` | `auto` (défaut), `fr` ou `en` : langue des réponses et rapports, voir Langues |
-| `min_version`, `update_hint` | version minimale de clotr (`X.Y.Z`) exigée par ce fichier et texte affiché pour mettre clotr à jour : vérifiée avant le reste du fichier, donc même si la configuration contient des clés qu'un clotr plus ancien ne connaît pas ; après une mise à jour au démarrage qui l'exige, le retour arrière affiche ce message. Les builds hors release (`dev`, `vX.Y.Z-…`) ne sont pas contrôlés |
-| `ui_language` | `en` (défaut) ou `fr` : langue de l'interface, voir Langues |
-| `compliance` | types de plateforme, par nom (ex. `regulated: {confidential: true}`, `audited: {}`) : `confidential` rend confidentiel tout run qui cite un client de ce type (voir Sessions) |
-| `files` | `roots`, `max_file_bytes` |
-| `templates` | `dir` (défaut `~/.config/clotr/templates`, seule source des templates), `cache_dir` (défaut `~/.cache/clotr/inventory`), `cache_ttl` (défaut 15m) |
-| `params` | valeurs par défaut des paramètres de toutes les instances, propres au poste (par exemple `kubeconfig: ~/.kube/all-clusters`) : appliquées seulement aux paramètres que le template de l'instance déclare ; les `params` du client, du projet puis de l'instance l'emportent. Les fichiers `clients/` partagés n'ont ainsi pas à contenir de chemin propre à un poste |
-| `instances` | `name` (préfixe des outils, `[a-z][a-z0-9-]*`), `template`, `params`, `enabled` (défaut true ; false : activée seulement par `-t <instance>`), `describes` (instance IaC : ce que décrit le dépôt, `<instance>` ou `<instance>/<cible>`, une valeur ou une liste ; sert au plan des modes `--dat` et `--diagram`) |
-| `vault` | `addr`, `namespace` : adresse et namespace Vault utilisés quand `VAULT_ADDR` / `VAULT_NAMESPACE` ne sont pas définis ; `login` (`method: oidc`, `path` défaut `oidc`, `role`, `port` défaut 8250, `min_ttl` défaut 4h) : connexion Vault au démarrage ; `credentials_cache` (chemin sous `cubbyhole/`) : identifiants saisis conservés dans Vault ; voir Secrets Vault |
-| `clients/*.yaml` | fichiers à part, un par client, dans le répertoire `clients/` à côté du fichier de configuration : voir Clients |
-| `local/` | réglages propres au poste, non versionnés, qui l'emportent sur la configuration partagée : voir Surcharge personnelle |
-| `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
-| `report_export` | `template` (template `kind: document`) et `params`. Voir Export du rapport en document. |
-| `diagram` | `template` (template `kind: diagram`) et `params` : rendu des schémas des modes `--dat` et `--diagram`. Voir Templates de schéma. |
-| `report_models` | modèle de rapport par mode (`default`, `cve`, `incident`, `change`, `upgrade`, `watch`, `minutes`, `dat`, `diagram`) : chemin d'un fichier Markdown qui remplace le modèle embarqué. Voir Modèles de rapport. |
-| `tickets` | `template` (template `kind: tickets`), `params`, `enabled` (défaut true) : outil de tickets des modes incident et demande de changement. Voir Templates de tickets et Tickets. |
-| `cve` | `sources` : distributions interrogées en mode CVE (`redhat`, `ubuntu`, `debian` ; défaut : les trois). Voir Mode CVE. |
-| `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true ; false : connecté seulement par `-t mcp_<serveur>`), `auth` (`oauth` : connexion OAuth dans le navigateur, voir Serveurs MCP en OAuth). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. `servers` : une entrée de passerelle qui expose plusieurs serveurs (un par alias) se développe en une entrée par élément `{alias, name, headers, auth, allow, deny, timeout, enabled}` : `{alias}` de `url` est remplacé par l'alias, ou, sans `{alias}`, l'en-tête `x-mcp-servers` porte l'alias ; `name` vaut par défaut l'alias (`_` remplacé par `-`) ; `headers` complètent ceux de l'entrée, `allow`/`deny` s'y ajoutent, les autres champs les remplacent. Le `name` de l'entrée de passerelle elle-même n'est pas un serveur. |
+| `clotr models` | catalogue et routage par rôle |
+| `clotr tools` | outils disponibles |
+| `clotr templates [nom]` | templates et instances chargés |
+| `clotr templates test <nom>` | tests Starlark d'un template |
+| `clotr plan "<demande>"` | plan sans exécution |
+| `clotr run "<demande>"` | plan, sous-agents, rapport |
+| `clotr run -s <session\|last> "<demande>"` | nouveau tour d'une session |
+| `clotr sessions` | liste des sessions |
+| `clotr session <nom\|last>` | rapport d'un tour, `--evidence`, `--synthesize`, `--export` |
+| `clotr export <fichier.md\|->` | Markdown vers `.docx` ou `.pdf` |
+| `clotr sync` | exécution des templates de démarrage |
 
-### Serveurs MCP en OAuth
-
-Avec `auth: oauth` (transport `http`, sans en-tête `Authorization`), clotr obtient lui-même le jeton du serveur MCP, par exemple le serveur MCP natif de GitLab (`https://<gitlab>/api/v4/mcp`), qui refuse les jetons d'accès personnels classiques :
-
-- la connexion se fait uniquement au démarrage, avant le run. Pendant le run, le jeton est rafraîchi sans navigateur ; si le rafraîchissement est refusé, l'appel échoue avec une consigne de relance, sans rien demander ;
-- au démarrage, quand le serveur répond 401, clotr lit ses métadonnées OAuth, s'enregistre comme client public (enregistrement dynamique, redirection vers `http://127.0.0.1:<port>/callback`), ouvre le navigateur sur la page d'autorisation et affiche son URL sur la sortie d'erreur. Il attend la validation jusqu'à 5 minutes, le délai `timeout` du serveur étant suspendu pendant ce temps ;
-- le client enregistré, le jeton et son jeton de rafraîchissement sont conservés dans `$XDG_STATE_HOME/clotr/oauth/<serveur>.json` (défaut `~/.local/state/clotr/oauth`, droits 600). Aux lancements suivants, le jeton est réutilisé puis rafraîchi sans navigateur ; le navigateur ne revient que si le rafraîchissement est refusé (jeton révoqué ou expiré) ;
-- le cache est ignoré si l'`url` du serveur change ; supprimer le fichier force un nouvel enregistrement.
-- les `headers` du serveur (clé d'API d'une passerelle, par exemple) sont envoyés aussi sur les requêtes OAuth (métadonnées, enregistrement, échange du code, rafraîchissement), seulement vers l'hôte de l'`url` du serveur, jamais vers un autre serveur d'autorisation ; une passerelle qui conserve elle-même le jeton de l'utilisateur rattache ainsi l'échange à son identité ;
-- quand l'enregistrement dynamique ne précise pas la méthode d'authentification du client et que le serveur n'annonce pas `client_secret_basic`, clotr retient la méthode annoncée dans ses métadonnées (`client_secret_post`, sinon `none`) ;
-- un rafraîchissement refusé comme non pris en charge (`unsupported_grant_type`) n'est plus retenté pendant le run : les appels partent sans jeton, ce qui suffit à une passerelle qui détient déjà le jeton de l'utilisateur ; un autre serveur répond 401 et la connexion est redemandée comme pour un rafraîchissement refusé.
-
-```yaml
-mcp:
-  - name: gitlab
-    url: https://gitlab.example.com/api/v4/mcp
-    auth: oauth
-```
-
-Une section absente désactive les outils correspondants. Un outil dont l'initialisation échoue est désactivé, avec un avertissement.
-
-### Clients
-
-Les instances d'un même client se déclarent dans `clients/<client>.yaml`, à côté du fichier de configuration (`~/.config/clotr/clients/` par défaut, ou à côté de `--config` / `$CLOTR_CONFIG`). Un fichier par client ; `name` doit être le nom du fichier sans `.yaml`.
-
-```yaml
-name: acme
-aliases: [acmecorp]
-context: "Acme : plateforme de données et VM d'administration derrière le bastion du client"
-vars:
-  code: C-0000
-params:
-  proxy_url: socks5h://localhost:1080
-  ssh_user: admin
-  ssh_key_path: ~/.ssh/acme_ed25519
-projects:
-  - name: P-0000
-    aliases: [lakehouse]
-    context: "projet Lakehouse, site principal"
-    instances:
-      - name: k8s-acme
-        template: cluster
-        params:
-          contexts: [{name: acme-prod}]
-      - name: vm-acme
-        template: remote-hosts
-        params:
-          networks: [{cidr: 10.20.0.0/24}]
-          sudo: true
-          ssh_user: ""
-          password_vault: "kv/{{.code}}/{{.project}}/adm-acme"
-  - name: P-0001
-    aliases: [pra]
-    context: "PRA du projet Lakehouse"
-    params:
-      proxy_url: socks5h://localhost:1081
-    instances:
-      - name: vm-acme-pra
-        template: remote-hosts
-        params:
-          networks: [{cidr: 10.30.0.0/24}]
-```
-
-| Clé | Rôle |
-|---|---|
-| `name` | nom du client (`[a-z][a-z0-9-]*`), distinct des noms d'instances et des préfixes réservés |
-| `aliases` | autres termes qui désignent le client dans une demande ; un alias n'appartient qu'à un client |
-| `context` | description transmise aux agents avec les instances du client |
-| `vars` | références du client (codes client…), clés `[a-z][a-z0-9_]*` : `{{.<clé>}}` est remplacé dans les valeurs des `params` du client, de ses projets et de ses instances (une clé inconnue désactive l'instance, avec un avertissement), et les références sont transmises aux agents avec le `context`, pour les outils qui les attendent (serveurs MCP de tickets ou d'inventaire) |
-| `access` | niveau d'accès de ses instances quand `--access` n'est pas donné : `read` (défaut), `exec` ou `create`, voir Niveaux d'accès |
-| `compliance` | type de plateforme du client, défini dans la section `compliance` de la configuration ; absent : aucun |
-| `web_search` | politique de recherche web pour les runs qui citent le client : `ask`, `allow` ou `deny` ; absent : `web_search.policy`. Sur un client de type confidentiel, la politique effective (celle-ci, sinon `web_search.policy`) `allow` ou `ask` autorise la recherche en session confidentielle, `deny` la refuse, voir Recherche web |
-| `cve_sources` | distributions interrogées en mode CVE pour les runs qui citent le client (`redhat`, `ubuntu`, `debian`) ; absent : `cve.sources`. Voir Mode CVE |
-| `params` | valeurs par défaut des paramètres de ses instances (proxy, compte et clé SSH…) : appliquées seulement aux paramètres que le template de l'instance déclare ; elles remplacent les `params` du fichier principal, la valeur de l'instance l'emporte |
-| `tunnel` | rebonds SSH vers le réseau du client, ouverts par clotr, voir Tunnel ci-dessous |
-| `projects` | projets du client, chacun avec ses instances (hôtes, clusters, dépôts…), voir ci-dessous |
-| `instances` | instances du client hors projet, même format que `instances` du fichier principal ; les noms restent uniques sur toute la configuration |
-
-Un projet regroupe les instances d'un même périmètre du client :
-
-| Clé | Rôle |
-|---|---|
-| `name` | code du projet, tel que l'utilisent les outils du client (inventaire, tickets) ; unique sur toute la configuration, sans tenir compte de la casse, et distinct des noms et alias des clients |
-| `aliases` | autres termes qui désignent le projet dans une demande |
-| `context` | description du projet, transmise aux agents avec ses instances |
-| `vars` | références du projet, mêmes règles que celles du client ; dans un projet, `{{.project}}` vaut le nom du projet, sauf si ses `vars` le redéfinissent, et les `vars` du projet l'emportent sur celles du client |
-| `params` | valeurs par défaut des paramètres des instances du projet, mêmes règles que celles du client, qu'elles remplacent ; la valeur de l'instance l'emporte |
-| `tunnel` | tunnel propre au projet, qui remplace celui du client pour ses instances |
-| `instances` | instances du projet, même format que `instances` du fichier principal |
-
-#### Tunnel
-
-Au lieu d'ouvrir soi-même un tunnel SOCKS avant un run, le client ou le projet décrit les rebonds SSH et clotr ouvre le tunnel :
-
-```yaml
-projects:
-  - name: P-0000
-    tunnel:
-      hops: [10.10.0.4, 10.20.0.5]
-      password_vault: "kv/{{.code}}/{{.project}}/adm-acme"
-    params:
-      proxy_url: "{{.tunnel_url}}"
-```
-
-| Clé | Rôle |
-|---|---|
-| `hops` | rebonds dans l'ordre, `hôte` ou `hôte:port` (22 par défaut) : chaque rebond est joint à travers le précédent, le dernier ouvre les connexions vers les ressources, noms résolus de son côté |
-| `port` | port du proxy SOCKS5 local sur `127.0.0.1` ; 0 ou absent : port libre choisi au démarrage. Un port fixe sert aux outils lancés hors de clotr pendant le run, par exemple le `proxy-url` d'un kubeconfig. Unique sur toute la configuration |
-| `user` | compte SSH, le même sur tous les rebonds ; absent : champ `username` du secret (`password_vault`, sinon `key_vault`), sinon saisi sur le terminal |
-| `password_vault` | secret Vault du mot de passe, `chemin[#champ]` (champ `password` par défaut) ; illisible : saisi sur le terminal |
-| `key_path`, `key_vault` | clé privée (fichier, ou secret Vault `chemin[#champ]`, champ `private_key` par défaut), essayée avant le mot de passe |
-| `host_key` | vérification des clés d'hôte des rebonds : `accept-new` (défaut, enregistrées dans `$XDG_STATE_HOME/clotr/known_hosts`), `accept-changed`, `strict` ou `insecure` (voir Outils SSH) |
-
-`{{.tunnel_url}}` vaut `socks5h://127.0.0.1:<port>` dans les `params` des instances du client ou du projet. Les champs du tunnel acceptent les `vars` ; dans un projet, `{{.project}}` vaut son nom. Le proxy local écoute dès qu'une instance du client ou du projet est activée par les filtres du run. Les connexions SSH ne s'ouvrent qu'à la première connexion qui passe par le tunnel et se rouvrent après une coupure. Le tunnel se ferme à la fin de clotr. Rebonds injoignables ou identifiants refusés : avertissement, et les connexions par le tunnel échouent. Port fixe déjà ouvert (un tunnel lancé à la main, ou un autre clotr) : clotr l'utilise tel quel, avec un avertissement.
-
-Nommer le client ou l'un de ses alias dans une demande propose toutes ses instances (voir Activation d'une instance). Nommer un projet ou l'un de ses alias propose les instances de ce projet et celles du client hors projet, pas celles de ses autres projets. `-t <client>` et `-x <client>` valent pour toutes ses instances activées, `-t <projet>` et `-x <projet>` pour celles du projet ; une instance `enabled: false` ne se force que par son nom. Les instances du fichier principal n'ont pas de client et se comportent comme avant.
-
-### Surcharge personnelle
-
-Le répertoire `local/`, à côté du fichier de configuration (`~/.config/clotr/local/` par défaut), contient des réglages propres au poste, qui l'emportent sur la configuration partagée. Il n'est pas versionné : quand la configuration est un clone git tenu à jour au démarrage (voir Templates de démarrage), le mettre dans le `.gitignore` du dépôt. Les fichiers non suivis n'empêchent pas la mise à jour.
-
-| Fichier | Effet |
-|---|---|
-| `local/config.yaml` | fusionné dans le fichier principal |
-| `local/clients/<client>.yaml` | fusionné dans `clients/<client>.yaml` ; sans fichier partagé du même nom, ajoute un client |
-
-Fusion :
-
-- une table est fusionnée clé par clé, récursivement ; une clé absente de la surcharge garde la valeur partagée ;
-- une valeur simple remplace la valeur partagée ; `~` (null) supprime la clé ;
-- une liste dont tous les éléments ont un `name` (providers, profiles, instances, projets, startup, mcp…), ou à défaut un `alias`, est fusionnée élément par élément sur ce nom ; un élément nouveau est ajouté à la fin, un élément marqué `!remove` est retiré ;
-- toute autre liste est remplacée entière.
-
-Chaque fichier de surcharge est vérifié seul (clés inconnues rejetées) avant la fusion, puis le résultat est validé comme une configuration ordinaire. Une erreur qui n'existe qu'avec la surcharge le signale.
-
-```yaml
-# local/config.yaml
-ui_language: fr
-providers:
-  - name: main
-    max_concurrency: 2
-  - !remove {name: backup}
-params:
-  kubeconfig: ~/.kube/mine
-```
-
-```yaml
-# local/clients/acme.yaml
-projects:
-  - name: P-0000
-    instances:
-      - name: acme-legacy
-        enabled: true
-```
-
-## Usage
-
-```sh
-clotr models
-```
-
-```sh
-clotr tools
-```
-
-```sh
-clotr templates
-```
-
-```sh
-clotr plan "état de santé du cluster prod : pods en erreur, events warning récents"
-```
-
-```sh
-clotr run "audit des limites de ressources des déploiements" -t prod,fs -o rapport.md
-```
-
-```sh
-clotr run -m collector=ollama/qwen2.5-coder:7b --json "inventaire des ingress exposés" > result.json
-```
-
-```sh
-clotr run --direct "taille de /var/log sur les hôtes de prod ?"
-```
-
-```sh
-clotr run --chat --direct
-```
-
-```sh
-clotr run --access exec "version de PHP dans les pods du namespace web" -t prod
-```
+## Options de `run`
 
 | Option | Effet |
 |---|---|
-| `-c, --config` | fichier de configuration |
-| `--refresh` | ignore le cache du catalogue |
-| `-m, --model role=provider/model` | force le modèle d'un rôle |
-| `--sovereign any\|prefer\|require` | politique souveraine pour l'exécution |
-| `--confidential` | run confidentiel, équivalent de `--sovereign require` |
-| `--lang auto\|fr\|en` | langue des réponses et rapports (prioritaire sur `language`) |
-| `--ui-lang en\|fr` | langue de l'interface (prioritaire sur `ui_language`) |
-| `-t, --tools` | restreint les groupes d'outils (`fs`, `mcp`, `mcp_<serveur>`, `<instance>`) ; sans `-t`, tous sont proposés au planner, et une instance n'est activée que si une tâche l'utilise. Un serveur ou une instance cité par son nom (`-t mcp_<serveur>`, `-t <instance>`) est activé même avec `enabled: false` ; `-t mcp` respecte `enabled`. Un nom qui ne correspond à aucun groupe est refusé. Une instance activée que `-t` écarte alors que la demande la cite (nom, mot-clé, cible, IP dans ses `networks`) est notée dans l'audit avec ce qui a été reconnu (`instance_filtered`), et un seul avertissement au démarrage en donne le nombre ; elle reste écartée. |
-| `-x, --exclude` | exclut des groupes d'outils, mêmes préfixes que `-t` ; prioritaire sur `-t` et `enabled`. Exclure le serveur de `web_search.mcp` désactive la recherche web, ou la reporte sur `web_search.model` s'il est défini. |
-| `-o, --output` | écrit le rapport dans un fichier |
-| `--json` | sortie JSON : plan, résultats par tâche, rapport, `models_used` |
-| `-q, --quiet` | n'affiche pas la progression sur stderr |
-| `--plain` | progression ligne par ligne au lieu du tableau dynamique |
-| `--max-agents N`, `--max-tasks N`, `--max-steps N` (`plan`, `run`) | remplacent `limits.max_agents`, `limits.max_tasks` et `limits.max_steps` pour ce run |
-| `--direct[=<rôle>]` (`run`) | réponse directe, voir Réponse directe |
-| `--chat` (`run`) | mode conversation, voir Conversation |
-| `--raw` (`run`, `session`) | rapport en Markdown brut, sans mise en forme pour le terminal |
-| `--with-evidence` (`run`, `session`) | annexe la sortie complète de chaque preuve citée, voir Preuves |
-| `--export docx\|pdf` (`run`, `session`) | produit aussi le rapport en document avec `report_export.template`, voir Export du rapport en document |
-| `--export-template <nom>` (`run`, `session`, `export`) | template de document de `--export` à la place de `report_export.template` |
-| `--dat iac\|drift\|clean` (`run`) | document d'architecture technique du périmètre, sans question, voir Mode DAT et schéma d'architecture |
-| `--diagram iac\|drift\|clean` (`run`) | schéma d'architecture seul du périmètre, voir Mode DAT et schéma d'architecture |
-| `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |
-| `--panic` (`run`) | mode incident avec journal en direct des preuves, constats et lacunes, voir Mode panique |
-| `--cve[="<sujet>"]` (`run`) | mode CVE : fiches des CVE et GHSA de la demande, ou du sujet nommé (compromission sans CVE), statut de chaque actif en direct, élévation sur autorisation, voir Mode CVE |
-| `--minutes` (`run`) | compte rendu de réunion, voir Compte rendu de réunion ; alias `--cr` |
-| `--access read\|exec\|create` (`run`) | niveau d'accès de toutes les instances pour ce run, prioritaire sur `access` des clients, voir Niveaux d'accès |
-| `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
+| `-t`, `-x` | inclusion, exclusion de groupes d'outils, instances, clients, projets |
+| `-m role=provider/model` | modèle forcé pour un rôle |
+| `--sovereign any\|prefer\|require`, `--confidential` | politique souveraine |
+| `--access read\|exec\|create` | niveau d'accès |
+| `--lang`, `--ui-lang` | langue du rapport, de l'interface |
+| `--web yes\|no` | recherche web |
+| `-o`, `--json`, `--raw`, `-q`, `--plain` | sortie et progression |
+| `--with-evidence` | annexe complète des preuves citées |
+| `--export docx\|pdf`, `--export-template` | export du rapport |
+| `--direct[=<rôle>]` | réponse par un seul agent |
+| `--chat` | conversation plein écran |
+| `--incident`, `--panic` | investigation d'incident, journal en direct |
+| `--change` (`--demande`) | demande de changement |
+| `--upgrade` (`--modop`) | mode opératoire de mise à jour |
+| `--watch` (`--suivi`), `--watch-for`, `--watch-every` | suivi en direct |
+| `--minutes` (`--cr`) | compte rendu de réunion |
+| `--cve[="<sujet>"]` | exposition à des CVE, GHSA ou compromissions |
+| `--dat iac\|drift\|clean` | document d'architecture technique |
+| `--diagram iac\|drift\|clean` | schéma d'architecture |
+| `--ticket [id]` | ticket de la demande |
+| `--max-agents`, `--max-tasks`, `--max-steps` | limites du run |
+
+## Fonctions
+
+### Exécution
+
+- Catalogue des modèles par `GET /models`, capacités par profils ou `/model/info` LiteLLM, cache.
+- Routage par rôle (`tier`, outils, contexte), poids et priorité, chaîne de fallback.
+- Politique souveraine `any`, `prefer`, `require`.
+- Planner en tâches JSON avec dépendances, sous-agents concurrents, synthèse Markdown.
+- Arrêt d'une tâche sur absence de progression (`stall_steps`), `max_steps` en plafond.
+- Contrôle des preuves dans les réponses, vérification des constats CRITIQUE et MAJEUR.
+- Relances sur 408/425/429/5xx, `persistent_retry`, `max_requests_per_minute` partagé sur le poste.
+- `reasoning_effort` par rôle et par modèle, abaissé si la sortie est épuisée.
+- Streaming SSE, `idle_timeout`, `request_timeout`.
+- Budget par provider (`/key/info` LiteLLM), coût par run.
+- Historique des agents raccourci selon le contexte.
+- Premier Ctrl-C : conclusion ; second : interruption.
+
+### Sessions et preuves
+
+- Session par `run` avec tours, mémoire, rapport, plan, résultats, audit.
+- Nom de session `<client>-<mot>-<adjectif>-<nom>`.
+- Sortie complète de chaque outil archivée en preuve (`E001`…), citée dans le rapport.
+- `evidence_read`, `evidence_search` sur les preuves de tous les tours.
+- Mémoire partagée `memory_write`, `memory_search`.
+- Rapports nommés `<CLIENT>-CVE-…`, `<CLIENT>-DAT-…`, `<CLIENT>-DIAGRAM-…`, `<CLIENT>-CR-…`.
+- Audit JSONL par tour.
+
+### Modes
+
+- Incident : tri `t0`, `cause_report` en direct, modèle `incident`.
+- Panique : incident avec journal des preuves et constats.
+- Demande de changement : état actuel, source IaC, modèle `change`.
+- Mise à jour : documentation de l'éditeur, prérequis mesurés, modèle `upgrade`.
+- Suivi : sources déclarées par `watch_source`, capture sans modèle, modèle `watch`.
+- Relevés système : sondes `system`, `cpu`, `memory`, `disk`, `network`, `connections`, attribution de l'iowait.
+- Compte rendu de réunion : transcription, décisions, actions, suivi du compte rendu précédent, modèle `minutes`.
+- CVE : fiches depuis les sources officielles, cache des fiches, `cve_report` par actif, récapitulatif des positifs.
+- DAT et schéma : plan fixe par instance, variantes `iac`, `drift`, `clean`, rendu drawio et PNG.
+- Réponse directe : un agent, sans planner.
+- Conversation : écran plein terminal, un tour par échange.
+- Tickets : ticket de la demande, tickets liés, commentaire interne.
+
+### Templates
+
+- Cible décrite en YAML et Starlark, chargée depuis `templates.dir`.
+- Connecteurs `http`, `ssh`, `local`, `shell`, `mcp`.
+- Primitives `http`, `ssh`, `mcp`, `jq`, `vault`, `crypto`, `file`, `drawio`, `parallel`, `sleep`.
+- Outils génériques `ssh_list`, `ssh_read`, `ssh_tail`, `ssh_grep`, `ssh_disk`, `ssh_resolve`, `log_stats`, `ssh_exec`.
+- Outils `kind: mcp` publiés depuis un serveur MCP.
+- Activation d'une instance au premier appel, proposée seulement si la demande la cite.
+- Identifiants par variable, Vault ou saisie, demandés avant les tâches.
+- `checklist`, `modes`, `keywords`, `companions`, `hints`, `min_version`, `architecture`.
+- Kinds `startup` (`git.sync`), `tickets`, `document`, `diagram`.
+- Tests sans réseau par `clotr templates test`.
+
+### Accès
+
+- Niveaux `read`, `exec`, `create` par client ou par `--access`.
+- `exec` : motifs `commands`, analyse de lecture seule, confirmation sur le terminal.
+- `create` : ressources éphémères suivies et supprimées en fin de tour.
+- `ssh_paths` autorisés et interdits, valeurs sensibles masquées.
+- `known_hosts` propre à clotr, `accept-new`, `accept-changed`, `strict`, `insecure`.
+- Tunnel SSH par client ou projet avec proxy SOCKS5 local.
+
+### Secrets et authentification
+
+- Vault KV v1/v2 avec la configuration du poste, connexion OIDC au démarrage.
+- Identifiants saisis conservés dans `cubbyhole/`.
+- `auth.oauth2` client credentials sur les connecteurs `http`.
+- OAuth des serveurs MCP avec enregistrement dynamique.
+
+### Autres
+
+- Recherche web par serveur MCP ou modèle à recherche native, politique par client.
+- `dns_resolve` depuis le poste.
+- Export `.docx`/`.pdf` par template `kind: document` et LibreOffice.
+- Types de plateforme confidentiels (`compliance`).
+- Interface en français ou en anglais (`internal/i18n`).
+- Rapport mis en forme dans le terminal (glamour).
 
-La demande `-` est lue sur stdin. Pendant un `run` avec plan, un premier Ctrl-C demande la conclusion : les tâches en cours concluent avec ce qu'elles ont, celles pas encore lancées sont abandonnées, la vérification est sautée et le rapport est produit. Un second Ctrl-C interrompt tout, le rapport peut alors être produit par `clotr session <nom> --synthesize` à partir des tâches terminées. Avec `--direct`, Ctrl-C interrompt aussitôt.
+## Limites
 
-### Progression
-
-Si stderr est un terminal, `plan` et `run` affichent un tableau dynamique, rafraîchi sur place (Bubble Tea v2, mode inline) :
-- **en-tête** : état, durée, tâches terminées sur le total (avec les échecs), nombre d'appels d'outils ;
-- **une ligne par tâche**, `planner` et `synthesizer` compris :
-  - statut : `·` en attente, spinner en cours, `✓` terminé, `✗` en échec ;
-  - identifiant, rôle, modèle courant (mis à jour en cas de bascule) ;
-  - barre d'avancement (étape LLM / `max_steps`, une borne haute et non un pourcentage) et durée ;
-  - colonne steps : `step N` en cours, `N steps` une fois terminé, `max!` si la limite `max_steps` a forcé la conclusion ;
-  - texte de l'étape en cours : objectif, `thinking…`, `tool <nom> <arguments>`, `fallback to …`, `waiting for …`, puis résumé (`N findings, M tool calls`) et coût une fois la tâche terminée.
-
-Les libellés suivent la langue de l'interface (voir Langues). Tant que le tableau est affiché, tout ce qui est écrit sur stderr par une bibliothèque est capturé et réaffiché au-dessus du tableau, pour ne pas le décaler.
-
-Le tableau final reste affiché au-dessus du bilan, et le rapport est écrit sur stdout. Hors terminal (redirection, CI) ou avec `--plain`, la progression est écrite ligne par ligne. `-q` la supprime.
-
-### Rendu du rapport
-
-Si stdout est un terminal, `run` et `session` affichent le rapport mis en forme (titres, gras, tableaux, listes, blocs de code colorés, retour à la ligne à la largeur du terminal, 120 colonnes au plus, sur les espaces seulement, suite d'une puce indentée sous son texte) avec [glamour](https://github.com/charmbracelet/glamour). Le thème clair ou sombre suit le fond du terminal ; `GLAMOUR_STYLE` (`dark`, `light`, `dracula`, `tokyo-night`, `ascii`, `notty` ou un fichier JSON de style) l'impose. Le rapport reste en Markdown brut avec `--raw`, `-o`, `--json` ou une redirection, ainsi que dans `report.md`.
-
-### Mode incident
-
-`run --incident` est fait pour l'investigation d'un dysfonctionnement :
-
-- **Tri d'abord** : avant le plan, une tâche `t0` (rôle outillé le plus léger) localise le composant en échec et lit son message d'erreur exact et sa configuration. Le tri se termine dès qu'il signale une cause établie : il conclut à l'étape suivante (audit `goal_reached`), et l'explication des codes d'erreur et la recherche du correctif passent aux tâches planifiées. Le planner part de son résultat : il ne replanifie pas ce qu'elle a établi et, si la cause est prouvée, ne prévoit que sa vérification et la recherche du correctif. Une cause établie limite aussi le plan aux instances utilisées par le tri : leurs outils seuls restent aux tâches, une tâche prévue uniquement sur d'autres instances est écartée (audit `plan_limited`, message au-dessus du tableau). Si le tri n'a utilisé aucune instance, le plan n'est pas limité. Chaque tâche reçoit le résultat de `t0` en entrée et n'a pas à relocaliser le composant.
-- **Causes en direct** : les agents disposent de l'outil `cause_report` (résumé, preuves `[Exxx]` existantes obligatoires, statut `established` ou `probable`). Une cause signalée s'affiche aussitôt au-dessus du tableau de progression, est enregistrée en mémoire de session (`kind: lead`) et dans l'audit (`lead`), et est transmise aux autres tâches en cours à leur étape suivante (audit `inbox`), qui ne refont pas la collecte. Une cause issue d'un modèle souverain n'est pas transmise à une tâche non souveraine. Une cause déjà signalée n'est pas réaffichée. Chaque cause porte un numéro (`#N`, affiché et transmis) ; une cause qui en corrige ou en infirme une autre la désigne par `replaces` : l'ancienne est marquée remplacée (tag `superseded`, contenu préfixé « [remplacée par #M] »), la nouvelle s'affiche avec « corrige #N, retirée », et seule la correction est transmise aux autres tâches. Une cause négative (« ce n'est pas X ») n'est à signaler `established` que si sa preuve couvre toute la période, événements récents compris. Le synthesizer reçoit les causes signalées, à confirmer par les preuves ; la sortie `--json` les donne dans `leads`.
-- **Constats en direct** : à la fin de chaque tâche, ses constats s'affichent au-dessus du tableau de progression, et son résultat est écrit dans `turns/NNN/results.json` sans attendre la fin du run (`session <nom> --synthesize` peut donc repartir d'un run interrompu).
-- **Tickets** : avec un outil de tickets configuré, une recherche des tickets liés précède le tri (voir Tickets).
-- **Rapport d'incident** : le rapport suit le modèle `incident` : synthèse (impact, cause établie ou probable, état, correctif durable, urgence), chronologie, cause racine et pistes écartées, constats annexes, résolution (correctif durable puis mesures immédiates), incidents similaires, points non vérifiés et limites ; le ticket de la demande en tête.
-- **Ctrl-C pour conclure** : un premier Ctrl-C demande la conclusion : les tâches en cours concluent à leur étape suivante avec ce qu'elles ont (« conclusion demandée »), celles pas encore lancées sont abandonnées (« non lancée »), la vérification des constats est sautée, ou abandonnée si elle est en cours (y compris en attente de nouvel essai), et le rapport est produit. Un second Ctrl-C interrompt le run comme sans `--incident`.
-
-`--incident` est incompatible avec `--direct` et `--chat`.
-
-### Mode panique
-
-`run --panic` est le mode incident avec un journal en direct, pour vérifier en parallèle ce que font les agents sans attendre le rapport. En plus des causes, s'affichent au-dessus du tableau de progression :
-
-- au démarrage, le dossier des preuves du tour, où chaque sortie d'outil est écrite dès que l'appel se termine (`<dossier>/<id>.txt`, avec la tâche, l'outil et les arguments en tête) ;
-- chaque appel d'outil terminé : tâche, id de preuve, outil, arguments (300 caractères au plus), taille de la sortie et durée, ou l'erreur ; les appels à `cause_report` n'y figurent pas, la cause étant déjà affichée ;
-- à la fin de chaque tâche, ses constats (avec leurs preuves `[Exxx]`) et ce qu'elle n'a pas couvert.
-
-Hors terminal ou avec `--plain`, ces éléments sont des lignes `preuve`, `constat` et `non couvert` de la progression. `--panic` implique `--incident` et a les mêmes incompatibilités.
-
-### Mode demande de changement
-
-`run --change` (alias `--demande`) prépare une modification de l'infrastructure sans rien modifier :
-
-- pas de tri d'incident ni de `cause_report` ; avec un outil de tickets, la recherche des demandes similaires passe d'abord (voir Tickets) ;
-- le planner établit l'état actuel de ce que la demande modifie (configuration en place, versions, ressources) sur chaque périmètre concerné, sa source IaC (dépôt, fichier, ligne, par les instances IaC disponibles), les dépendances et impacts ; les agents formulent chaque modification avec la valeur actuelle prouvée et la valeur cible, l'IaC d'abord pour une ressource qu'elle gère ;
-- le rapport suit le modèle `change` : synthèse (demande précise, faisabilité, lieu de la modification, impact, points bloquants), état actuel avec ses preuves et les écarts entre IaC et état réel, modifications à réaliser par composant (extrait IaC avant/après), impacts, prérequis, risques et retour arrière, plan de mise en œuvre avec la vérification de chaque étape, demandes similaires, points à confirmer et limites.
-
-`--change` est incompatible avec `--incident`, `--panic`, `--cve`, `--direct` et `--chat`.
-
-### Mode opératoire de mise à jour
-
-`run --upgrade` (alias `--modop`) prépare la montée de version de composants sans rien modifier, et rédige le mode opératoire pas à pas. La demande dit quels composants passent à quelle version dans cette phase, et lesquels sont reportés à une phase ultérieure, par exemple :
-
-```sh
-clotr run --upgrade "mode opératoire de mise à jour du cluster prod vers 2.4, le cluster recette suivra plus tard"
-```
-
-- étape `procedure`, avant la planification : un agent qui n'a que la recherche web, les preuves et la mémoire lit la documentation officielle de l'éditeur pour la version cible (chemins de mise à jour supportés, ordre entre composants, prérequis, sauvegardes, étapes et leurs commandes, durée et interruption, retour arrière, coexistence des versions, problèmes connus) ; son résultat est transmis au planner et à chaque tâche. Sans recherche web pour le run, l'étape est sautée et le rapport le signale : chaque étape reste alors à confirmer ;
-- le planner établit l'état actuel des composants de la phase, de leurs dépendances et des composants reportés (versions de chaque couche, santé, sauvegardes, personnalisations) et la mesure de chaque prérequis ; les `modes.upgrade` des templates des instances concernées donnent aux agents les pages de documentation et les points à relever propres au produit ;
-- le rapport suit le modèle `upgrade`, rédigé section par section : synthèse, périmètre et état actuel, compatibilité et chemin de mise à jour, prérequis (contrôle, attendu, constaté, état OK/KO/à vérifier, preuve), sauvegardes, mode opératoire (étapes numérotées, commandes, résultat attendu, points go/no-go), vérifications après mise à jour, retour arrière, impacts et communication, phases suivantes, points à confirmer. Une commande n'y figure que si une page lue ou une preuve la donne ; sinon l'action est décrite sans syntaxe et ajoutée aux points à confirmer ;
-- en affinage (`run -s`), la documentation n'est pas relue : les faits des tours précédents sont dans la mémoire et les preuves, et un plan vide est accepté quand la demande ne porte que sur la rédaction.
-
-`--upgrade` est incompatible avec `--incident`, `--panic`, `--change`, `--cve`, `--ticket`, `--dat`, `--diagram`, `--direct` et `--chat`.
-
-### Suivi en direct
-
-`run --watch` (alias `--suivi`) observe une action pendant qu'elle se produit : une connexion qui échoue depuis un client, un accès SSH refusé, un traitement qui consomme trop de mémoire. La demande décrit l'action et cible le client et le template concernés, par exemple :
-
-```sh
-clotr run --suivi "connexion refusée depuis le poste client, client acme"
-```
-
-- préparation (tâche `watch`) : un agent repère la chaîne de l'action dans le périmètre (client, point d'entrée, service, dépendances), vérifie les sources où elle laissera une trace et les déclare avec l'outil `watch_source` : fichier de log d'un hôte en SSH (`file`, chemin autorisé par `ssh_paths`), journal systemd d'une unité ou du noyau (`journal`), relevé système périodique d'un hôte (`sample`, voir ci-dessous), outil suivable d'une instance (`tool`, par exemple les logs d'un pod ou les événements d'un cluster Kubernetes). Chaque source a un `filter` (lignes affichées en direct) ; les `modes.watch` des templates donnent l'emplacement des logs propres au produit ;
-- attente (tâche `capture`, sans modèle de langage) : clotr affiche `en attente : reproduisez l'action maintenant`, lit chaque source toutes les 5 s (`--watch-every`) à partir de son état au début de l'attente (fichier lu par octet, rotation suivie, curseur du journal, curseur de l'outil), et affiche en direct chaque ligne retenue par le filtre. Toutes les lignes sont archivées, une preuve par source, chaque ligne précédée de l'heure de réception ; elles s'écrivent aussi au fil de l'eau dans `turns/NNN/watch/<source>.log`. Une source en échec de lecture est signalée sur sa ligne et la capture continue sur les autres ;
-- le premier Ctrl-C arrête l'attente (`--watch-for 10m` l'arrête après une durée), puis le planner organise l'analyse des captures : ce que l'action a produit à chaque maillon, chronologie de bout en bout, cause ; un Ctrl-C pendant l'analyse demande la conclusion, le suivant coupe tout ;
-- le rapport suit le modèle `watch` : synthèse, capture (fenêtre, sources, lignes captées), chronologie de l'action, cause, constats annexes, résolution, points non vérifiés.
-
-#### Relevés système (`kind: sample`)
-
-Pour voir ce qui met une VM à genoux, clotr mesure lui-même l'état de l'hôte : une commande SSH par relevé lit les compteurs du noyau (`/proc`, `/sys/block`, `df -P -l`, `ps`, `ss`), sans rien installer sur l'hôte (ni sysstat, ni agent, ni binaire déposé). Les débits sont calculés par clotr entre deux relevés, sur l'intervalle mesuré par l'hôte (`/proc/uptime`). Un premier relevé est pris au début de l'attente, puis un toutes les `every` secondes (15 par défaut).
-
-| `probe` | contenu |
-|---|---|
-| `system` | tout ce qui suit sauf la liste des connexions, plus les descripteurs de fichiers ouverts : la sonde à déclarer quand on ne sait pas quelle ressource sature |
-| `cpu` | répartition user, system, iowait, steal, irq ; charge par vCPU, tâches en attente d'E/S, commutations de contexte ; pression CPU (PSI) ; processus par CPU ; threads bloqués en E/S |
-| `memory` | mémoire disponible, cache, pages sales, slab, mémoire engagée ; swap utilisé et actif ; défauts de page majeurs, récupération directe, kswapd, OOM killer ; pression mémoire ; processus par mémoire résidente |
-| `disk` | par disque (noms LVM résolus) : lectures et écritures/s, débits, attente moyenne, occupation, file, E/S en cours ; systèmes de fichiers et inodes ; pression E/S ; attribution de l'iowait (ci-dessous) |
-| `network` | par interface : débit, paquets, erreurs, pertes ; TCP : retransmissions, ouvertures, échecs, resets, files d'écoute débordées, expirations ; erreurs UDP ; sockets ; conntrack ; `ss -s` |
-| `connections` | `network` plus la liste des connexions TCP (`ss -tan`), à filtrer sur un port ou une IP |
-
-Attribution de l'iowait (`disk`, `system`), pour savoir qui fait attendre l'hôte (montage NFS lent, indexeur qui parcourt un disque, sauvegarde…) :
-
-- threads bloqués en E/S (état D) avec leur point d'attente noyau (`wchan`, pile du noyau avec sudo) et la famille reconnue : NFS/RPC, CIFS, FUSE, journal ext4, XFS, attente de page, écriture bridée par les pages sales ;
-- NFS par montage (`/proc/self/mountstats`) : opérations/s, octets lus et écrits sur le serveur, aller-retour et temps d'exécution moyens par opération, expirations et retransmissions ; un iowait sans activité des disques locaux mais avec un NFS lent se voit directement ;
-- processus par E/S disque (`read_bytes`/`write_bytes`) et par lectures et écritures applicatives (`rchar`/`wchar`, cache, NFS et sockets compris) ; processus par temps d'attente d'E/S quand le comptage des délais est activé (`kernel.task_delayacct = 1`, sinon le relevé le dit) ;
-- fichiers ouverts par les processus en tête des E/S ou bloqués (20 chemins au plus par processus, hors `/dev`, `/proc`, `/sys`), avec le système de fichiers de chaque chemin.
-
-Avec sudo sur l'instance, tout le relevé passe par un seul `sudo -n sh -c` ; sans sudo, les E/S, points d'attente et fichiers des processus des autres comptes sont illisibles et le relevé le signale. Les noyaux sans PSI (avant 4.20) ou sans conntrack sont indiqués comme tels.
-
-Chaque relevé est archivé en entier dans la preuve de la source. Le tableau affiche en continu les chiffres clés du dernier relevé (CPU, iowait, steal, mémoire disponible, disque le plus occupé, interface la plus chargée) et une ligne `⚠` seulement quand un seuil est franchi : CPU occupé ≥ 90 %, iowait ≥ 20 %, steal ≥ 10 %, charge ≥ 2 × vCPU, pression ≥ 20 % (some) ou ≥ 5 % (full), mémoire disponible < 5 %, swap ≥ 10 pages/s, OOM killer, récupération directe, défauts majeurs ≥ 100/s, disque occupé ≥ 90 % ou attente ≥ 50 ms, opération NFS ≥ 50 ms ou expirée, système de fichiers ou inodes ≥ 95 %, pertes réseau ≥ 10/s, erreurs réseau, retransmissions TCP ≥ 2 %, files d'écoute débordées, conntrack ou descripteurs ≥ 90 %, hôte qui répond en 5 s ou plus, redémarrage. Ces seuils servent à l'affichage ; l'analyse porte sur toutes les valeurs. `filter` s'applique aux lignes du relevé (processus, utilisateur, disque, interface, port).
-
-Une ligne écrite dans un fichier juste avant sa rotation, entre deux lectures, peut manquer : la capture le note à l'endroit de la rotation. `--watch` est incompatible avec `--incident`, `--panic`, `--change`, `--upgrade`, `--cve`, `--ticket`, `--dat`, `--diagram`, `--direct` et `--chat`.
-
-### Compte rendu de réunion
-
-`run --minutes` (alias `--cr`) rédige le compte rendu d'une réunion à partir de ce qui y a été dit et écrit, sans investiguer l'infrastructure. La demande désigne la réunion (client, sujet, date) ; les réunions sont lues par les instances du périmètre qui les exposent (un template de réunions par outil de visioconférence, avec sa transcription, ses participants et le chat de la réunion), par exemple :
-
-```sh
-clotr run --cr "compte rendu du comité projet acme du 5 novembre"
-```
-
-- le planner prévoit une tâche par réunion à lire, et une tâche de vérification d'un fait technique cité en réunion seulement si la demande la demande ; une réunion introuvable ou sans transcription n'est remplacée par aucune autre source et va dans les points à confirmer ;
-- les agents lisent la transcription entière (une sortie tronquée se relit par plages avec `evidence_read`) et en tirent un constat par décision, action (responsable et échéance quand elles sont dites), point ouvert, risque et prochaine échéance, chacun avec sa preuve et l'horodatage du passage, et un constat pour l'ordre du jour quand il est connu (invitation, mail de préparation, compte rendu précédent) ; ils distinguent ce qui est décidé de ce qui est proposé ;
-- un participant anonyme de la transcription (alias `@1`, `@2`…) garde son alias, sauf indice cité qui permet de le nommer (présentation, appel par son nom, message signé du chat qui reprend ses propos, candidat unique) ;
-- les `modes.minutes` des templates donnent les points à relever propres à l'outil de réunion ;
-- le rapport suit le modèle `minutes` : réunion (date, organisateur, ordre du jour, présents et absents, source), synthèse, suivi du compte rendu précédent (statut de chacune de ses actions et de ses points ouverts), décisions, actions (responsable, échéance, passage), points ouverts (dont les points de l'ordre du jour non abordés), risques et blocages, prochaine échéance, points non vérifiés (dont les écarts avec un compte rendu déjà diffusé après la réunion) ;
-- le compte rendu est destiné aux participants, client compris : chaque point renvoie à son passage par l'horodatage `[hh:mm:ss]`, sans identifiant de preuve `[Exxx]` (retiré par clotr s'il en reste) ni annexe des preuves, et sans rien dire de la façon dont il a été établi ; `--with-evidence` garde les identifiants et ajoute l'annexe.
-
-`--minutes` est incompatible avec `--incident`, `--panic`, `--change`, `--upgrade`, `--watch`, `--cve`, `--ticket`, `--dat`, `--diagram`, `--direct` et `--chat`.
-
-### Tickets
-
-Avec un outil de tickets configuré (`tickets`, template `kind: tickets`), les modes incident et demande de changement s'appuient sur les tickets :
-
-- **Ticket de la demande** : `--ticket <id>` lit le ticket avant le run ; `--ticket` sans valeur prend le premier identifiant de la demande, et un identifiant présent dans la demande d'un run `--incident` ou `--change` est lu aussi, sans option. Le ticket s'affiche (identifiant, type, titre), devient une preuve citée dans le rapport et est transmis au planner, aux tâches et au synthesizer. Sans demande, `clotr run --ticket <id>` traite le ticket lui-même.
-- **Mode tiré du ticket** : `--ticket` seul choisit le mode d'après le type du ticket (incident, ou demande de changement ; autre type : incident). Avec `--incident` ou `--change`, le type du ticket l'emporte : un incident qui porte sur une demande de changement bascule en mode demande de changement, et inversement (message, audit `mode_switch`).
-- **Périmètre déduit du ticket** : si la demande ne cite aucun client ni projet de la configuration, les identifiants client et projet du ticket (`scope`), son titre et sa description servent à proposer les instances, comme s'ils figuraient dans la demande : il suffit que le client ou le projet porte ces identifiants en nom ou en alias (audit `ticket_scope`).
-- **Tickets liés** : une tâche `tickets`, avant le tri, n'a que les outils `ticket_search`, `ticket_get` et `ticket_related` : elle cherche les incidents (ou les demandes) passés semblables, chez le même client puis tous clients confondus, et en relève la résolution ; en mode incident sans ticket, elle cherche d'abord un ticket ouvert récent sur le même sujet (« ticket probable », à confirmer). Chaque ticket lié s'affiche aussitôt au-dessus du tableau, est transmis aux tâches comme piste à vérifier (jamais comme cause établie) et figure dans le rapport (`{{tickets.related}}`) ; audit `ticket_related`, sortie `--json` : `tickets`.
-- **Commentaire interne** : à la fin d'un run incident ou demande de changement, clotr rédige un commentaire interne pour le ticket (état, actions à faire, tickets similaires et leur résolution, points non vérifiés), affiché en jaune après le rapport et écrit dans `turns/NNN/comment.txt` (sortie `--json` : `comment`). Il n'est pas publié dans l'outil de tickets.
-
-`--ticket` est incompatible avec `--cve`, `--direct` et `--chat`. Sans outil de tickets configuré, `--ticket` est refusé ; les modes incident et demande de changement fonctionnent sans tickets.
-
-### Mode CVE
-
-`run --cve` vérifie l'exposition d'une infrastructure à des vulnérabilités ou à une compromission. Les sujets sont les identifiants CVE (`CVE-AAAA-NNNN`) et GHSA (`GHSA-xxxx-xxxx-xxxx`) de la demande, ou ceux de la valeur de l'option ; une compromission sans identifiant (paquet malveillant, chaîne d'approvisionnement) se nomme dans l'option, et ce libellé sert d'identifiant :
-
-```sh
-clotr run --cve "CVE-2026-0001 et CVE-2026-0002 sur les clusters k8s de acme"
-```
-
-```sh
-clotr run --cve="Exemple 1.2.3 supply chain compromise" "vérifie les passerelles de acme"
-```
-
-- **Fiches d'abord, par une procédure fixe** : avant le plan, clotr interroge lui-même les sources officielles, toujours les mêmes et dans le même ordre, et enregistre chaque réponse comme preuve (`cve_source`) : CVE.org (description, CVSS du CNA, CWE, versions amont, contournements, exploitation SSVC de la CISA), NVD (CVSS du NVD), catalogue CISA KEV (exploitation avérée ; flux gardé 6 h en cache), EPSS de FIRST, avis GitHub (paquets applicatifs pip, npm, Maven, Go… avec versions touchées et première version corrigée ; source d'un identifiant GHSA), puis les distributions : Red Hat (sévérité, statut et paquet corrigé par produit avec son RHSA, contournement, analyse), Ubuntu (priorité, statut et version corrigée par release avec son USN, contournement, notes) et Debian (première version corrigée par release, via OSV). Une source indisponible est relancée deux fois puis signalée dans la fiche, sans bloquer. Les faits (scores, sévérités, KEV, EPSS, SSVC, versions par distribution, textes des éditeurs) sont extraits par le code, jamais par le modèle de langage, et les commandes de détection des paquets sont générées : `cat /etc/os-release`, puis `rpm -qa --qf … | grep` et `dpkg-query -W -f '${Package} ${Version} ${source:Package}\n' | grep` sur les paquets source, qui couvrent leurs paquets binaires (`openssl` → `libssl3`). La tâche `t0` ne rédige que le récit (en quoi consiste la faille, prérequis d'exploitation, détection, mitigation, correctif, traces d'exploitation, commandes pour un composant hors paquet) à partir de ces seules preuves, sans recherche web ; l'outil `cve_advisory` l'affiche aussitôt et la transmet à toutes les tâches. Un sujet inconnu de toutes les sources (compromission sans CVE, par exemple) garde l'ancienne voie : recherche web, fiche « hors sources officielles », non vérifiée sans recherche web.
-- **Même fiche d'un run à l'autre** : la fiche est gardée dans `~/.local/state/clotr/cve/<ID>.json` avec l'empreinte des faits de chaque source. Au run suivant, si aucune source n'a changé (EPSS et dates de mise à jour exclus, source en échec ignorée), la fiche est reprise mot pour mot, sans appel au modèle de langage pour le tri (« fiches reprises, sources officielles inchangées »), seuls l'EPSS et les numéros de preuve étant actualisés. Si une source a changé, `t0` reçoit la fiche précédente et la liste des changements (nouvelle version corrigée, entrée au catalogue KEV…) avec la consigne de ne modifier que ce qu'ils imposent ; la fiche et le rapport listent ces changements.
-- **Sources de distribution par client** : `cve.sources` (configuration) et `cve_sources` (client) restreignent les distributions interrogées (`redhat`, `ubuntu`, `debian`) ; pour un run qui cite des clients, l'union de leurs listes ; défaut : les trois.
-- **Statut de chaque actif en direct** : le planner découpe la vérification par périmètre (instance, cluster, groupe d'hôtes) ; les agents lancent d'abord les commandes de détection de la fiche, puis signalent chaque actif avec `cve_report` (preuves `[Exxx]` existantes obligatoires, celle du test déterminant en premier ; `asset_type` obligatoire : `host`, `workload`, `image` ou `service` ; `os` : la distribution lue dans `/etc/os-release`) dès que son statut est établi, affiché aussitôt au-dessus du tableau de progression : ✅ sain (une preuve couvre le sujet : composant absent de l'inventaire, version corrigée), 🚨 vulnérable ou exposé (version touchée ou malveillante, ligne en rouge), ☠️ compromis (indicateur de compromission observé, ligne en rouge), ❓ indéterminé (binaire absent du PATH, image non inspectée, accès refusé), avec ce qui manque. Pour un actif vulnérable ou ☠️, `exposure` et `conditions` sont obligatoires. Les valeurs de `exposure` : `exposed` (🚨, prérequis d'exploitation réunis), `unmeasured` (🚨, prérequis non mesurés), `limited` (🟠, fonction touchée active mais accès restreint : réseau interne, authentification) et `neutralized` (🟡, fonction touchée désactivée par la configuration actuelle : non exploitable en l'état, de nouveau exploitable si la configuration change). `conditions` (ce qui a été mesuré : option activée, port publié sur internet ou seulement sur le réseau d'administration) est la base de l'arbitrage du rapport. Un actif re-signalé change de statut (« était ❓ »). Les statuts sont transmis aux autres tâches, enregistrés en mémoire de session (`kind: cve`) et dans l'audit (`cve_advisory`, `cve_report`). Une tâche qui accumule 4 sorties d'outils de vérification sans signaler reçoit de clotr, à l'étape suivante, un rappel de signaler les actifs déjà établis avant toute autre vérification (audit `cve_reminder`).
-- **Composant de l'hôte** : la fiche indique si le composant est fourni par l'hôte et partagé avec ses conteneurs (`host_component`, obligatoire), comme le noyau. Son absence d'une image ne rend alors pas le conteneur sain : `cve_report` exige `asset_type` `host` ou `workload` et n'accepte ✅ ou 🚨 pour un workload que si ce statut est celui des hôtes de `runs_on`, déjà signalés. Les workloads signalés sont ceux qui réunissent une condition d'exposition de la fiche, mesurée dans leur propre réseau ; les hôtes apparaissent dans le détail (`sur a, b, c +N`).
-- **Rapport propre au mode** : le rapport suit le modèle CVE (voir Modèles de rapport), une partie par sujet : 1. Verdict (décompte des actifs et exposition des positifs, puis réponse et urgence justifiée par le score, l'exploitation connue et l'exposition mesurée) ; 2. La vulnérabilité (indicateurs, en quoi elle consiste avec les analyses des éditeurs, versions touchées et corrigées par distribution, détection avec les commandes, mitigation temporaire avec les textes des éditeurs, correctif) ; 3. Actifs positifs (un récapitulatif actif, exposition, version corrigée s'il y en a plusieurs, puis une fiche par actif : type et distribution, version trouvée, version corrigée pour sa distribution, exposition mesurée, test déterminant et autres vérifications avec leur preuve ; puis l'arbitrage par actif et la priorité qui en découle) ; 4. Actifs indéterminés (une fiche par actif : ce qui manque, vérifications faites ; puis comment conclure) ; 5. Actifs négatifs (regroupés par type d'élément puis par périmètre, avec les tests lancés et leurs preuves, et un paragraphe par type sur ce qui a été testé, sans liste élément par élément) ; 6. Plan d'action par actif positif ou groupe identique (pourquoi positif, mitigation immédiate, correctif définitif, vérification) ; 7. Limites de l'analyse. Le tableau des distributions ne garde que les releases rencontrées sur les actifs (les autres restent dans les preuves). La sortie `--json` donne fiches (avec les faits des sources) et statuts dans `cve`.
-- **Indicateurs expliqués** : chaque score CVSS est donné avec son niveau (aucun, faible, moyen, élevé, critique) et son vecteur en clair (par le réseau ou en local, complexité, authentification, action d'un utilisateur), les scores identiques des différentes sources étant regroupés ; suivent la sévérité des éditeurs, CISA KEV (présente depuis, échéance, usage par rançongiciel ; ou absente du catalogue), l'exploitation SSVC (aucune, preuve de concept, exploitée) et l'EPSS (« 99,5 % de probabilité d'exploitation sous 30 jours (99,9e percentile, mesure du …) », jamais arrondi à 100 %), calculés par clotr à partir des valeurs brutes, et un encadré « Lire les indicateurs » qui explique chacun.
-- **Élévation à la demande** : les outils au-delà du niveau d'accès d'une instance (jusqu'à `create`) sont proposés aux agents, marqués « soumis à l'autorisation de l'utilisateur ». Chaque appel est soumis sur le terminal avec l'instance, son niveau, la tâche, l'outil et ses arguments : `o` l'autorise pour cet appel, `t` relève le niveau de l'instance pour le reste du run, toute autre réponse le refuse (l'agent signale alors l'actif ❓). Sans terminal, refusé. Décisions dans l'audit (`access_escalation`). Les règles `commands` s'appliquent en plus.
-- **Récapitulatif des positifs** : en plus du rapport complet, chaque rapport CVE (`run`, `session --synthesize`, et `session --export` sur un tour CVE) produit un récapitulatif Markdown à coller dans un ticket ou une messagerie. Il contient une fiche par entrée du plan d'action, c'est-à-dire par actif positif ou groupe d'actifs identiques. Le titre de chaque fiche donne l'icône, la CVE et les actifs. Ses puces donnent l'état si l'on ne touche à rien (🚨, 🟠 ou 🟡), pourquoi l'actif est positif, la mitigation immédiate (contournement en attendant le correctif) et le correctif définitif (version, patch ou image qui supprime la vulnérabilité). Les textes sont repris en entier ; seules les références de preuves sont retirées, et les conditions mesurées actif par actif restent dans le rapport. Les CVE sans positif sont citées après les fiches. Une liste ❓ donne les actifs indéterminés, ceux qui n'ont pas pu être vérifiés, avec ce qui a manqué ; elle regroupe en une ligne les actifs d'un même périmètre à partir de trois. Le récapitulatif est écrit dans le tour sous le nom `<CLIENT>-CVE-<identifiant>-RECAP-<AAAAMMJJ>.md` et copié sous le même nom dans le répertoire courant, dont le chemin est affiché. Avec `--export pdf|docx`, le document du rapport CVE est de même copié dans le répertoire courant sous `<CLIENT>-CVE-<identifiant>-<AAAAMMJJ>.pdf|docx`, sauf si `-o` donne un autre chemin. Pour un rapport antérieur au modèle qui demande « Pourquoi positif », la puce reprend la précision du titre de l'entrée ou ce qui a été trouvé sur l'actif.
-- **Ctrl-C pour conclure**, comme en mode incident.
-
-Pour une compromission, le plan d'action prévoit, pour chaque actif exposé ou compromis, le retrait de la version malveillante, la rotation des secrets que le composant a pu lire et la recherche des traces sur la période d'exposition.
-
-`--cve` est incompatible avec `--incident`, `--panic`, `--direct` et `--chat`.
-
-### Mode DAT et schéma d'architecture
-
-`run --dat <variante>` rédige le document d'architecture technique (DAT) du périmètre de la demande, sans question : clotr connaît déjà les clients, projets et instances, IaC (templates dont une cible est de type `iac`) et réelles. `run --diagram <variante>` produit seulement les schémas d'architecture, avec la liste des composants et des flux. Rien n'est modifié ni investigué : c'est un relevé factuel.
-
-```sh
-clotr run --dat drift "DAT du projet data de acme"
-clotr run --diagram clean "schéma d'architecture de acme"
-```
-
-| Variante | Sources | Document |
-|---|---|---|
-| `iac` | instances IaC du périmètre seules (erreur s'il n'y en a pas) | état déclaré par le code |
-| `drift` | instances IaC et réelles | état réel, avec une section des écarts entre l'IaC et le réel (constats `[ÉCART]`, déclaré et observé avec leurs preuves) |
-| `clean` | instances IaC et réelles | état réel complété par l'IaC, sans écart, sans identifiant de preuve ni annexe des preuves : version à remettre au client |
-
-Il n'y a pas de variante par défaut : envoyer un document avec ou sans écarts est un choix explicite. Sans instance IaC dans le périmètre, `drift` et `clean` le signalent et décrivent l'état réel seul.
-
-- **Plan** : construit par clotr, sans planner, identique d'un run à l'autre : une tâche par instance IaC, qui réunit le dépôt et ce qu'il décrit (`describes` de l'instance, voir Configuration) pour lire le déclaré et l'observé dans la même tâche (le dépôt seul avec `iac`) ; puis une tâche par instance réelle qu'aucun dépôt ne décrit en entier, hors cibles déjà décrites (`describes: k8s-a/prod` laisse à k8s-a ses autres contextes). Les instances dont le template porte `architecture: false` (alertes, tickets) n'ont pas de tâche. Le nombre de tâches n'est pas borné par `limits.max_tasks`. En affinage de session (`run -s`), le planner choisit les seuls faits nouveaux à collecter, et clotr ajoute une tâche pour chaque instance qu'il oublie (audit `plan_covered`). Les agents relèvent de façon exhaustive (chaque racine de code, chaque composant sur chaque élément pair, accès d'exploitation), en constats `[INFO]`.
-- **Schéma** : après les tâches, une étape dédiée, seule à disposer des outils du template de schéma (`diagram.template`), construit une spec par cloud ou plateforme, et par service partagé (stockage de fichiers, annuaire), à partir des constats et des preuves, puis la rend jusqu'à ce qu'elle ne produise plus d'avertissement. Le premier schéma s'appelle `architecture`, les suivants `architecture-<sujet>`. Sans template de schéma, le document est produit sans figure.
-- **Rédaction** : le DAT suit le modèle `dat` (introduction, architecture globale avec les figures, accès et identités, IaC, réseau, sécurité réseau, calcul, plateformes, données, secrets, exploitation, périmètre non couvert, écarts en `drift`), rédigé section par section en parallèle ; le schéma seul suit le modèle `diagram`. Une section réservée à une variante (`<!-- variant: drift -->` dans le modèle) est retirée des autres, et les sections sont renumérotées.
-- **Affinage** : `run -s` reprend le mode et la variante ; quand la demande ne porte que sur le rendu ou la rédaction, le plan peut être vide et seule l'étape de schéma puis la rédaction tournent, à partir de la mémoire et des preuves des tours précédents.
-
-`--dat` et `--diagram` sont incompatibles entre eux et avec `--incident`, `--panic`, `--change`, `--cve`, `--ticket`, `--chat` et `--direct`. Les images du tour sont passées au template de document de `--export`.
-
-### Modèles de rapport
-
-La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour les runs sans mode, `incident` pour `--incident` et `--panic`, `change` pour `--change`, `upgrade` pour `--upgrade`, `watch` pour `--watch`, `minutes` pour `--minutes`, `cve` pour `--cve`, `dat` pour `--dat` et `diagram` pour `--diagram`. Le bloc `{{diagram}}` des modèles `dat` et `diagram` reçoit les figures du tour. Les modèles `incident` et `change` ont les blocs `{{ticket}}` (en-tête du ticket de la demande, ou du ticket probable) et `{{tickets.related}}` (tableau des tickets liés), retirés quand il n'y a pas de ticket. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
-
-`report_models` remplace un modèle embarqué par un fichier, par mode :
-
-```yaml
-report_models:
-  cve: ~/.config/clotr/report-cve.md
-```
-
-### Réponse directe
-
-`run --direct` court-circuite le planner : un seul agent répond directement en Markdown, avec tous les outils, sans sous-agents, vérification des constats ni synthèse. L'agent identifie d'abord la source qui couvre la demande et n'utilise que ses outils ; si aucune source connectée ne la couvre, il le dit sans explorer. Comme en mode planifié, une instance que la demande ne mentionne pas ne lui est pas proposée (voir Activation d'une instance). Il garde le contrôle de progression (`stall_steps`, `max_steps`), les preuves citées `[Exxx]` avec leur annexe et le marquage des lignes appuyées sur une seule note de mémoire. Par défaut, il prend le rôle outillé de tier le plus léger (`collector` avec les rôles par défaut) ; `--direct=analyst` choisit un autre rôle. Le tour est enregistré dans la session comme un `run` : `run -s <session>` permet ensuite d'affiner, avec ou sans `--direct`.
-
-### Conversation
-
-`run --chat [demande]` ouvre un écran plein terminal (écran alternatif) sur une session, nouvelle ou reprise avec `-s`. Chaque échange est un tour de la session : mêmes outils, preuves, mémoire et enregistrement qu'un `run`. Les connecteurs (MCP, instances) sont préparés une fois pour toute la conversation, et les identifiants saisis restent en mémoire jusqu'à la fin.
-
-Pendant un tour, le tableau de progression s'affiche sous la demande, puis la réponse s'écrit en direct (texte du synthesizer, ou de l'agent avec `--direct`), mise en forme comme ci-dessus. Les lignes écrites sur stderr (avertissements, activation d'une instance) s'affichent sous le tableau, et le bilan du tour (modèles, coût, preuves, chemin du `report.md`) sous la réponse. `max_run_cost` s'applique à chaque tour.
-
-| Touche | Effet |
-|---|---|
-| `r` | répondre : ouvre la saisie pour le tour suivant |
-| `entrée` / `alt+entrée` (ou `ctrl+j`) | envoyer / nouvelle ligne |
-| `c` | copie la dernière réponse en Markdown dans le presse-papiers : `wl-copy` (Wayland), `xclip` ou `xsel` (X11), `pbcopy`, `clip.exe`, sinon séquence OSC 52 du terminal |
-| `↑` `↓` `pgup` `pgdown` `home` `end` | défilement |
-| `ctrl+c` | interrompt le tour en cours (deux fois : quitte) ; hors tour, quitte |
-| `q`, `échap` | quitte |
-
-`--chat` exige un terminal et n'accepte ni `--json` ni `-o`.
-
-## Langues
-
-Deux réglages indépendants :
-
-- **Réponses et rapports** : `language` (config) ou `--lang`.
-
-  | Valeur | Rapport, constats, objectifs (modèles) |
-  |---|---|
-  | `auto` | langue de la demande |
-  | `fr` | français, consigne explicite aux modèles |
-  | `en` | anglais, consigne explicite aux modèles |
-
-  Une session mémorise cette langue : un tour d'affinage sans `--lang` reprend celle de la session. Les titres ajoutés par clotr au rapport (annexe des preuves) suivent ce réglage, en anglais pour `auto`.
-
-- **Interface** : `ui_language` (config) ou `--ui-lang`, `en` (défaut) ou `fr`. Elle couvre tout ce que clotr affiche lui-même : aide des commandes, tableau de progression, bilan, `models`, `tools`, `plan`, `sessions`, `templates`, mode conversation, saisie des identifiants, erreurs et avertissements. Les messages sont regroupés dans `internal/i18n`.
-
-Restent dans leur langue d'origine : les consignes envoyées aux modèles et ce qu'ils lisent (description et sortie des outils, environnement affiché par `clotr tools`), les textes de la configuration et des templates (contextes, hints, messages des scripts), et les erreurs des fournisseurs et des systèmes interrogés.
-
-Une assertion de test de template qui porte sur un message du moteur (garde-fou http, chemin refusé…) dépend de la langue de l'interface : viser une partie commune aux deux langues (valeur citée, liste entre parenthèses).
-
-## Streaming
-
-Les appels LLM sont en streaming SSE (`stream: true` avec `stream_options.include_usage`) :
-- **réponse** : contenu, `reasoning_content` et fragments d'appels d'outils sont réassemblés au fil du flux ;
-- **progression** : le tableau affiche en direct `reasoning… ~N tok`, `writing… ~N tok` ou `preparing N tool call(s)…` ;
-- **texte** : en mode conversation, le texte de la réponse finale est affiché au fil du flux, sans les blocs `<think>` ;
-- **délais** : un appel est interrompu si le flux reste muet plus de `limits.idle_timeout`, ou s'il dépasse `limits.request_timeout` au total. Ces deux erreurs sont temporaires (nouvel essai, puis bascule) ;
-- **désactivation** : `providers[].stream: false` repasse un provider en mode classique. Un serveur qui ignore `stream` et répond en JSON est aussi accepté.
-
-## Budget
-
-`providers[].budget` déclare le budget de chaque provider. Les valeurs possibles sont :
-- **absent** : non déclaré ;
-- **`unlimited`** : provider illimité, pas de contrôle ;
-- **`{info_path, min_remaining, max_run_cost}`** : budget limité, suivi comme suit :
-  - avant le run, `GET <base sans /v1><info_path>` (défaut `/key/info`, format LiteLLM : `info.spend`, `info.max_budget`). Le provider est écarté si son reste est inférieur à `min_remaining` ;
-  - pendant le run, le coût de chaque appel est pris dans l'en-tête `x-litellm-response-cost` s'il est présent (mode non streaming). Sinon, il est estimé à partir de l'`usage` du flux et des prix par token de `/model/info` (`model_info: true`), et affiché avec `~`. Le provider est écarté si le coût cumulé du run atteint `max_run_cost` ;
-  - après chaque tâche, `/key/info` est relu pour suivre le solde de la clé. Le provider est écarté si son reste passe sous `min_remaining`. LiteLLM écrit la dépense en base par lots : le solde lu peut retarder de quelques secondes.
-
-`clotr models` affiche le statut et l'état du budget de chaque provider. À la fin du `run`, stderr affiche le coût par provider, ou « coût non communiqué » si le provider ne renvoie pas d'en-tête de coût.
-
-## Identification des requêtes
-
-Toutes les requêtes HTTP portent le User-Agent `clotr/<version>`. `providers[].session_header` envoie dans l'en-tête indiqué un identifiant stable par sous-agent. Exemple : `x-opencode-session`, exigé par OpenCode Go.
-
-## Audit
-
-Chaque `run` écrit `turns/NNN/audit.jsonl` dans sa session (et `plan` écrit `<audit.dir>/<AAAAMMJJ-HHMMSS>.jsonl`). Ce fichier contient :
-- `run_start` et `run_end` ;
-- `plan` ;
-- `llm_call` : tâche, modèle, étape, durée, tokens, outils demandés ;
-- `tool_call` : outil, arguments, durée, taille, erreur ;
-- `http_call` : requête HTTP d'un template (instance, connecteur, méthode, URL, statut, durée, taille) ;
-- `remote_exec` : commande SSH d'un template (instance, hôte, utilisateur, commande, durée, exit, taille) ;
-- `task_end`.
-
-À la fin du `run`, stderr affiche :
-- les modèles utilisés ;
-- ceux qui ne sont pas souverains ;
-- le chemin du fichier d'audit.
-
-`run_end` reprend la liste des modèles avec leur indicateur souverain.
-
-## Structure
-
-```
-cmd/clotr/              CLI (cobra)
-internal/config/        chargement et validation YAML
-internal/catalog/       découverte des modèles, profils, cache
-internal/router/        sélection et fallback par rôle
-internal/llm/           client /chat/completions, pool par provider
-internal/agent/         boucle tool-calling
-internal/orchestrator/  planner, DAG concurrent, synthèse, réponse directe
-internal/memory/        mémoire partagée
-internal/session/       sessions et tours
-internal/budget/        budget et coûts par provider
-internal/tools/         registre et outils files, mcp
-internal/template/      moteur de templates : chargement, paramètres, hôte Starlark, primitives, outils génériques, tests
-internal/access/        niveaux d'accès (read, exec, create) et motifs de commandes
-internal/cve/           mode CVE : fiches, cache des fiches, statuts des actifs, blocs du rapport
-internal/cve/sources/   sources officielles des CVE : collecte, extraction des faits, empreinte, commandes de détection
-internal/report/        modèles de rapport par mode, remplissage des blocs
-internal/dat/           modes DAT et schéma d'architecture : consignes, outils de l'étape de schéma, figures du tour
-internal/driver/ssh/    SSH : commandes fixes en lecture seule, argv quoté au niveau exec, chemins autorisés, known_hosts, chaîne de rebonds
-internal/tunnel/        tunnel d'un client : rebonds SSH et proxy SOCKS5 local
-internal/creds/         identifiants : variables d'environnement, Vault ou saisie
-internal/vault/         lecture d'un secret Vault (KV v1/v2) avec la configuration du poste
-internal/gitsync/       clone et avance rapide d'un dépôt git (templates de démarrage), retour arrière
-internal/audit/         journal JSONL
-internal/progress/      progression stderr, écran conversation
-internal/markdown/      rendu Markdown pour le terminal
-packaging/homebrew/     modèle de la formule Homebrew
-.github/workflows/      CI (vet, tests, cross) et release sur tag
-```
-
-## Limites connues
-
-- Aucune donnée n'est anonymisée avant envoi vers un modèle non souverain (`Boundary` = `Passthrough`). `--confidential` limite le run aux modèles souverains.
-- La mémoire partagée suit la session : elle n'est pas partagée entre sessions.
-- Les tâches du plan ne sont pas relancées après un échec ; seul le modèle bascule au sein d'une tâche.
-- fs est intégré au binaire et n'est pas un template.
+- Pas d'anonymisation avant envoi à un modèle non souverain (`Boundary` = `Passthrough`).
+- Mémoire partagée limitée à une session.
+- Tâches non relancées après un échec.
 - SSH : clés avec passphrase et agent SSH non supportés.
