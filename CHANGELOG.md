@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.89.1] - 2026-11-26
 
 ### Ajouté
 - Compte rendu de réunion : section « Suivi du compte rendu précédent » (statut de chaque action et point ouvert du dernier compte rendu reçu : traité, en cours, reporté, non abordé) et écarts avec un compte rendu déjà diffusé après la réunion dans les points non vérifiés.
