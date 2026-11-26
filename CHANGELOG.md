@@ -1,6 +1,6 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
-## [Unreleased]
+## [0.89.0] - 2026-11-26
 
 ### Modifié
 - Compte rendu de réunion (`--cr`) destiné aux participants, client compris : plus d'identifiant de preuve `[Exxx]` ni d'annexe des preuves (les passages se repèrent par leur horodatage), rien sur la façon dont il a été établi ; `--with-evidence` les rétablit. Ordre du jour dans la section Réunion (invitation, mail de préparation, compte rendu précédent), points de l'ordre du jour non abordés en points ouverts.
