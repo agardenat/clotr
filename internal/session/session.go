@@ -298,6 +298,8 @@ func (t Turn) name(suffix string) string {
 		kind = "DAT"
 	case t.Mode == "diagram":
 		kind = "DIAGRAM"
+	case t.Mode == "minutes":
+		kind = "CR"
 	default:
 		return "report"
 	}

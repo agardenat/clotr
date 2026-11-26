@@ -18,10 +18,11 @@ const (
 	ModeWatch    = "watch"
 	ModeDAT      = "dat"
 	ModeDiagram  = "diagram"
+	ModeMinutes  = "minutes"
 	ModeDocument = "document"
 )
 
-var Modes = []string{ModeDefault, ModeCVE, ModeIncident, ModeChange, ModeUpgrade, ModeWatch, ModeDAT, ModeDiagram}
+var Modes = []string{ModeDefault, ModeCVE, ModeIncident, ModeChange, ModeUpgrade, ModeWatch, ModeMinutes, ModeDAT, ModeDiagram}
 
 //go:embed models/*.md
 var embedded embed.FS

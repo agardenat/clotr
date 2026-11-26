@@ -53,7 +53,7 @@ type ModeSpec struct {
 	Checklist []string `yaml:"checklist"`
 }
 
-var ModeNames = []string{report.ModeUpgrade, report.ModeWatch}
+var ModeNames = []string{report.ModeUpgrade, report.ModeWatch, report.ModeMinutes}
 
 type Param struct {
 	Type        string            `yaml:"type"`

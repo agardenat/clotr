@@ -125,10 +125,11 @@ func TestReportName(t *testing.T) {
 		want string
 	}{
 		{Turn{Time: at, CVE: []string{"CVE-2026-114938"}, Clients: []string{"acme"}}, "ACME-CVE-2026-114938-20261119"},
-		{Turn{Time: at, CVE: []string{"cve-2026-1", "CVE-2026-2"}, Clients: []string{"acme", "beta"}}, "ACME-BETA-CVE-2026-1_2026-2-20261119"},
+		{Turn{Time: at, CVE: []string{"cve-2026-1", "CVE-2026-2"}, Clients: []string{"acme", "globex"}}, "ACME-GLOBEX-CVE-2026-1_2026-2-20261119"},
 		{Turn{Time: at, Mode: "dat", Clients: []string{"acme"}}, "ACME-DAT-20261119"},
 		{Turn{Time: at, Mode: "diagram", Clients: []string{"a b/c"}}, "A-B-C-DIAGRAM-20261119"},
 		{Turn{Time: at, Mode: "dat"}, "DAT-20261119"},
+		{Turn{Time: at, Mode: "minutes", Clients: []string{"acme"}}, "ACME-CR-20261119"},
 		{Turn{Time: at, Mode: "incident", Clients: []string{"acme"}}, "report"},
 	} {
 		if got := c.turn.ReportName(); got != c.want {
@@ -167,9 +168,9 @@ func TestReportNamedAndLegacy(t *testing.T) {
 
 func TestNamePrefix(t *testing.T) {
 	cases := map[string][]string{
-		"beta-nginx-":      {"beta", "nginx"},
+		"globex-nginx-":      {"globex", "nginx"},
 		"acme-certificat-": {"ACME", "Certificat"},
-		"beta-schema-":     {"beta", "schéma", ""},
+		"globex-schema-":     {"globex", "schéma", ""},
 		"cve-":            {"", "cve", "cve"},
 		"":                {"", " "},
 	}
@@ -186,10 +187,10 @@ func TestStartPrefixed(t *testing.T) {
 	if s.Started() {
 		t.Fatal("draft session already started")
 	}
-	if err := s.Start("beta-nginx-"); err != nil {
+	if err := s.Start("globex-nginx-"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(s.Name, "beta-nginx-") || !validName.MatchString(s.Name) {
+	if !strings.HasPrefix(s.Name, "globex-nginx-") || !validName.MatchString(s.Name) {
 		t.Fatalf("name %q", s.Name)
 	}
 	got, err := Open(root, s.Name)

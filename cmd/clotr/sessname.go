@@ -57,6 +57,8 @@ func (o *options) modeWord() string {
 		return report.ModeChange
 	case o.upgrade:
 		return report.ModeUpgrade
+	case o.minutes:
+		return i18n.T("session.word.minutes")
 	case o.ticketFlag != "":
 		return "ticket"
 	}

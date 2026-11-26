@@ -97,3 +97,25 @@ func TestInheritWatchMode(t *testing.T) {
 		}
 	}
 }
+
+func TestInheritMinutesMode(t *testing.T) {
+	m := session.Turn{N: 1, Mode: report.ModeMinutes}
+	for _, tc := range []struct {
+		name    string
+		in      options
+		minutes bool
+	}{
+		{"repris", options{}, true},
+		{"mode explicite", options{change: true}, false},
+		{"ticket explicite", options{ticketFlag: "TCK-1"}, false},
+	} {
+		o := tc.in
+		o.inheritMode(&session.Session{Turns: []session.Turn{m, {N: 2}}})
+		if o.minutes != tc.minutes {
+			t.Errorf("%s : minutes %v", tc.name, o.minutes)
+		}
+		if tc.minutes && o.mode() != report.ModeMinutes {
+			t.Errorf("%s : mode %q", tc.name, o.mode())
+		}
+	}
+}

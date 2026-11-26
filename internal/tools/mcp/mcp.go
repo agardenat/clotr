@@ -89,7 +89,7 @@ func transport(cfg config.MCPServer) (sdk.Transport, error) {
 		}
 		t := &sdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: hc, DisableStandaloneSSE: true}
 		if cfg.Auth == config.MCPAuthOAuth {
-			h, err := newOAuthHandler(cfg.Name, endpoint)
+			h, err := newOAuthHandler(cfg.Name, endpoint, headers)
 			if err != nil {
 				return nil, i18n.E("mcp.connect", cfg.Name, err)
 			}

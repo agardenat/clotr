@@ -35,6 +35,12 @@ func TestChangeAndTicketIncompatibleModes(t *testing.T) {
 		{&options{watch: true, ticketFlag: "auto"}, "--watch"},
 		{&options{watch: true, datFlag: "clean"}, "--watch"},
 		{&options{watch: true, direct: directAuto}, "--watch"},
+		{&options{minutes: true, incident: true}, "--minutes"},
+		{&options{minutes: true, upgrade: true}, "--minutes"},
+		{&options{minutes: true, watch: true}, "--minutes"},
+		{&options{minutes: true, ticketFlag: "auto"}, "--minutes"},
+		{&options{minutes: true, datFlag: "clean"}, "--minutes"},
+		{&options{minutes: true, chat: true}, "--minutes"},
 		{&options{watchFor: time.Minute}, "--watch-for"},
 		{&options{watch: true, watchEvery: -time.Second}, "--watch-for"},
 	} {
@@ -190,6 +196,22 @@ func TestUpgradeFlagAliases(t *testing.T) {
 		}
 		if v, _ := run.Flags().GetBool("upgrade"); !v {
 			t.Fatalf("%s ne positionne pas le mode upgrade", flag)
+		}
+	}
+}
+
+func TestMinutesFlagAliases(t *testing.T) {
+	for _, flag := range []string{"--minutes", "--cr"} {
+		root := newRoot()
+		run, _, err := root.Find([]string{"run"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := run.ParseFlags([]string{flag}); err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := run.Flags().GetBool("minutes"); !v {
+			t.Fatalf("%s ne positionne pas le mode minutes", flag)
 		}
 	}
 }

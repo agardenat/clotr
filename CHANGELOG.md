@@ -1,5 +1,13 @@
 # Changelog
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Versionnement : [SemVer](https://semver.org/lang/fr/).
+## [Unreleased]
+
+### Ajouté
+- Mode compte rendu de réunion : `run --minutes` (alias `--cr`) lit la réunion désignée par la demande à travers les instances de réunions du périmètre (transcription, participants, chat de la réunion) et rédige son compte rendu selon le nouveau modèle `minutes` : réunion, synthèse, décisions, actions avec responsable et échéance, points ouverts, risques, prochaine échéance, points non vérifiés, chaque point rattaché à son passage. Pas d'investigation de l'infrastructure, sauf vérification demandée. Un participant anonyme garde son alias sauf indice cité. Rapport nommé `<CLIENT>-CR-<AAAAMMJJ>.md`, mode repris par `run -s`, `modes.minutes` dans les templates.
+
+### Corrigé
+- Serveurs MCP en OAuth derrière une passerelle : les `headers` du serveur sont envoyés aussi sur les requêtes OAuth vers son hôte (la passerelle peut rattacher le jeton à l'utilisateur) ; méthode d'authentification du client prise dans les métadonnées du serveur quand l'enregistrement dynamique ne la donne pas (`client_secret_post` au lieu d'un en-tête refusé en 422) ; rafraîchissement refusé comme non pris en charge plus retenté à chaque appel, les appels partent sans jeton.
+
 ## [0.87.0] - 2026-11-24
 
 ### Ajouté

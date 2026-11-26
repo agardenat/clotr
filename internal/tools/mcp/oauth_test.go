@@ -272,3 +272,199 @@ func TestStretchExtendsAndRestores(t *testing.T) {
 		t.Fatalf("cause: %v", context.Cause(ctx))
 	}
 }
+
+type fakeGateway struct {
+	mu        sync.Mutex
+	base      string
+	challenge string
+	redirect  string
+	enrolled  bool
+	browsed   int
+	refreshes int
+	foreign   int
+}
+
+func newFakeGateway(t *testing.T) (*fakeGateway, *httptest.Server) {
+	t.Helper()
+	f := &fakeGateway{}
+	srv := sdk.NewServer(&sdk.Implementation{Name: "gw", Version: "1"}, nil)
+	srv.AddTool(&sdk.Tool{Name: "get_issue", InputSchema: objSchema, Annotations: &sdk.ToolAnnotations{ReadOnlyHint: true}}, handler("issue", false))
+	mcpHandler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return srv }, nil)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource/api/v1/files/mcp", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"resource": f.base + "/api/v1/files/mcp", "authorization_servers": []string{f.base + "/api/v1/files"}, "scopes_supported": []string{"Files.Read"}})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server/api/v1/files", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"issuer": f.base + "/api/v1/files", "authorization_endpoint": f.base + "/api/v1/files/authorize", "token_endpoint": f.base + "/api/v1/files/token",
+			"registration_endpoint": f.base + "/api/v1/files/register", "response_types_supported": []string{"code"},
+			"grant_types_supported": []string{"authorization_code", "refresh_token"}, "code_challenge_methods_supported": []string{"S256"},
+			"token_endpoint_auth_methods_supported": []string{"client_secret_post"},
+		})
+	})
+	mux.HandleFunc("/api/v1/files/register", func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		writeJSON(w, 200, map[string]any{"client_id": "files", "client_secret": "dummy", "redirect_uris": m["redirect_uris"]})
+	})
+	mux.HandleFunc("/api/v1/files/authorize", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.Header.Get("x-key") != "" {
+			f.mu.Lock()
+			f.foreign++
+			f.mu.Unlock()
+		}
+		f.mu.Lock()
+		f.challenge = q.Get("code_challenge")
+		f.redirect = q.Get("redirect_uri")
+		f.mu.Unlock()
+		http.Redirect(w, r, q.Get("redirect_uri")+"?code=c1&state="+url.QueryEscape(q.Get("state")), http.StatusFound)
+	})
+	mux.HandleFunc("/api/v1/files/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if r.Form.Get("grant_type") == "refresh_token" {
+			f.refreshes++
+			writeJSON(w, 400, map[string]any{"error": "unsupported_grant_type", "error_description": "the gateway refreshes stored per-user credentials itself"})
+			return
+		}
+		if r.Form.Get("client_id") != "files" || r.Form.Get("client_secret") != "dummy" {
+			writeJSON(w, 422, map[string]any{"detail": "client_id missing from body"})
+			return
+		}
+		sum := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
+		if r.Form.Get("code") != "c1" || base64.RawURLEncoding.EncodeToString(sum[:]) != f.challenge {
+			writeJSON(w, 400, map[string]any{"error": "invalid_grant"})
+			return
+		}
+		if r.Header.Get("x-key") == "k" {
+			f.enrolled = true
+		}
+		writeJSON(w, 200, map[string]any{"access_token": "ms", "token_type": "Bearer", "expires_in": 3600, "refresh_token": "rt"})
+	})
+	mux.HandleFunc("/api/v1/files/mcp", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		ok := f.enrolled && r.Header.Get("x-key") == "k"
+		f.mu.Unlock()
+		if !ok {
+			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer authorization_uri="%s/.well-known/oauth-authorization-server/api/v1/files"`, f.base))
+			writeJSON(w, 401, map[string]any{"detail": "Unauthorized"})
+			return
+		}
+		mcpHandler.ServeHTTP(w, r)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	f.base = ts.URL
+	return f, ts
+}
+
+func TestOAuthGatewayEnrollment(t *testing.T) {
+	dir := t.TempDir()
+	prevDir := oauthDir
+	oauthDir = func() string { return dir }
+	t.Cleanup(func() { oauthDir = prevDir })
+	f, ts := newFakeGateway(t)
+	prev := browser.Open
+	browser.Open = func(u string) {
+		f.mu.Lock()
+		f.browsed++
+		f.mu.Unlock()
+		go func() {
+			resp, err := http.Get(u)
+			if err == nil {
+				resp.Body.Close()
+			}
+		}()
+	}
+	t.Cleanup(func() { browser.Open = prev })
+	cfg := config.MCPServer{Name: "gitlab", URL: ts.URL + "/api/v1/files/mcp", Transport: "http", Auth: config.MCPAuthOAuth,
+		Headers: map[string]string{"x-key": "k"}, Timeout: config.Duration{Duration: 10 * time.Second}}
+
+	connectOnce(t, cfg)
+	f.mu.Lock()
+	enrolled, browsed, foreign := f.enrolled, f.browsed, f.foreign
+	f.mu.Unlock()
+	if !enrolled || browsed != 1 || foreign != 0 {
+		t.Fatalf("enrôlement=%v navigateur=%d clé hors transport MCP=%d", enrolled, browsed, foreign)
+	}
+
+	path := filepath.Join(dir, "gitlab.json")
+	var c oauthCache
+	b, _ := os.ReadFile(path)
+	if err := json.Unmarshal(b, &c); err != nil || c.Token == nil {
+		t.Fatalf("cache: %v", err)
+	}
+	c.Token.Expiry = time.Now().Add(-time.Hour)
+	b, _ = json.Marshal(c)
+	_ = os.WriteFile(path, b, 0o600)
+	connectOnce(t, cfg)
+	f.mu.Lock()
+	browsed, refreshes := f.browsed, f.refreshes
+	f.mu.Unlock()
+	if browsed != 1 || refreshes != 1 {
+		t.Fatalf("jeton expiré : navigateur=%d rafraîchissements=%d", browsed, refreshes)
+	}
+}
+
+func TestOAuthTransportHeadersOnlyToServerHost(t *testing.T) {
+	var got []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("x-key"))
+		w.WriteHeader(204)
+	}))
+	defer other.Close()
+	c := newOAuthClient("https://gateway.example/api/v1/files/mcp", map[string]string{"x-key": "k", "Authorization": "Bearer k"})
+	req, _ := http.NewRequest(http.MethodGet, other.URL, nil)
+	req.SetBasicAuth("files", "dummy")
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(got) != 1 || got[0] != "" {
+		t.Fatalf("clé envoyée à un autre hôte: %q", got)
+	}
+	tr := c.Transport.(*oauthTransport)
+	tr.host = strings.TrimPrefix(other.URL, "http://")
+	var auth string
+	other.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("x-key"))
+		auth = r.Header.Get("Authorization")
+		w.WriteHeader(204)
+	})
+	resp, err = c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got[1] != "k" || !strings.HasPrefix(auth, "Basic ") {
+		t.Fatalf("hôte du serveur: clé=%q Authorization=%q", got[1], auth)
+	}
+}
+
+func TestRegistrationAuthMethod(t *testing.T) {
+	body := []byte(`{"client_id":"files","client_secret":"dummy"}`)
+	cases := []struct {
+		supported []string
+		want      string
+	}{
+		{[]string{"client_secret_post"}, "client_secret_post"},
+		{[]string{"none"}, "none"},
+		{[]string{"client_secret_basic", "client_secret_post"}, ""},
+		{nil, ""},
+		{[]string{"private_key_jwt"}, ""},
+	}
+	for _, tc := range cases {
+		var m map[string]any
+		_ = json.Unmarshal(registrationAuthMethod(body, tc.supported), &m)
+		if got, _ := m["token_endpoint_auth_method"].(string); got != tc.want {
+			t.Errorf("%v: %q, attendu %q", tc.supported, got, tc.want)
+		}
+	}
+	kept := registrationAuthMethod([]byte(`{"client_id":"x","token_endpoint_auth_method":"client_secret_basic"}`), []string{"client_secret_post"})
+	if !strings.Contains(string(kept), `"client_secret_basic"`) {
+		t.Errorf("méthode renvoyée par le serveur remplacée: %s", kept)
+	}
+}

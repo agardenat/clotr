@@ -1,15 +1,20 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,6 +25,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/browser"
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/httpx"
 	"github.com/agardenat/clotr/internal/i18n"
 )
 
@@ -42,10 +48,93 @@ func Login(ctx context.Context, cfg config.MCPServer, version string) error {
 	return s.Close()
 }
 
-var (
-	oauthDir    = func() string { return filepath.Join(config.StateDir(), "clotr", "oauth") }
-	oauthClient = &http.Client{Timeout: 30 * time.Second, Transport: headerTransport{base: http.DefaultTransport}}
-)
+var oauthDir = func() string { return filepath.Join(config.StateDir(), "clotr", "oauth") }
+
+type oauthTransport struct {
+	base    http.RoundTripper
+	host    string
+	headers map[string]string
+	mu      sync.Mutex
+	methods []string
+	reg     string
+}
+
+func newOAuthClient(endpoint string, headers map[string]string) *http.Client {
+	host := ""
+	if u, err := url.Parse(endpoint); err == nil {
+		host = u.Host
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: &oauthTransport{base: http.DefaultTransport, host: host, headers: headers}}
+}
+
+func (t *oauthTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("User-Agent", httpx.UserAgent)
+	if r.URL.Host == t.host {
+		for k, v := range t.headers {
+			if !strings.EqualFold(k, "Authorization") {
+				r.Header.Set(k, v)
+			}
+		}
+	}
+	resp, err := t.base.RoundTrip(r)
+	if err != nil || resp.StatusCode/100 != 2 {
+		return resp, err
+	}
+	meta := strings.Contains(r.URL.Path, "/.well-known/oauth-authorization-server") || strings.Contains(r.URL.Path, "/.well-known/openid-configuration")
+	t.mu.Lock()
+	reg := r.Method == http.MethodPost && t.reg != "" && r.URL.String() == t.reg
+	methods := t.methods
+	t.mu.Unlock()
+	if !meta && !reg {
+		return resp, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	if meta {
+		var m struct {
+			Methods []string `json:"token_endpoint_auth_methods_supported"`
+			Reg     string   `json:"registration_endpoint"`
+		}
+		if json.Unmarshal(body, &m) == nil {
+			t.mu.Lock()
+			t.methods, t.reg = m.Methods, m.Reg
+			t.mu.Unlock()
+		}
+	} else {
+		body = registrationAuthMethod(body, methods)
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	return resp, nil
+}
+
+func registrationAuthMethod(body []byte, supported []string) []byte {
+	if len(supported) == 0 || slices.Contains(supported, "client_secret_basic") {
+		return body
+	}
+	var m map[string]any
+	if json.Unmarshal(body, &m) != nil {
+		return body
+	}
+	if v, _ := m["token_endpoint_auth_method"].(string); v != "" {
+		return body
+	}
+	for _, method := range []string{"client_secret_post", "none"} {
+		if slices.Contains(supported, method) {
+			m["token_endpoint_auth_method"] = method
+			if b, err := json.Marshal(m); err == nil {
+				return b
+			}
+			break
+		}
+	}
+	return body
+}
 
 type oauthCache struct {
 	URL          string           `json:"url"`
@@ -110,33 +199,45 @@ func (s *oauthStore) setToken(t *oauth2.Token) {
 	s.saveLocked()
 }
 
+var errRefreshRefused = &oauth2.RetrieveError{ErrorCode: "invalid_grant", ErrorDescription: "refresh grant refused by the authorization server"}
+
 type savingSource struct {
-	base  oauth2.TokenSource
-	store *oauthStore
+	base    oauth2.TokenSource
+	store   *oauthStore
+	refused atomic.Bool
 }
 
-func (s savingSource) Token() (*oauth2.Token, error) {
+func (s *savingSource) Token() (*oauth2.Token, error) {
+	if s.refused.Load() {
+		return nil, errRefreshRefused
+	}
 	t, err := s.base.Token()
 	if err != nil {
+		var re *oauth2.RetrieveError
+		if errors.As(err, &re) && re.ErrorCode == "unsupported_grant_type" {
+			s.refused.Store(true)
+			return nil, errRefreshRefused
+		}
 		return nil, err
 	}
 	s.store.setToken(t)
 	return t, nil
 }
 
-func refreshContext() context.Context {
-	return context.WithValue(context.Background(), oauth2.HTTPClient, oauthClient)
+func refreshContext(client *http.Client) context.Context {
+	return context.WithValue(context.Background(), oauth2.HTTPClient, client)
 }
 
-func newOAuthHandler(name, endpoint string) (auth.OAuthHandler, error) {
+func newOAuthHandler(name, endpoint string, headers map[string]string) (auth.OAuthHandler, error) {
 	store := loadStore(name, endpoint)
 	c := store.data
+	client := newOAuthClient(endpoint, headers)
 	hcfg := &auth.AuthorizationCodeHandlerConfig{
-		Client:              oauthClient,
+		Client:              client,
 		RequestRefreshToken: true,
 		NewTokenSource: func(ctx context.Context, oc *oauth2.Config, tok *oauth2.Token) (oauth2.TokenSource, error) {
 			store.setClient(oc)
-			src := savingSource{base: oc.TokenSource(ctx, tok), store: store}
+			src := &savingSource{base: oc.TokenSource(refreshContext(client), tok), store: store}
 			if _, err := src.Token(); err != nil {
 				return nil, err
 			}
@@ -152,7 +253,7 @@ func newOAuthHandler(name, endpoint string) (auth.OAuthHandler, error) {
 		hcfg.RedirectURL = c.RedirectURL
 		if c.Token != nil && c.TokenURL != "" {
 			oc := &oauth2.Config{ClientID: c.ClientID, ClientSecret: c.ClientSecret, Endpoint: oauth2.Endpoint{TokenURL: c.TokenURL, AuthStyle: c.AuthStyle}}
-			hcfg.InitialTokenSource = savingSource{base: oc.TokenSource(refreshContext(), c.Token), store: store}
+			hcfg.InitialTokenSource = &savingSource{base: oc.TokenSource(refreshContext(client), c.Token), store: store}
 		}
 	} else {
 		port, err := freePort()

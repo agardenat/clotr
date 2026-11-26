@@ -105,6 +105,7 @@ type Orchestrator struct {
 	Incident        bool
 	Change          bool
 	Upgrade         bool
+	Minutes         bool
 	Watch           *watch.Store
 	WatchFor        time.Duration
 	Tickets         *ticket.Store
@@ -664,6 +665,7 @@ func (o *Orchestrator) Plan(ctx context.Context, request string) (*Plan, error) 
 			lastErr = err
 		} else {
 			o.limitToTriage(&plan)
+			o.minutesRoles(&plan)
 			if dropped := pruneSameRoleDeps(&plan); len(dropped) > 0 {
 				o.Audit.Log("plan_deps_dropped", map[string]any{"dependencies": dropped})
 			}
@@ -755,6 +757,9 @@ func (o *Orchestrator) planInput(request string) string {
 		if o.procedure != nil {
 			user += "\n\nRésultat de l'étape " + procedureID + " (documentation lue avant la planification ; transmis à chaque tâche) :" + synthInput([]Result{*o.procedure})
 		}
+	}
+	if o.Minutes {
+		user += "\n\n" + minutesPlan
 	}
 	if o.DAT != nil {
 		user += "\n\n" + o.DAT.PlanRule()
@@ -1182,7 +1187,7 @@ func (o *Orchestrator) reportBlocks() (map[string]string, []string, bool) {
 	case o.CVE != nil:
 		blocks, order := o.CVE.Blocks()
 		return blocks, order, true
-	case o.Upgrade:
+	case o.Upgrade || o.Minutes:
 		return map[string]string{}, nil, true
 	case o.Incident || o.Change:
 		if o.Tickets == nil {
@@ -1539,6 +1544,9 @@ func (o *Orchestrator) modeRule() string {
 	if o.Upgrade {
 		rule += upgradeRule
 	}
+	if o.Minutes {
+		rule += minutesRule
+	}
 	if o.Watch != nil && o.capture != nil {
 		rule += watchRule
 	}
@@ -1612,6 +1620,8 @@ func (o *Orchestrator) reportMode() string {
 		return report.ModeChange
 	case o.Upgrade:
 		return report.ModeUpgrade
+	case o.Minutes:
+		return report.ModeMinutes
 	case o.Watch != nil:
 		return report.ModeWatch
 	case o.Incident:

@@ -38,7 +38,7 @@ Les profils sont évalués dans l'ordre : le premier glob qui correspond à `mod
 
 ## Sessions
 
-Chaque `run` ouvre une session dans `sessions.dir` (défaut `~/.local/state/clotr/sessions`). Son nom est fait du client cité, d'un mot qui résume le run et d'une partie aléatoire dans la langue de l'interface (`ui_language`), par exemple `acme-kerberos-fieffe-coquin`. Le client est trouvé comme pour la conformité : nom ou alias du client, d'un de ses projets, ou d'une de ses instances, dans la demande ou `-t`. Le mot vaut `cve`, `dat` ou `schema` dans ces modes. Sinon, il est demandé au modèle du rôle le plus rapide (anonymisation et souveraineté appliquées comme pour les agents, 30 secondes au plus) ; s'il manque, c'est le nom du mode (`incident`, `change`, `upgrade`, `suivi`, `ticket`) ou rien. Sans client cité, le nom commence par le mot, par exemple `kerberos-fieffe-coquin` :
+Chaque `run` ouvre une session dans `sessions.dir` (défaut `~/.local/state/clotr/sessions`). Son nom est fait du client cité, d'un mot qui résume le run et d'une partie aléatoire dans la langue de l'interface (`ui_language`), par exemple `acme-kerberos-fieffe-coquin`. Le client est trouvé comme pour la conformité : nom ou alias du client, d'un de ses projets, ou d'une de ses instances, dans la demande ou `-t`. Le mot vaut `cve`, `dat` ou `schema` dans ces modes. Sinon, il est demandé au modèle du rôle le plus rapide (anonymisation et souveraineté appliquées comme pour les agents, 30 secondes au plus) ; s'il manque, c'est le nom du mode (`incident`, `change`, `upgrade`, `suivi`, `cr`, `ticket`) ou rien. Sans client cité, le nom commence par le mot, par exemple `kerberos-fieffe-coquin` :
 
 ```
 <session>/
@@ -49,7 +49,7 @@ Chaque `run` ouvre une session dans `sessions.dir` (défaut `~/.local/state/clot
     evidence/         E001.txt… (sortie complète de chaque appel d'outil), index.json
 ```
 
-Le rapport d'un tour CVE, DAT ou schéma porte un nom parlant au lieu de `report.md` : `<CLIENT>-CVE-<identifiant>-<AAAAMMJJ>.md` (plusieurs CVE séparées par `_`, sans leur préfixe `CVE-`), `<CLIENT>-DAT-<AAAAMMJJ>.md`, `<CLIENT>-DIAGRAM-<AAAAMMJJ>.md`, avec les clients des instances du tour (plusieurs séparés par `-`, aucun si les instances n'en ont pas) et la date de début du tour ; les documents exportés dans le tour prennent le même nom.
+Le rapport d'un tour CVE, DAT, schéma ou compte rendu porte un nom parlant au lieu de `report.md` : `<CLIENT>-CVE-<identifiant>-<AAAAMMJJ>.md` (plusieurs CVE séparées par `_`, sans leur préfixe `CVE-`), `<CLIENT>-DAT-<AAAAMMJJ>.md`, `<CLIENT>-DIAGRAM-<AAAAMMJJ>.md`, `<CLIENT>-CR-<AAAAMMJJ>.md`, avec les clients des instances du tour (plusieurs séparés par `-`, aucun si les instances n'en ont pas) et la date de début du tour ; les documents exportés dans le tour prennent le même nom.
 
 `clotr run -s <session|last> "…"` ajoute un tour à une session existante pour l'affiner. Le nouveau tour démarre avec :
 - la mémoire de la session ;
@@ -184,7 +184,7 @@ Le moteur ne connaît aucun produit. Toute la logique propre à une cible (appel
 ### Format
 
 - `checklist` : liste des faits d'architecture que l'instance permet d'établir (ex. appairages, passerelles, objets nommés des règles de filtrage) ; en `--dat` et `--diagram`, l'objectif de chaque tâche reprend la liste de ses instances, et l'agent doit établir chaque point par un constat ou dire dans ses manques pourquoi il ne l'est pas ;
-- `modes` : consignes propres à un mode du run, par nom de mode (`upgrade`, `watch`) : `hints` (texte ajouté aux `hints` de l'instance) et `checklist` (points à relever, chacun établi par un constat ou signalé comme non relevé), présentés aux agents seulement quand le run est dans ce mode, par exemple les pages de documentation de mise à jour du produit et les versions à relever pour `--upgrade`, ou l'emplacement des logs de chaque maillon pour `--watch` ; un mode inconnu est refusé ;
+- `modes` : consignes propres à un mode du run, par nom de mode (`upgrade`, `watch`, `minutes`) : `hints` (texte ajouté aux `hints` de l'instance) et `checklist` (points à relever, chacun établi par un constat ou signalé comme non relevé), présentés aux agents seulement quand le run est dans ce mode, par exemple les pages de documentation de mise à jour du produit et les versions à relever pour `--upgrade`, ou l'emplacement des logs de chaque maillon pour `--watch` ; un mode inconnu est refusé ;
 - `architecture` : `false` pour une source qui ne décrit pas l'architecture (alertes, tickets) : ses instances n'ont pas de tâche dans le plan des modes `--dat` et `--diagram` (défaut true) ;
 - `min_version` : version minimale de clotr (`X.Y.Z`), vérifiée avant le reste du fichier : un clotr plus ancien ignore le template avec un avertissement explicite au lieu d'une erreur sur un champ inconnu (les builds hors release, `dev` ou `vX.Y.Z-…`, ne sont pas contrôlés) ;
 - `keywords` : termes qui, présents dans une demande, font proposer l'instance aux agents (en plus du nom de l'instance, du template et des cibles), voir Activation d'une instance ;
@@ -381,7 +381,7 @@ Ses paramètres reçoivent, comme une instance, les `params` globaux puis ceux d
 
 Un template `kind: document` met en forme le rapport pour `--export`. Il n'a ni `tools`, ni `targets`, ni `companions`, ni `files`, ni `env` ; ses `connectors`, facultatifs, sont de driver `mcp` ou `http` (service de génération de documents), avec `mcp.call` et `http.request` dans le script. Son script définit `render(doc)`, qui renvoie le contenu du `.docx` (`bytes`). Il est désigné par `report_export.template` ; `report_export.params` renseigne ses `params`.
 
-`doc` porte `markdown`, `title`, `mode` (`default`, `incident`, `change`, `cve`, `dat`, `diagram`, ou `document` pour `clotr export`), `images` (dict `{nom: image}` des images du tour citées par le rapport, `![…](nom.png)` : `data` en `bytes`, `format` `png` ou `jpeg`, `width` et `height` en pixels), `language` (`--lang` de l'export, sinon langue de la session, c'est-à-dire celle du run ; `auto` est résolu d'après le texte du rapport, hors blocs de code), `request`, `ticket`, `date` (`AAAA-MM-JJ`), `session` et `params`.
+`doc` porte `markdown`, `title`, `mode` (`default`, `incident`, `change`, `upgrade`, `watch`, `minutes`, `cve`, `dat`, `diagram`, ou `document` pour `clotr export`), `images` (dict `{nom: image}` des images du tour citées par le rapport, `![…](nom.png)` : `data` en `bytes`, `format` `png` ou `jpeg`, `width` et `height` en pixels), `language` (`--lang` de l'export, sinon langue de la session, c'est-à-dire celle du run ; `auto` est résolu d'après le texte du rapport, hors blocs de code), `request`, `ticket`, `date` (`AAAA-MM-JJ`), `session` et `params`.
 
 Sans connecteur, le script n'a pas accès au réseau ; il n'a jamais accès aux fichiers du poste. Il dispose des modules sans effet de bord (`json`, `yaml`, `re`, `time`, `math`, `base64`, `struct`, `sprintf`, `catch`, `jq`, `compact_json`) et de :
 
@@ -636,7 +636,7 @@ Répertoires par défaut sous Windows : `%AppData%\clotr` pour la configuration 
 | `web_search` | `policy` (`ask` par défaut, `allow`, `deny`), `mcp` (nom d'un serveur de `mcp`), `model` (`provider/modèle` à recherche native, utilisé sans serveur MCP utilisable) et `api` (`messages` ou `responses`, requis avec `model`). Voir Recherche web. |
 | `report_export` | `template` (template `kind: document`) et `params`. Voir Export du rapport en document. |
 | `diagram` | `template` (template `kind: diagram`) et `params` : rendu des schémas des modes `--dat` et `--diagram`. Voir Templates de schéma. |
-| `report_models` | modèle de rapport par mode (`default`, `cve`, `incident`, `change`, `dat`, `diagram`) : chemin d'un fichier Markdown qui remplace le modèle embarqué. Voir Modèles de rapport. |
+| `report_models` | modèle de rapport par mode (`default`, `cve`, `incident`, `change`, `upgrade`, `watch`, `minutes`, `dat`, `diagram`) : chemin d'un fichier Markdown qui remplace le modèle embarqué. Voir Modèles de rapport. |
 | `tickets` | `template` (template `kind: tickets`), `params`, `enabled` (défaut true) : outil de tickets des modes incident et demande de changement. Voir Templates de tickets et Tickets. |
 | `cve` | `sources` : distributions interrogées en mode CVE (`redhat`, `ubuntu`, `debian` ; défaut : les trois). Voir Mode CVE. |
 | `mcp` | `name`, `command`/`args`/`env` (stdio) ou `url`/`headers` (`transport: http` ou `sse`), `allow`, `deny`, `timeout`, `enabled` (défaut true ; false : connecté seulement par `-t mcp_<serveur>`), `auth` (`oauth` : connexion OAuth dans le navigateur, voir Serveurs MCP en OAuth). `${VAR}` est développé dans `args`, `env`, `url` et `headers`. Les entrées `mcp` d'opencode se transposent directement : `remote` devient `url` + `headers`, `local` devient `command` + `args`, `environment` devient `env`. `servers` : une entrée de passerelle qui expose plusieurs serveurs (un par alias) se développe en une entrée par élément `{alias, name, headers, auth, allow, deny, timeout, enabled}` : `{alias}` de `url` est remplacé par l'alias, ou, sans `{alias}`, l'en-tête `x-mcp-servers` porte l'alias ; `name` vaut par défaut l'alias (`_` remplacé par `-`) ; `headers` complètent ceux de l'entrée, `allow`/`deny` s'y ajoutent, les autres champs les remplacent. Le `name` de l'entrée de passerelle elle-même n'est pas un serveur. |
@@ -649,6 +649,9 @@ Avec `auth: oauth` (transport `http`, sans en-tête `Authorization`), clotr obti
 - au démarrage, quand le serveur répond 401, clotr lit ses métadonnées OAuth, s'enregistre comme client public (enregistrement dynamique, redirection vers `http://127.0.0.1:<port>/callback`), ouvre le navigateur sur la page d'autorisation et affiche son URL sur la sortie d'erreur. Il attend la validation jusqu'à 5 minutes, le délai `timeout` du serveur étant suspendu pendant ce temps ;
 - le client enregistré, le jeton et son jeton de rafraîchissement sont conservés dans `$XDG_STATE_HOME/clotr/oauth/<serveur>.json` (défaut `~/.local/state/clotr/oauth`, droits 600). Aux lancements suivants, le jeton est réutilisé puis rafraîchi sans navigateur ; le navigateur ne revient que si le rafraîchissement est refusé (jeton révoqué ou expiré) ;
 - le cache est ignoré si l'`url` du serveur change ; supprimer le fichier force un nouvel enregistrement.
+- les `headers` du serveur (clé d'API d'une passerelle, par exemple) sont envoyés aussi sur les requêtes OAuth (métadonnées, enregistrement, échange du code, rafraîchissement), seulement vers l'hôte de l'`url` du serveur, jamais vers un autre serveur d'autorisation ; une passerelle qui conserve elle-même le jeton de l'utilisateur rattache ainsi l'échange à son identité ;
+- quand l'enregistrement dynamique ne précise pas la méthode d'authentification du client et que le serveur n'annonce pas `client_secret_basic`, clotr retient la méthode annoncée dans ses métadonnées (`client_secret_post`, sinon `none`) ;
+- un rafraîchissement refusé comme non pris en charge (`unsupported_grant_type`) n'est plus retenté pendant le run : les appels partent sans jeton, ce qui suffit à une passerelle qui détient déjà le jeton de l'utilisateur ; un autre serveur répond 401 et la connexion est redemandée comme pour un rafraîchissement refusé.
 
 ```yaml
 mcp:
@@ -858,6 +861,7 @@ clotr run --access exec "version de PHP dans les pods du namespace web" -t prod
 | `--incident` (`run`) | tri avant le plan, causes affichées dès qu'un agent les signale, premier Ctrl-C pour conclure tout de suite, voir Mode incident |
 | `--panic` (`run`) | mode incident avec journal en direct des preuves, constats et lacunes, voir Mode panique |
 | `--cve[="<sujet>"]` (`run`) | mode CVE : fiches des CVE et GHSA de la demande, ou du sujet nommé (compromission sans CVE), statut de chaque actif en direct, élévation sur autorisation, voir Mode CVE |
+| `--minutes` (`run`) | compte rendu de réunion, voir Compte rendu de réunion ; alias `--cr` |
 | `--access read\|exec\|create` (`run`) | niveau d'accès de toutes les instances pour ce run, prioritaire sur `access` des clients, voir Niveaux d'accès |
 | `--all` (`models`) | affiche les chaînes de fallback complètes (par défaut : 3 premiers modèles) |
 
@@ -969,6 +973,22 @@ Chaque relevé est archivé en entier dans la preuve de la source. Le tableau af
 
 Une ligne écrite dans un fichier juste avant sa rotation, entre deux lectures, peut manquer : la capture le note à l'endroit de la rotation. `--watch` est incompatible avec `--incident`, `--panic`, `--change`, `--upgrade`, `--cve`, `--ticket`, `--dat`, `--diagram`, `--direct` et `--chat`.
 
+### Compte rendu de réunion
+
+`run --minutes` (alias `--cr`) rédige le compte rendu d'une réunion à partir de ce qui y a été dit et écrit, sans investiguer l'infrastructure. La demande désigne la réunion (client, sujet, date) ; les réunions sont lues par les instances du périmètre qui les exposent (un template de réunions par outil de visioconférence, avec sa transcription, ses participants et le chat de la réunion), par exemple :
+
+```sh
+clotr run --cr "compte rendu du comité projet acme du 5 novembre"
+```
+
+- le planner prévoit une tâche par réunion à lire, et une tâche de vérification d'un fait technique cité en réunion seulement si la demande la demande ; une réunion introuvable ou sans transcription n'est remplacée par aucune autre source et va dans les points à confirmer ;
+- les agents lisent la transcription entière (une sortie tronquée se relit par plages avec `evidence_read`) et en tirent un constat par décision, action (responsable et échéance quand elles sont dites), point ouvert, risque et prochaine échéance, chacun avec sa preuve et l'horodatage du passage ; ils distinguent ce qui est décidé de ce qui est proposé ;
+- un participant anonyme de la transcription (alias `@1`, `@2`…) garde son alias, sauf indice cité qui permet de le nommer (présentation, appel par son nom, message signé du chat qui reprend ses propos, candidat unique) ;
+- les `modes.minutes` des templates donnent les points à relever propres à l'outil de réunion ;
+- le rapport suit le modèle `minutes` : réunion (date, organisateur, présents et absents, source), synthèse, décisions, actions (responsable, échéance, passage), points ouverts, risques et blocages, prochaine échéance, points non vérifiés.
+
+`--minutes` est incompatible avec `--incident`, `--panic`, `--change`, `--upgrade`, `--watch`, `--cve`, `--ticket`, `--dat`, `--diagram`, `--direct` et `--chat`.
+
 ### Tickets
 
 Avec un outil de tickets configuré (`tickets`, template `kind: tickets`), les modes incident et demande de changement s'appuient sur les tickets :
@@ -1034,7 +1054,7 @@ Il n'y a pas de variante par défaut : envoyer un document avec ou sans écarts 
 
 ### Modèles de rapport
 
-La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour les runs sans mode, `incident` pour `--incident` et `--panic`, `change` pour `--change`, `upgrade` pour `--upgrade`, `watch` pour `--watch`, `cve` pour `--cve`, `dat` pour `--dat` et `diagram` pour `--diagram`. Le bloc `{{diagram}}` des modèles `dat` et `diagram` reçoit les figures du tour. Les modèles `incident` et `change` ont les blocs `{{ticket}}` (en-tête du ticket de la demande, ou du ticket probable) et `{{tickets.related}}` (tableau des tickets liés), retirés quand il n'y a pas de ticket. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
+La forme du rapport dépend du mode du run. Chaque mode a un modèle, embarqué dans clotr : `default` (conclusion, constats par sévérité, détail par périmètre, points non vérifiés, limites, recommandations) pour les runs sans mode, `incident` pour `--incident` et `--panic`, `change` pour `--change`, `upgrade` pour `--upgrade`, `watch` pour `--watch`, `minutes` pour `--minutes`, `cve` pour `--cve`, `dat` pour `--dat` et `diagram` pour `--diagram`. Le bloc `{{diagram}}` des modèles `dat` et `diagram` reçoit les figures du tour. Les modèles `incident` et `change` ont les blocs `{{ticket}}` (en-tête du ticket de la demande, ou du ticket probable) et `{{tickets.related}}` (tableau des tickets liés), retirés quand il n'y a pas de ticket. Un modèle est un squelette Markdown : des titres, des consignes de section en commentaires `<!-- … -->`, et des lignes `{{bloc}}` (par exemple `{{cve.<ID>.positives}}`) que clotr remplit après la rédaction avec des données établies (fiche issue des sources, tableaux des actifs, tests, preuves). Le modèle de langage recopie ces lignes et rédige autour ; clotr les remplace, retire les consignes, et ajoute en fin de rapport, sous « Données CVE », un bloc que le modèle aurait omis (audit `report_block_missing`) : aucune donnée établie ne peut manquer au rapport.
 
 `report_models` remplace un modèle embarqué par un fichier, par mode :
 
