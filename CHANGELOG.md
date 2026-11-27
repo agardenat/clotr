@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.90.2] - 2026-11-27
+- Correction : surcharge personnelle invalide, mise à jour de la configuration faite avec la configuration partagée seule et signalée, puis surcharge revalidée.
+
 ## [0.90.1] - 2026-11-27
 - Correction : référence vers une source de secrets désactivée signalée comme telle, plus envoyée à Vault.
 

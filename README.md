@@ -64,7 +64,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 - `language`, `ui_language` : langue des rapports, langue de l'interface.
 - `instances`, `params`, `templates` : cibles et paramètres par défaut.
 - `clients/<client>.yaml` : instances d'un client, projets, `vars`, `params`, `tunnel`, `access`, `compliance`.
-- `local/` : surcharge personnelle non versionnée.
+- `local/` : surcharge personnelle non versionnée ; invalide, ignorée et signalée pour la mise à jour de la configuration.
 - `vault` : adresse, connexion OIDC, cache d'identifiants.
 - `secrets` : sources de secrets globales, instances de templates `kind: secrets` chargées à chaque démarrage.
 - `mcp` : serveurs MCP (stdio, HTTP, SSE, OAuth, passerelle `servers`).

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -241,8 +242,11 @@ func runStartup(ctx context.Context, path string, cfg *config.Config, force, qui
 	if len(changed) == 0 {
 		return cfg, rep
 	}
-	next, cause := reloadAfterSync(path, before)
+	next, cause, local := reloadAfterSync(path, before)
 	if cause == "" {
+		if local != nil {
+			warn(i18n.T("cli.warn.local_dropped", local))
+		}
 		return next, rep
 	}
 	rep.rolledBack = true
@@ -264,21 +268,30 @@ func runStartup(ctx context.Context, path string, cfg *config.Config, force, qui
 	return cfg, rep
 }
 
-func reloadAfterSync(path string, before []string) (*config.Config, string) {
+func reloadAfterSync(path string, before []string) (*config.Config, string, error) {
 	next, err := config.Load(path)
+	var local *config.LocalError
+	if errors.As(err, &local) {
+		next, err = config.LoadShared(path)
+	} else {
+		local = nil
+	}
 	if err != nil {
-		return nil, err.Error()
+		return nil, err.Error(), nil
 	}
 	set, err := template.Load(next.Templates.Dir)
 	if err != nil {
-		return nil, err.Error()
+		return nil, err.Error(), nil
 	}
 	for _, wn := range set.Warnings {
 		if !slices.Contains(before, wn) {
-			return nil, wn
+			return nil, wn, nil
 		}
 	}
-	return next, ""
+	if local != nil {
+		return next, "", local
+	}
+	return next, "", nil
 }
 
 func short(rev string) string {
@@ -304,7 +317,13 @@ func cmdSync(ctx context.Context, o *options, w io.Writer) error {
 		return err
 	}
 	cfg, err := loadConfig(o)
-	if err != nil {
+	var local *config.LocalError
+	if errors.As(err, &local) {
+		if cfg, err = config.LoadShared(path); err != nil {
+			return local
+		}
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cli.warn.local_ignored", local))
+	} else if err != nil {
 		return err
 	}
 	if len(cfg.Startup) == 0 {
@@ -318,5 +337,31 @@ func cmdSync(ctx context.Context, o *options, w io.Writer) error {
 	if rep.failed > 0 {
 		return i18n.E("cli.err.sync_failed", rep.failed)
 	}
+	if local != nil {
+		if _, err := config.Load(path); err != nil {
+			return i18n.E("cli.err.local_invalid", err)
+		}
+		fmt.Fprintln(w, i18n.T("cli.sync.local_valid"))
+	}
 	return nil
+}
+
+func syncWithSharedConfig(o *options, path string, localErr error) (*config.Config, error) {
+	shared, err := config.LoadShared(path)
+	if err != nil || len(shared.Startup) == 0 {
+		return nil, localErr
+	}
+	fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cli.warn.local_ignored", localErr))
+	o.startupDone = true
+	ctx := o.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runStartup(ctx, path, shared, true, o.quiet, os.Stderr)
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, i18n.E("cli.err.local_invalid", err)
+	}
+	fmt.Fprintln(os.Stderr, i18n.T("cli.sync.local_valid"))
+	return cfg, nil
 }

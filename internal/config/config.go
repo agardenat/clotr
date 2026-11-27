@@ -623,6 +623,14 @@ func Resolve(flag string) (string, error) {
 	return filepath.Join(dir, "clotr", "config.yaml"), nil
 }
 
+type LocalError struct {
+	Err error
+}
+
+func (e *LocalError) Error() string { return e.Err.Error() }
+
+func (e *LocalError) Unwrap() error { return e.Err }
+
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -631,21 +639,40 @@ func Load(path string) (*Config, error) {
 	local := LocalDir(path)
 	over, err := readOverlay(filepath.Join(local, "config.yaml"), &Config{})
 	if err != nil {
-		return nil, err
+		return nil, localError(data, path, err)
 	}
 	merged := data
 	if over != nil {
 		if merged, err = mergeYAML(data, over); err != nil {
-			return nil, i18n.E("config.local", filepath.Join(local, "config.yaml"), err)
+			return nil, localError(data, path, i18n.E("config.local", filepath.Join(local, "config.yaml"), err))
 		}
 	}
 	c, err := parse(merged, ClientsDir(path), local)
-	if err != nil && !strings.Contains(err.Error(), local) {
-		if _, plain := parse(data, ClientsDir(path), ""); plain == nil {
-			return nil, i18n.E("config.local_merged", err, local)
-		}
+	if err == nil {
+		return c, nil
 	}
-	return c, err
+	if _, plain := parse(data, ClientsDir(path), ""); plain != nil {
+		return nil, err
+	}
+	if !strings.Contains(err.Error(), local) {
+		err = i18n.E("config.local_merged", err, local)
+	}
+	return nil, &LocalError{Err: err}
+}
+
+func localError(data []byte, path string, err error) error {
+	if _, plain := parse(data, ClientsDir(path), ""); plain != nil {
+		return err
+	}
+	return &LocalError{Err: err}
+}
+
+func LoadShared(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parse(data, ClientsDir(path), "")
 }
 
 func ClientsDir(configPath string) string {

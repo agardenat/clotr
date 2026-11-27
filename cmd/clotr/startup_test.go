@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/agardenat/clotr/internal/config"
 )
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -38,10 +40,13 @@ startup:
   - {name: conf, template: sync-conf, params: {url: %URL%}, every: 1h}
 `
 
-func TestStartupSyncAndRollback(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git absent")
-	}
+type startupRepo struct {
+	path, conf, cfgText string
+	push                func(string) string
+}
+
+func newStartupRepo(t *testing.T) startupRepo {
+	t.Helper()
 	base := t.TempDir()
 	t.Setenv("CLOTR_NO_STARTUP", "")
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(base, "cache"))
@@ -78,6 +83,15 @@ func TestStartupSyncAndRollback(t *testing.T) {
 		return git(t, work, "rev-parse", "HEAD")
 	}
 
+	return startupRepo{path: path, conf: conf, cfgText: cfgText, push: push}
+}
+
+func TestStartupSyncAndRollback(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git absent")
+	}
+	r := newStartupRepo(t)
+	path, conf, cfgText, push := r.path, r.conf, r.cfgText, r.push
 	head := push(cfgText + "language: fr\n")
 	var out strings.Builder
 	cfg, err := loadConfig(&options{config: path, ctx: context.Background()})
@@ -154,5 +168,35 @@ func TestStartupDisabled(t *testing.T) {
 	t.Setenv("CLOTR_NO_STARTUP", "1")
 	if !startupDisabled(&options{}) {
 		t.Fatal("CLOTR_NO_STARTUP")
+	}
+}
+
+func TestStartupSyncWithInvalidOverlay(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git absent")
+	}
+	r := newStartupRepo(t)
+	writeFile(t, filepath.Join(r.conf, "local", "config.yaml"), "secrets:\n  - name: store\n    params: {url: https://x}\n")
+	if _, err := loadConfig(&options{config: r.path, ctx: context.Background(), noStartup: true}); err == nil || !strings.Contains(err.Error(), "secrets[0].template") {
+		t.Fatalf("surcharge invalide sans la conf partagée à jour : %v", err)
+	}
+	head := r.push(r.cfgText + "secrets:\n  - {name: store, template: secret-store, enabled: false}\n")
+	cfg, err := loadConfig(&options{config: r.path, ctx: context.Background()})
+	if err != nil {
+		t.Fatalf("synchro avec la conf partagée seule : %v", err)
+	}
+	if git(t, r.conf, "rev-parse", "HEAD") != head || len(cfg.Secrets) != 1 || cfg.Secrets[0].Template != "secret-store" || cfg.Secrets[0].Params["url"] != "https://x" {
+		t.Fatalf("conf non mise à jour ou surcharge non appliquée : %+v", cfg.Secrets)
+	}
+
+	writeFile(t, filepath.Join(r.conf, "local", "config.yaml"), "secrets:\n  - name: other\n")
+	r.push(r.cfgText + "secrets:\n  - {name: store, template: secret-store, enabled: false}\nlanguage: fr\n")
+	var out strings.Builder
+	err = cmdSync(context.Background(), &options{config: r.path}, &out)
+	if err == nil || !strings.Contains(err.Error(), "secrets[1].template") || !strings.Contains(err.Error(), "à corriger") && !strings.Contains(err.Error(), "to fix") {
+		t.Fatalf("surcharge toujours invalide après la synchro : %v\n%s", err, out.String())
+	}
+	if shared, err := config.LoadShared(r.path); err != nil || shared.Language != "fr" {
+		t.Fatalf("conf partagée non mise à jour par clotr sync : %v", err)
 	}
 }

@@ -445,6 +445,10 @@ func loadConfig(o *options) (*config.Config, error) {
 		return nil, err
 	}
 	cfg, err := config.Load(path)
+	var local *config.LocalError
+	if errors.As(err, &local) && !startupDisabled(o) && !o.startupDone {
+		cfg, err = syncWithSharedConfig(o, path, err)
+	}
 	if err != nil {
 		return nil, err
 	}
