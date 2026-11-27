@@ -22,6 +22,8 @@ func registerSecretSources(cfg *config.Config, warn func(string)) {
 	for _, s := range cfg.Secrets {
 		if s.IsEnabled() {
 			active = append(active, s)
+		} else {
+			creds.DisableSecretSource(s.Name, i18n.E("cli.secrets.disabled"))
 		}
 	}
 	if len(active) == 0 {

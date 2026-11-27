@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.90.1] - 2026-11-27
+- Correction : référence vers une source de secrets désactivée signalée comme telle, plus envoyée à Vault.
+
 ## [0.90.0] - 2026-11-27
 - Ajout : section `secrets` de la configuration, sources de secrets globales par templates `kind: secrets` (`read(ref)`), chargées à chaque démarrage.
 - Ajout : références `<source>:<ref>` dans les champs `*_vault`, `vault:` explicite, sans préfixe toujours vers Vault.

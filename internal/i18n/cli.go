@@ -67,6 +67,7 @@ var cliMsgs = map[string]msg{
 	"cli.secrets.test.short":         {"Reads a secret reference and prints its length, never its value", "Lit une référence de secret et affiche sa longueur, jamais sa valeur"},
 	"cli.secrets.test.long":          {"Reads <source>:<reference> (or a Vault path#field) as clotr does for a *_vault field and prints OK with the length of the value, never the value, then the account a connector would deduce from it (field username or user next to it).", "Lit <source>:<référence> (ou un chemin#champ Vault) comme clotr le fait pour un champ *_vault et affiche OK avec la longueur de la valeur, jamais la valeur, puis le compte qu'un connecteur en déduirait (champ username ou user voisin)."},
 	"cli.secrets.account":            {"account deduced for a connector: %s", "compte déduit pour un connecteur : %s"},
+	"cli.secrets.disabled":           {"disabled in the configuration (enabled: false)", "désactivée dans la configuration (enabled: false)"},
 	"cli.secrets.ok":                 {"%s: OK (%d characters)", "%s : OK (%d caractères)"},
 	"cli.warn.secrets_off":           {"secret source %s: %v", "source de secrets %s : %v"},
 	"cli.sync.short":                 {"Runs the startup templates now (configuration and template updates)", "Exécute maintenant les templates de démarrage (mise à jour de la configuration et des templates)"},
