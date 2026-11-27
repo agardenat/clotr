@@ -3,6 +3,7 @@ package template
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -20,12 +21,14 @@ import (
 
 const oauthMargin = 2 * time.Minute
 
-var oauthKeys = []string{"token_url", "vault", "client_id", "client_secret", "scope"}
+var oauthKeys = []string{"token_url", "vault", "client_id", "client_secret", "scope", "grant", "username", "password_env", "password_vault", "form"}
 
 var oauthField = regexp.MustCompile(`\{([A-Za-z0-9_.-]+)\}`)
 
 type httpOAuth struct {
 	tokenURL, vault, clientID, clientSecret, scope string
+	grant, username, passEnv, passVault            string
+	form                                           map[string]string
 
 	mu       sync.Mutex
 	resolved *oauthRequest
@@ -49,6 +52,13 @@ type oauthState struct {
 }
 
 func newHTTPOAuth(o options) *httpOAuth {
+	if o.str("grant") == "password" {
+		h := &httpOAuth{tokenURL: o.str("token_url"), vault: o.str("vault"), clientID: o.str("client_id"), clientSecret: o.str("client_secret"), scope: o.str("scope"), grant: "password", username: o.str("username"), passEnv: o.str("password_env"), passVault: o.str("password_vault"), form: map[string]string{}}
+		for k, v := range o.sub("form") {
+			h.form[k] = fmt.Sprint(v)
+		}
+		return h
+	}
 	if o.str("vault") == "" {
 		return nil
 	}
@@ -73,8 +83,25 @@ func checkOAuthOptions(a options) error {
 			return i18n.E("tpl.http.oauth_key", k)
 		}
 	}
-	if o.str("vault") != "" && o.str("token_url") == "" {
-		return i18n.E("tpl.http.oauth_url")
+	switch o.str("grant") {
+	case "", "client_credentials":
+		for _, k := range []string{"username", "password_env", "password_vault", "form"} {
+			if _, ok := o[k]; ok {
+				return i18n.E("tpl.http.oauth_password_only", k)
+			}
+		}
+		if o.str("vault") != "" && o.str("token_url") == "" {
+			return i18n.E("tpl.http.oauth_url")
+		}
+	case "password":
+		if o.str("token_url") == "" {
+			return i18n.E("tpl.http.oauth_url")
+		}
+		if o.str("username") == "" || o.str("password_env") == "" && o.str("password_vault") == "" {
+			return i18n.E("tpl.http.oauth_password")
+		}
+	default:
+		return i18n.E("tpl.http.oauth_grant", o.str("grant"))
 	}
 	return nil
 }
@@ -89,6 +116,9 @@ func (o *httpOAuth) request(ctx context.Context) (*oauthRequest, error) {
 	fields := map[string]string{}
 	var ferr error
 	expand := func(s string) string {
+		if path == "" {
+			return s
+		}
 		return oauthField.ReplaceAllStringFunc(s, func(m string) string {
 			name := m[1 : len(m)-1]
 			if v, ok := fields[name]; ok {
@@ -105,6 +135,9 @@ func (o *httpOAuth) request(ctx context.Context) (*oauthRequest, error) {
 			return v
 		})
 	}
+	if o.grant == "password" {
+		return o.passwordRequest(ctx, expand, &ferr)
+	}
 	r := &oauthRequest{tokenURL: expand(o.tokenURL), form: url.Values{"grant_type": {"client_credentials"}}}
 	r.form.Set("client_id", expand(o.clientID))
 	r.form.Set("client_secret", expand(o.clientSecret))
@@ -115,6 +148,32 @@ func (o *httpOAuth) request(ctx context.Context) (*oauthRequest, error) {
 		return nil, ferr
 	}
 	r.key = r.tokenURL + "\x00" + r.form.Get("client_id") + "\x00" + r.form.Get("scope")
+	o.resolved = r
+	return r, nil
+}
+
+func (o *httpOAuth) passwordRequest(ctx context.Context, expand func(string) string, ferr *error) (*oauthRequest, error) {
+	r := &oauthRequest{tokenURL: expand(o.tokenURL), form: url.Values{"grant_type": {"password"}}}
+	r.form.Set("username", expand(o.username))
+	for _, k := range sortedKeys(o.form) {
+		if v := expand(o.form[k]); v != "" {
+			r.form.Set(k, v)
+		}
+	}
+	for k, v := range map[string]string{"client_id": o.clientID, "client_secret": o.clientSecret, "scope": o.scope} {
+		if v = expand(v); v != "" {
+			r.form.Set(k, v)
+		}
+	}
+	if *ferr != nil {
+		return nil, *ferr
+	}
+	p, err := creds.ResolveUser(ctx, r.form.Get("username"), o.passEnv, o.passVault, r.form.Get("username")+" ("+r.tokenURL+")")
+	if err != nil {
+		return nil, err
+	}
+	r.key = r.tokenURL + "\x00" + r.form.Encode()
+	r.form.Set("password", p.Pass)
 	o.resolved = r
 	return r, nil
 }

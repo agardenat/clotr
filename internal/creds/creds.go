@@ -15,7 +15,6 @@ import (
 	"github.com/muesli/cancelreader"
 
 	"github.com/agardenat/clotr/internal/i18n"
-	"github.com/agardenat/clotr/internal/vault"
 )
 
 type Pair struct {
@@ -108,7 +107,7 @@ func Reject(label, user, pass, reason string) {
 	Refused(label, user, reason)
 }
 
-var ReadVault = vault.Secret
+var ReadVault = readSecret
 
 func VaultUserFields(ref string) []string {
 	_, field, _ := strings.Cut(ref, "#")
@@ -116,7 +115,7 @@ func VaultUserFields(ref string) []string {
 	if field != "" && field != "password" && strings.Contains(field, "password") {
 		fields = append(fields, strings.Replace(field, "password", "username", 1), strings.Replace(field, "password", "user", 1))
 	}
-	return append(fields, "username")
+	return append(fields, "username", "user")
 }
 
 func ReadVaultUser(ctx context.Context, ref string) (string, error) {
@@ -156,15 +155,19 @@ var promptMu sync.Mutex
 var Prompter func(ctx context.Context, in *os.File, question string, secret bool) (string, error)
 
 func Resolve(ctx context.Context, userEnv, passEnv, passVault, label string) (Pair, error) {
-	return resolve(ctx, "", userEnv, passEnv, passVault, label, false)
+	return resolve(ctx, "", userEnv, "", passEnv, passVault, label, false)
+}
+
+func ResolveRefs(ctx context.Context, userEnv, userVault, passEnv, passVault, label string) (Pair, error) {
+	return resolve(ctx, "", userEnv, userVault, passEnv, passVault, label, false)
 }
 
 func ResolveUser(ctx context.Context, user, passEnv, passVault, label string) (Pair, error) {
-	return resolve(ctx, user, "", passEnv, passVault, label, false)
+	return resolve(ctx, user, "", "", passEnv, passVault, label, false)
 }
 
 func ResolveSecret(ctx context.Context, passEnv, passVault, label string) (Pair, error) {
-	return resolve(ctx, "", "", passEnv, passVault, label, true)
+	return resolve(ctx, "", "", "", passEnv, passVault, label, true)
 }
 
 func Forget(label, user string) {
@@ -183,7 +186,7 @@ func userKey(label, user string) string {
 	return label + "\x00" + user
 }
 
-func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label string, secretOnly bool) (Pair, error) {
+func resolve(ctx context.Context, user, userEnv, userVault, passEnv, passVault, label string, secretOnly bool) (Pair, error) {
 	p := Pair{User: user}
 	if p.User == "" && userEnv != "" {
 		p.User = os.Getenv(userEnv)
@@ -193,6 +196,9 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 	}
 	if p.Pass != "" && (secretOnly || p.User != "") {
 		return p, nil
+	}
+	if InSource(ctx) {
+		return resolveInSource(ctx, p, userVault, passVault, label, secretOnly)
 	}
 	key := label
 	if user != "" {
@@ -207,21 +213,37 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		return Pair{}, err
 	}
 	var vaultErr error
-	if p.Pass == "" && passVault != "" && !skipVault[label] {
-		p.Pass, vaultErr = ReadVault(ctx, passVault)
+	vaultRef := passVault
+	if p.User == "" && userVault != "" && !secretOnly && !skipVault[label] {
+		u, err := ReadVault(ctx, userVault)
 		if err := ctx.Err(); err != nil {
 			return Pair{}, err
 		}
-		if vaultErr == nil && secretOnly {
+		if err == nil {
+			p.User = u
+		} else {
+			vaultErr, vaultRef = err, userVault
+		}
+	}
+	if p.Pass == "" && passVault != "" && !skipVault[label] {
+		var passErr error
+		p.Pass, passErr = ReadVault(ctx, passVault)
+		if err := ctx.Err(); err != nil {
+			return Pair{}, err
+		}
+		if passErr != nil {
+			vaultErr, vaultRef = passErr, passVault
+		}
+		if passErr == nil && secretOnly {
 			cache[key] = p
 			return p, nil
 		}
-		if vaultErr == nil && p.User == "" {
+		if passErr == nil && p.User == "" && vaultErr == nil {
 			if u, err := ReadVaultUser(ctx, passVault); err == nil {
 				p.User = u
 			}
 		}
-		if vaultErr == nil && p.User != "" {
+		if passErr == nil && p.User != "" {
 			cache[key] = p
 			cache[userKey(label, p.User)] = p
 			return p, nil
@@ -249,7 +271,7 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		missing = i18n.T("creds.missing_secret", label, orNone(passEnv))
 	}
 	if vaultErr != nil {
-		missing += i18n.T("creds.vault", passVault, vaultErr)
+		missing += i18n.T("creds.vault", vaultRef, vaultErr)
 	}
 	tty, err := OpenTTY()
 	if err != nil {
@@ -272,7 +294,7 @@ func resolve(ctx context.Context, user, userEnv, passEnv, passVault, label strin
 		described[label] = true
 	}
 	if vaultErr != nil {
-		notice += i18n.T("prompt.vault_failed", label, passVault, vaultErr)
+		notice += i18n.T("prompt.vault_failed", label, vaultRef, vaultErr)
 	}
 	if storeErr != nil {
 		notice += i18n.T("prompt.store_failed", label, storeErr)

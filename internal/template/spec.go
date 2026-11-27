@@ -237,6 +237,18 @@ func (t *Template) validate() error {
 		} else if _, err := regexp.Compile(t.IDPattern); err != nil {
 			fail(i18n.T("tpl.spec.tickets_pattern_bad", err))
 		}
+	case KindSecrets:
+		if t.Script == "" {
+			fail(i18n.T("tpl.spec.secrets_script"))
+		}
+		if len(t.Tools) > 0 || len(t.Targets) > 0 || len(t.Companions) > 0 || len(t.Files) > 0 {
+			fail(i18n.T("tpl.spec.secrets_only"))
+		}
+		for _, c := range t.Connectors {
+			if c.Driver != "http" {
+				fail(i18n.T("tpl.spec.secrets_driver", c.Driver))
+			}
+		}
 	case KindDocument, KindDiagram:
 		if t.Script == "" {
 			fail(i18n.T("tpl.spec.document_script"))
@@ -250,7 +262,7 @@ func (t *Template) validate() error {
 			}
 		}
 	default:
-		fail(i18n.T("tpl.spec.kind", t.Kind, KindStartup+", "+KindTickets+", "+KindDocument+", "+KindDiagram))
+		fail(i18n.T("tpl.spec.kind", t.Kind, KindStartup+", "+KindTickets+", "+KindSecrets+", "+KindDocument+", "+KindDiagram))
 	}
 	if t.Kind != KindTickets && t.IDPattern != "" {
 		fail(i18n.T("tpl.spec.id_pattern_kind"))
@@ -325,6 +337,7 @@ func (t *Template) validate() error {
 const (
 	KindStartup  = "startup"
 	KindTickets  = "tickets"
+	KindSecrets  = "secrets"
 	KindMCPTools = "mcp"
 )
 
@@ -336,12 +349,16 @@ func (t *Template) Tickets() bool {
 	return t.Kind == KindTickets
 }
 
+func (t *Template) Secrets() bool {
+	return t.Kind == KindSecrets
+}
+
 func (t *Template) Diagram() bool {
 	return t.Kind == KindDiagram
 }
 
 func (t *Template) Special() bool {
-	return t.Startup() || t.Tickets() || t.Document() || t.Diagram()
+	return t.Startup() || t.Tickets() || t.Secrets() || t.Document() || t.Diagram()
 }
 
 func (t *Template) External() bool {

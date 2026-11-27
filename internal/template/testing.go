@@ -310,7 +310,7 @@ func (ti *testInstance) Freeze()               {}
 func (ti *testInstance) Truth() starlark.Bool  { return true }
 func (ti *testInstance) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable") }
 func (ti *testInstance) AttrNames() []string {
-	return []string{"call", "cleanup", "commands", "diagram_reference", "diagram_render", "diagram_shapes", "discover", "environment", "error", "fn", "follow", "git_calls", "mcp_calls", "questions", "render", "requests", "startup", "ticket_get", "ticket_search", "tools", "tracked"}
+	return []string{"call", "cleanup", "commands", "diagram_reference", "diagram_render", "diagram_shapes", "discover", "environment", "error", "fn", "follow", "git_calls", "mcp_calls", "questions", "render", "requests", "secret_read", "startup", "ticket_get", "ticket_search", "tools", "tracked"}
 }
 
 func (ti *testInstance) Attr(name string) (starlark.Value, error) {
@@ -543,6 +543,18 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 				out = append(out, map[string]any{"url": r.URL, "path": r.Path, "ref": r.Ref, "status": r.Status, "from": r.From, "to": r.To, "commits": r.Commits, "reason": r.Reason})
 			}
 			return toStarlark(out)
+		}), nil
+	case "secret_read":
+		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			var ref string
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "ref", &ref); err != nil {
+				return nil, err
+			}
+			v, err := ti.in.SecretRead(threadCtx(thread), ref)
+			if err != nil {
+				return nil, err
+			}
+			return starlark.String(v), nil
 		}), nil
 	case "ticket_get":
 		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

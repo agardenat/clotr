@@ -175,6 +175,11 @@ func (in *Instance) loadScript() error {
 			return i18n.E("tpl.star.document", in.T.Script)
 		}
 	}
+	if in.T.Secrets() {
+		if _, ok := globals["read"].(starlark.Callable); !ok {
+			return i18n.E("tpl.star.secrets", in.T.Script)
+		}
+	}
 	if in.T.Tickets() {
 		_, get := globals["get"].(starlark.Callable)
 		_, search := globals["search"].(starlark.Callable)

@@ -196,10 +196,10 @@ func TestResolveVaultUserField(t *testing.T) {
 		t.Fatalf("db_username prioritaire: %+v %v", p, err)
 	}
 	for ref, want := range map[string][]string{
-		"kv/x":                {"username"},
-		"kv/x#password":       {"username"},
-		"kv/x#token":          {"username"},
-		"kv/x#admin_password": {"admin_username", "admin_user", "username"},
+		"kv/x":                {"username", "user"},
+		"kv/x#password":       {"username", "user"},
+		"kv/x#token":          {"username", "user"},
+		"kv/x#admin_password": {"admin_username", "admin_user", "username", "user"},
 	} {
 		if got := VaultUserFields(ref); strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("%s: %v", ref, got)

@@ -413,7 +413,7 @@ func newRoot() *cobra.Command {
 		},
 	}
 
-	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, exportCmd, toolsCmd, templatesCmd, syncCmd, ver)
+	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, exportCmd, toolsCmd, templatesCmd, syncCmd, secretsCmd(o), ver)
 	localizeCobra(root)
 	return root
 }
@@ -458,6 +458,7 @@ func loadConfig(o *options) (*config.Config, error) {
 	}
 	applyVaultEnv(cfg.Vault)
 	creds.UseVaultStore(cfg.Vault.CredentialsCache)
+	registerSecretSources(cfg, func(msg string) { fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), msg) })
 	for _, l := range []struct {
 		flag string
 		v    int

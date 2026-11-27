@@ -23,6 +23,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/httpx"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/netx"
@@ -36,7 +37,7 @@ const (
 var sensitivePath = regexp.MustCompile(`(?i)keytab|secret|password|token`)
 
 type httpAuth struct {
-	userEnv, passEnv, passVault, label, header, scheme string
+	userEnv, userVault, passEnv, passVault, label, header, scheme string
 }
 
 type httpConn struct {
@@ -55,6 +56,7 @@ type httpConn struct {
 	client   *http.Client
 	levels   map[access.Level]*connLevel
 	via      *httpVia
+	proxyID  *url.Userinfo
 }
 
 func (hc *httpConn) credLabel(instance string) string {
@@ -66,7 +68,7 @@ func (hc *httpConn) credLabel(instance string) string {
 	return instance + " (" + hc.auth.label + ")"
 }
 
-var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "deny", "proxy", "proxy_port", "verify_tls", "ca_file", "ca_vault", "levels", "via"}
+var httpOptionKeys = []string{"base_url", "methods", "allow", "headers", "max_bytes", "timeout", "auth", "deny", "proxy", "proxy_port", "proxy_auth", "verify_tls", "ca_file", "ca_vault", "levels", "via"}
 
 func checkHTTPOptions(o options) error {
 	for k := range o {
@@ -100,27 +102,75 @@ func checkHTTPOptions(o options) error {
 			return i18n.E("tpl.http.via_key", k)
 		}
 	}
+	for k := range o.sub("proxy_auth") {
+		if !slices.Contains(proxyAuthKeys, k) {
+			return i18n.E("tpl.http.proxy_auth_key", k, strings.Join(proxyAuthKeys, ", "))
+		}
+	}
+	if pa := o.sub("proxy_auth"); len(pa) > 0 && o.str("proxy") == "" {
+		return i18n.E("tpl.http.proxy_auth_proxy")
+	}
 	a := o.sub("auth")
 	if _, ok := a["oauth2"]; ok {
 		return checkOAuthOptions(a)
 	}
 	for k := range a {
-		if !slices.Contains([]string{"user_env", "password_env", "password_vault", "label", "header", "scheme"}, k) {
+		if !slices.Contains([]string{"user_env", "user_vault", "password_env", "password_vault", "label", "header", "scheme"}, k) {
 			return i18n.E("tpl.http.auth_key", k)
 		}
 	}
 	if _, ok := a["scheme"]; ok && a.str("header") == "" {
 		return i18n.E("tpl.http.auth_scheme")
 	}
-	if a.str("header") != "" && a.str("user_env") != "" {
+	if a.str("header") != "" && (a.str("user_env") != "" || a.str("user_vault") != "") {
 		return i18n.E("tpl.http.auth_user")
 	}
 	return nil
 }
 
+var proxyAuthKeys = []string{"user", "user_env", "user_vault", "password_env", "password_vault", "label"}
+
+func (in *Instance) proxyUser(ctx context.Context, hc *httpConn) (*url.Userinfo, error) {
+	a := hc.opts.sub("proxy_auth")
+	if len(a) == 0 {
+		return nil, nil
+	}
+	in.mu.Lock()
+	id := hc.proxyID
+	in.mu.Unlock()
+	if id != nil {
+		return id, nil
+	}
+	label := in.Name + " (" + defaultStr(a.str("label"), "proxy") + ")"
+	var p creds.Pair
+	var err error
+	if u := a.str("user"); u != "" {
+		p, err = creds.ResolveUser(ctx, u, a.str("password_env"), a.str("password_vault"), label)
+	} else {
+		p, err = creds.ResolveRefs(ctx, a.str("user_env"), a.str("user_vault"), a.str("password_env"), a.str("password_vault"), label)
+	}
+	if err != nil {
+		return nil, err
+	}
+	id = url.UserPassword(p.User, p.Pass)
+	in.mu.Lock()
+	hc.proxyID = id
+	in.mu.Unlock()
+	return id, nil
+}
+
+func withProxyUser(px *url.URL, id *url.Userinfo) *url.URL {
+	if px == nil || id == nil {
+		return px
+	}
+	c := *px
+	c.User = id
+	return &c
+}
+
 func checkAuthOptions(o options) error {
 	for k := range o.sub("auth") {
-		if !slices.Contains([]string{"user_env", "password_env", "password_vault", "label", "hint"}, k) {
+		if !slices.Contains([]string{"user_env", "user_vault", "password_env", "password_vault", "label", "hint"}, k) {
 			return i18n.E("tpl.http.auth", k)
 		}
 	}
@@ -169,7 +219,7 @@ func newHTTPConn(name string, o options) (*httpConn, error) {
 	if a := o.sub("auth"); len(a) > 0 && a["oauth2"] != nil {
 		hc.oauth = newHTTPOAuth(a.sub("oauth2"))
 	} else if len(a) > 0 {
-		hc.auth = &httpAuth{userEnv: a.str("user_env"), passEnv: a.str("password_env"), passVault: a.str("password_vault"), label: defaultStr(a.str("label"), name), header: a.str("header"), scheme: a.str("scheme")}
+		hc.auth = &httpAuth{userEnv: a.str("user_env"), userVault: a.str("user_vault"), passEnv: a.str("password_env"), passVault: a.str("password_vault"), label: defaultStr(a.str("label"), name), header: a.str("header"), scheme: a.str("scheme")}
 	}
 	if hc.levels, err = newConnLevels(o); err != nil {
 		return nil, err
@@ -204,9 +254,13 @@ func (in *Instance) connectorCA(ctx context.Context, hc *httpConn) ([]byte, erro
 
 func (in *Instance) httpClient(ctx context.Context, hc *httpConn) (*http.Client, error) {
 	var ca []byte
+	var id *url.Userinfo
 	if hc.client == nil && in.transport == nil {
 		var err error
 		if ca, err = in.connectorCA(ctx, hc); err != nil {
+			return nil, err
+		}
+		if id, err = in.proxyUser(ctx, hc); err != nil {
 			return nil, err
 		}
 	}
@@ -231,7 +285,7 @@ func (in *Instance) httpClient(ctx context.Context, hc *httpConn) (*http.Client,
 	if err != nil {
 		return nil, err
 	}
-	tr, err := netx.TransportTLS(px, netx.TLS{Verify: verify, CAFile: config.ExpandHome(hc.opts.str("ca_file")), CAPEM: ca})
+	tr, err := netx.TransportTLS(withProxyUser(px, id), netx.TLS{Verify: verify, CAFile: config.ExpandHome(hc.opts.str("ca_file")), CAPEM: ca})
 	if err != nil {
 		return nil, err
 	}
@@ -288,10 +342,18 @@ func (in *Instance) httpClientFor(ctx context.Context, hc *httpConn, t *netx.TLS
 		t = &netx.TLS{Verify: true}
 	}
 	var ca []byte
-	if len(t.CAPEM) == 0 && in.transport == nil {
+	var id *url.Userinfo
+	if in.transport == nil {
 		var err error
-		if ca, err = in.connectorCA(ctx, hc); err != nil {
-			return nil, err
+		if len(t.CAPEM) == 0 {
+			if ca, err = in.connectorCA(ctx, hc); err != nil {
+				return nil, err
+			}
+		}
+		if proxy == "" {
+			if id, err = in.proxyUser(ctx, hc); err != nil {
+				return nil, err
+			}
 		}
 	}
 	in.mu.Lock()
@@ -326,7 +388,7 @@ func (in *Instance) httpClientFor(ctx context.Context, hc *httpConn, t *netx.TLS
 	if len(o.CAPEM) == 0 {
 		o.CAPEM = ca
 	}
-	tr, err := netx.TransportTLS(px, o)
+	tr, err := netx.TransportTLS(withProxyUser(px, id), o)
 	if err != nil {
 		return nil, err
 	}

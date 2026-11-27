@@ -72,6 +72,7 @@ type Config struct {
 	Instances    []Instance            `yaml:"instances"`
 	Startup      []Startup             `yaml:"startup"`
 	Tickets      *Tickets              `yaml:"tickets"`
+	Secrets      []SecretSource        `yaml:"secrets"`
 	Clients      []Client              `yaml:"-"`
 	Routing      Routing               `yaml:"routing"`
 	Sessions     SessionsConf          `yaml:"sessions"`
@@ -221,6 +222,17 @@ type Tickets struct {
 	Params   map[string]any `yaml:"params"`
 }
 
+type SecretSource struct {
+	Name     string         `yaml:"name"`
+	Template string         `yaml:"template"`
+	Enabled  *bool          `yaml:"enabled"`
+	Params   map[string]any `yaml:"params"`
+}
+
+func (s SecretSource) IsEnabled() bool {
+	return s.Enabled == nil || *s.Enabled
+}
+
 func (t *Tickets) IsEnabled() bool {
 	return t != nil && t.Template != "" && (t.Enabled == nil || *t.Enabled)
 }
@@ -238,6 +250,7 @@ type Shell struct {
 type ShellAuth struct {
 	User          string `yaml:"user"`
 	UserEnv       string `yaml:"user_env"`
+	UserVault     string `yaml:"user_vault"`
 	PasswordEnv   string `yaml:"password_env"`
 	PasswordVault string `yaml:"password_vault"`
 	Label         string `yaml:"label"`
@@ -1066,6 +1079,21 @@ func (c *Config) validate() error {
 	}
 	if c.Tickets != nil && c.Tickets.Template == "" {
 		fail(i18n.T("config.tickets_template"))
+	}
+	secretNames := map[string]bool{}
+	for i, s := range c.Secrets {
+		switch {
+		case !instanceName.MatchString(s.Name):
+			fail(i18n.T("config.secrets_name", i, s.Name))
+		case s.Name == "vault":
+			fail(i18n.T("config.secrets_reserved", i, s.Name))
+		case secretNames[s.Name]:
+			fail(i18n.T("config.secrets_dup", i, s.Name))
+		}
+		secretNames[s.Name] = true
+		if s.Template == "" {
+			fail(i18n.T("config.secrets_template", i))
+		}
 	}
 	terms := map[string]string{}
 	tunnelPorts := map[int]string{}

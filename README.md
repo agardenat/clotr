@@ -66,6 +66,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 - `clients/<client>.yaml` : instances d'un client, projets, `vars`, `params`, `tunnel`, `access`, `compliance`.
 - `local/` : surcharge personnelle non versionnée.
 - `vault` : adresse, connexion OIDC, cache d'identifiants.
+- `secrets` : sources de secrets globales, instances de templates `kind: secrets` chargées à chaque démarrage.
 - `mcp` : serveurs MCP (stdio, HTTP, SSE, OAuth, passerelle `servers`).
 - `web_search`, `report_export`, `diagram`, `report_models`, `tickets`, `cve`, `compliance`, `startup`, `min_version`.
 
@@ -84,6 +85,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 | `clotr session <nom\|last>` | rapport d'un tour, `--evidence`, `--synthesize`, `--export` |
 | `clotr export <fichier.md\|->` | Markdown vers `.docx` ou `.pdf` |
 | `clotr sync` | exécution des templates de démarrage |
+| `clotr secrets test <ref>` | lecture d'une référence de secret, longueur et compte déduit, jamais la valeur |
 
 ## Options de `run`
 
@@ -163,7 +165,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 - Activation d'une instance au premier appel, proposée seulement si la demande la cite.
 - Identifiants par variable, Vault ou saisie, demandés avant les tâches.
 - `checklist`, `modes`, `keywords`, `companions`, `hints`, `min_version`, `architecture`.
-- Kinds `startup` (`git.sync`), `tickets`, `document`, `diagram`.
+- Kinds `startup` (`git.sync`), `tickets`, `secrets`, `document`, `diagram`.
 - Tests sans réseau par `clotr templates test`.
 
 ### Accès
@@ -179,7 +181,10 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 
 - Vault KV v1/v2 avec la configuration du poste, connexion OIDC au démarrage.
 - Identifiants saisis conservés dans `cubbyhole/`.
-- `auth.oauth2` client credentials sur les connecteurs `http`.
+- Références `<source>:<ref>` vers une source de la section `secrets` dans tout champ `*_vault`.
+- `user_vault` : compte lu dans une référence, à côté de `password_vault`.
+- `auth.oauth2` client credentials ou password sur les connecteurs `http`.
+- `proxy_auth` : proxy authentifié sur les connecteurs `http`.
 - OAuth des serveurs MCP avec enregistrement dynamique.
 
 ### Autres

@@ -60,6 +60,13 @@ report_export:
 #   template: tracker
 #   params: {}
 
+# Sources de secrets globales (templates kind: secrets), chargées à chaque démarrage.
+# Référence dans tout champ *_vault : <name>:<ref>, ex. password_vault: "store:1234#password".
+# secrets:
+#   - name: store
+#     template: my-secret-store
+#     params: {url: "https://secrets.example", user: svc, password_vault: "kv/svc#password"}
+
 # Modèle de rapport par mode (default, cve, incident, change), à la place du modèle embarqué.
 # report_models:
 #   cve: ~/.config/clotr/report-cve.md

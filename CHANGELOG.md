@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+- Ajout : section `secrets` de la configuration, sources de secrets globales par templates `kind: secrets` (`read(ref)`), chargées à chaque démarrage.
+- Ajout : références `<source>:<ref>` dans les champs `*_vault`, `vault:` explicite, sans préfixe toujours vers Vault.
+- Ajout : `user_vault` sur les blocs `auth` et `proxy_auth`.
+- Ajout : `proxy_auth` sur les connecteurs `http`.
+- Ajout : `auth.oauth2` `grant: password` (`username`, `password_env`, `password_vault`, `form`).
+- Ajout : commande `clotr secrets test <ref>`.
+- Modification : compte déduit d'un secret aussi depuis le champ `user`.
+
 ## [0.89.1] - 2026-11-26
 - Ajout : compte rendu de réunion, suivi du compte rendu précédent et écarts avec un compte rendu déjà diffusé.
 

@@ -328,3 +328,24 @@ func TestInstanceDescribes(t *testing.T) {
 		}
 	}
 }
+
+func TestSecretSources(t *testing.T) {
+	base := "providers:\n  - name: a\n    base_url: http://x/v1\n"
+	c, err := Parse([]byte(base + "secrets:\n  - name: store\n    template: secret-store\n    enabled: false\n    params: {url: https://x}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Secrets) != 1 || c.Secrets[0].IsEnabled() || c.Secrets[0].Params["url"] != "https://x" {
+		t.Fatalf("secrets: %+v", c.Secrets)
+	}
+	for _, bad := range []string{
+		"secrets:\n  - name: vault\n    template: x\n",
+		"secrets:\n  - name: Store\n    template: x\n",
+		"secrets:\n  - name: a\n    template: x\n  - name: a\n    template: x\n",
+		"secrets:\n  - name: a\n",
+	} {
+		if _, err := Parse([]byte(base + bad)); err == nil {
+			t.Errorf("accepté:\n%s", bad)
+		}
+	}
+}

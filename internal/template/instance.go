@@ -351,7 +351,7 @@ func (in *Instance) Prepare(ctx context.Context) error {
 		if hc.auth.header != "" {
 			p, err = creds.ResolveSecret(ctx, hc.auth.passEnv, hc.auth.passVault, label)
 		} else {
-			p, err = creds.Resolve(ctx, hc.auth.userEnv, hc.auth.passEnv, hc.auth.passVault, label)
+			p, err = creds.ResolveRefs(ctx, hc.auth.userEnv, hc.auth.userVault, hc.auth.passEnv, hc.auth.passVault, label)
 		}
 		if err != nil {
 			return err
@@ -389,7 +389,7 @@ func (in *Instance) PrepareCredentials(ctx context.Context) error {
 	if user != "" {
 		_, err = creds.ResolveUser(ctx, user, a.str("password_env"), a.str("password_vault"), label)
 	} else {
-		_, err = creds.Resolve(ctx, a.str("user_env"), a.str("password_env"), a.str("password_vault"), label)
+		_, err = creds.ResolveRefs(ctx, a.str("user_env"), a.str("user_vault"), a.str("password_env"), a.str("password_vault"), label)
 	}
 	return err
 }
@@ -771,7 +771,7 @@ func newShellPool(name string, o options) (*ssh.Shell, error) {
 			if so.User != "" {
 				p, err = creds.ResolveUser(ctx, so.User, a.str("password_env"), a.str("password_vault"), label)
 			} else {
-				p, err = creds.Resolve(ctx, a.str("user_env"), a.str("password_env"), a.str("password_vault"), label)
+				p, err = creds.ResolveRefs(ctx, a.str("user_env"), a.str("user_vault"), a.str("password_env"), a.str("password_vault"), label)
 			}
 			var empty *creds.EmptyError
 			if errors.As(err, &empty) {
@@ -871,7 +871,7 @@ func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.En
 	if l.user == "" {
 		p, ok := in.creds[in.sshName]
 		if !ok {
-			if p, err = creds.Resolve(l.detail(ctx), a.str("user_env"), l.passEnv, l.passVault, l.label); err != nil {
+			if p, err = creds.ResolveRefs(l.detail(ctx), a.str("user_env"), a.str("user_vault"), l.passEnv, l.passVault, l.label); err != nil {
 				return ssh.Endpoint{}, nil, err
 			}
 		}
