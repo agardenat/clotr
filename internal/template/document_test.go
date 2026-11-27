@@ -232,9 +232,28 @@ func TestDocumentRules(t *testing.T) {
 	}
 }
 
+func TestDocumentConnectors(t *testing.T) {
+	yaml := docYAML + "connectors:\n  store:\n    driver: mcp\n    server: store\n  files:\n    driver: http\n    base_url: https://files.example.com\n    methods: [GET]\n"
+	tpl := writeTemplate(t, yaml, "def render(doc):\n    return mcp.call('store', 'make', {}) or http.request('files', 'GET', '/x')\n")
+	if _, err := NewInstance("doc", tpl, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDocumentSpecial(t *testing.T) {
 	tpl := writeTemplate(t, docYAML, "def render(doc):\n    return b''\n")
 	if !tpl.Document() || !tpl.Special() {
 		t.Fatal("document template must be special")
+	}
+}
+
+func TestDocumentProjects(t *testing.T) {
+	star := "def render(doc):\n    return json.encode([[p.name, p.label, p.client, p.client_label] for p in doc.projects])\n"
+	data, err := renderDoc(t, star, nil, DocumentInput{Projects: []DocumentProject{{Name: "P-1", Label: "Alpha", Client: "acme", ClientLabel: "ACME"}, {Name: "P-2"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `[["P-1","Alpha","acme","ACME"],["P-2","","",""]]` {
+		t.Fatalf("projets : %s", data)
 	}
 }

@@ -3,8 +3,10 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/session"
 )
 
@@ -121,7 +123,7 @@ func TestWriteRecapCopiesToWorkingDir(t *testing.T) {
 	s.Turns[0].CVE, s.Turns[0].Clients = []string{"CVE-2026-11111"}, []string{"acme"}
 	cwd := t.TempDir()
 	t.Chdir(cwd)
-	writeRecap(&options{}, s, 1, recapSource)
+	writeRecap(&options{}, nil, s, 1, recapSource)
 	kept, err := os.ReadFile(s.RecapPath(1, "md"))
 	if err != nil {
 		t.Fatalf("récapitulatif absent de la session : %v", err)
@@ -146,8 +148,53 @@ func TestWriteRecapIgnoresOtherModes(t *testing.T) {
 	s.Turns[0].Clients = []string{"acme"}
 	cwd := t.TempDir()
 	t.Chdir(cwd)
-	writeRecap(&options{}, s, 1, recapSource)
+	writeRecap(&options{}, nil, s, 1, recapSource)
 	if entries, _ := os.ReadDir(cwd); len(entries) != 0 {
 		t.Fatalf("fichiers écrits hors mode CVE : %v", entries)
+	}
+}
+
+func TestScopedTitle(t *testing.T) {
+	for _, c := range []struct {
+		title    string
+		projects []string
+		want     string
+	}{
+		{"CVE-2026-114938 — openjdk", []string{"P-1"}, "P-1 · CVE-2026-114938 — openjdk"},
+		{"Rapport CVE-2026-1, CVE-2026-2", []string{"P-A", "P-B"}, "P-A, P-B · Rapport CVE-2026-1, CVE-2026-2"},
+		{"DAT P-1", []string{"P-1"}, "DAT P-1"},
+		{"Rapport", nil, "Rapport"},
+		{"", []string{"P-A"}, "P-A"},
+	} {
+		if got := scopedTitle(c.title, c.projects); got != c.want {
+			t.Errorf("scopedTitle(%q, %v) = %q, attendu %q", c.title, c.projects, got, c.want)
+		}
+	}
+}
+
+func TestScopeFromAudit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	line := `{"kind":"instances_scope","offered":["web-acme","db-acme"],"clients":["acme"],"projects":{"acme":["P-2"]}}` + "\n"
+	if err := os.WriteFile(path, []byte(`{"kind":"other"}`+"\n"+line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	instances := []config.Instance{{Name: "web-acme", Project: "P-1"}, {Name: "db-acme"}, {Name: "web-globex", Project: "P-3"}}
+	clients, projects := scopeFromAudit(path, instances)
+	if strings.Join(clients, ",") != "acme" || strings.Join(projects, ",") != "P-1,P-2" {
+		t.Fatalf("clients %v, projets %v", clients, projects)
+	}
+	if _, projects := scopeFromAudit(path, nil); strings.Join(projects, ",") != "P-2" {
+		t.Fatalf("sans configuration : %v", projects)
+	}
+}
+
+func TestDocumentProjects(t *testing.T) {
+	cfg := &config.Config{Clients: []config.Client{{Name: "acme", Label: "ACME CORP", Projects: []config.Project{{Name: "P-1", Label: "Alpha"}}}, {Name: "globex", Projects: []config.Project{{Name: "P-2"}}}}}
+	got := documentProjects(cfg, []string{"P-1", "P-2", "P-3"})
+	if len(got) != 3 || got[0].Label != "Alpha" || got[0].Client != "acme" || got[0].ClientLabel != "ACME CORP" || got[1].Label != "" || got[1].Client != "globex" || got[2].Name != "P-3" || got[2].Client != "" {
+		t.Fatalf("projets : %+v", got)
+	}
+	if got := documentProjects(nil, []string{"P-1"}); len(got) != 1 || got[0].Label != "" {
+		t.Fatalf("sans configuration : %+v", got)
 	}
 }

@@ -264,6 +264,7 @@ type PathRules struct {
 
 type Client struct {
 	Name       string            `yaml:"name"`
+	Label      string            `yaml:"label"`
 	Aliases    []string          `yaml:"aliases"`
 	Context    string            `yaml:"context"`
 	Vars       map[string]string `yaml:"vars"`
@@ -289,6 +290,7 @@ type Tunnel struct {
 
 type Project struct {
 	Name      string            `yaml:"name"`
+	Label     string            `yaml:"label"`
 	Aliases   []string          `yaml:"aliases"`
 	Context   string            `yaml:"context"`
 	Vars      map[string]string `yaml:"vars"`

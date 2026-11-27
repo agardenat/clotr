@@ -450,8 +450,22 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 		return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 			var d DocumentInput
 			var images *starlark.Dict
-			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "markdown", &d.Markdown, "title?", &d.Title, "mode?", &d.Mode, "language?", &d.Language, "request?", &d.Request, "ticket?", &d.Ticket, "date?", &d.Date, "session?", &d.Session, "images?", &images); err != nil {
+			var projects *starlark.List
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "markdown", &d.Markdown, "title?", &d.Title, "mode?", &d.Mode, "language?", &d.Language, "request?", &d.Request, "ticket?", &d.Ticket, "date?", &d.Date, "session?", &d.Session, "images?", &images, "projects?", &projects); err != nil {
 				return nil, err
+			}
+			if projects != nil {
+				for i := range projects.Len() {
+					item, ok := projects.Index(i).(starlark.Tuple)
+					if !ok || len(item) != 4 {
+						return nil, fmt.Errorf("%s: projects = [(code, label, client, client_label)]", b.Name())
+					}
+					var f [4]string
+					for k := range f {
+						f[k], _ = starlark.AsString(item[k])
+					}
+					d.Projects = append(d.Projects, DocumentProject{Name: f[0], Label: f[1], Client: f[2], ClientLabel: f[3]})
+				}
 			}
 			if images != nil {
 				d.Images = map[string]Image{}

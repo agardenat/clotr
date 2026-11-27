@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.91.0] - 2026-11-27
+- Modification : noms de rapport `<PROJET>_<CLIENT>_CVE-…_<AAAAMMJJ>` (séparateur `_`, projets du périmètre en tête, plusieurs CVE jointes par `+`) ; projet(s) en tête du titre du document exporté.
+- Modification : export ou resynthèse d'une session antérieure, projets déduits des instances proposées au tour.
+- Ajout : `label` d'un client et d'un projet (nom lisible) ; `doc.projects` (code, label, client, label du client) transmis aux templates de document.
+- Correction : template de document avec connecteurs, `mcp` et `http` acceptés à la validation du script.
+
 ## [0.90.2] - 2026-11-27
 - Correction : surcharge personnelle invalide, mise à jour de la configuration faite avec la configuration partagée seule et signalée, puis surcharge revalidée.
 

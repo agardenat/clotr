@@ -1983,7 +1983,7 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		rt.saveTurn(sess, n, turnDir, nil, err, nil, nil)
 		return turnOutcome{err: err, n: n, dir: turnDir}
 	}
-	sess.Turns[n-1].Clients = rt.clientsIn(reg)
+	sess.Turns[n-1].Clients, sess.Turns[n-1].Projects = rt.clientsIn(reg), rt.projectsIn(reg)
 	if levels := accessSummary(rt.instances, reg); levels != "" {
 		sess.Turns[n-1].Access = levels
 		fmt.Fprintln(os.Stderr, i18n.T("access.line", levels))
@@ -2257,7 +2257,7 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 			}
 		}
 	}
-	writeRecap(o, sess, len(sess.Turns), report.Markdown)
+	writeRecap(o, rt.cfg, sess, len(sess.Turns), report.Markdown)
 	return runErr
 }
 
@@ -2326,25 +2326,52 @@ func (rt *app) clientsIn(reg *tools.Registry) []string {
 	return out
 }
 
-func clientsFromAudit(path string) []string {
+func (rt *app) projectsIn(reg *tools.Registry) []string {
+	groups := reg.Groups()
+	var out []string
+	for _, in := range rt.instances {
+		if in.Project != "" && slices.Contains(groups, in.ToolPrefix()) && !slices.Contains(out, in.Project) {
+			out = append(out, in.Project)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func scopeFromAudit(path string, instances []config.Instance) (clients, projects []string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	for sc.Scan() {
 		var ev struct {
-			Kind    string   `json:"kind"`
-			Clients []string `json:"clients"`
+			Kind     string              `json:"kind"`
+			Clients  []string            `json:"clients"`
+			Projects map[string][]string `json:"projects"`
+			Offered  []string            `json:"offered"`
 		}
 		if json.Unmarshal(sc.Bytes(), &ev) == nil && ev.Kind == "instances_scope" {
+			for _, in := range instances {
+				if in.Project != "" && slices.Contains(ev.Offered, in.Name) && !slices.Contains(projects, in.Project) {
+					projects = append(projects, in.Project)
+				}
+			}
+			for _, ps := range ev.Projects {
+				for _, p := range ps {
+					if !slices.Contains(projects, p) {
+						projects = append(projects, p)
+					}
+				}
+			}
 			slices.Sort(ev.Clients)
-			return ev.Clients
+			slices.Sort(projects)
+			return ev.Clients, projects
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func clientDocument(t session.Turn) bool {
@@ -2745,8 +2772,14 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	if rt.cves != nil {
 		rt.cves.Restore(cveFromAudit(filepath.Join(dir, "audit.jsonl")))
 	}
-	if t := &sess.Turns[n-1]; len(t.Clients) == 0 {
-		t.Clients = clientsFromAudit(filepath.Join(dir, "audit.jsonl"))
+	if t := &sess.Turns[n-1]; len(t.Clients) == 0 || len(t.Projects) == 0 {
+		clients, projects := scopeFromAudit(filepath.Join(dir, "audit.jsonl"), rt.cfg.Instances)
+		if len(t.Clients) == 0 {
+			t.Clients = clients
+		}
+		if len(t.Projects) == 0 {
+			t.Projects = projects
+		}
 	}
 	if rt.dat != nil {
 		rt.dat.Restore(dir)
@@ -2790,7 +2823,7 @@ func cmdResynthesize(ctx context.Context, o *options, name string, w io.Writer) 
 	if err := sess.Save(); err != nil {
 		return err
 	}
-	writeRecap(o, sess, n, md)
+	writeRecap(o, rt.cfg, sess, n, md)
 	fmt.Fprintln(os.Stderr, i18n.T("models.used", model))
 	for _, c := range rt.budget.Summary() {
 		fmt.Fprintln(os.Stderr, i18n.T("cost.line", c.String()))
@@ -2996,7 +3029,7 @@ func cmdSession(ctx context.Context, o *options, name string, w io.Writer) error
 	if o.sovereign == "" {
 		o.sovereign = s.Sovereign
 	}
-	writeRecap(o, s, n, report)
+	writeRecap(o, cfg, s, n, report)
 	return exportReport(ctx, o, cfg, s, n, report)
 }
 

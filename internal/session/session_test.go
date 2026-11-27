@@ -124,17 +124,22 @@ func TestReportName(t *testing.T) {
 		turn Turn
 		want string
 	}{
-		{Turn{Time: at, CVE: []string{"CVE-2026-114938"}, Clients: []string{"acme"}}, "ACME-CVE-2026-114938-20261119"},
-		{Turn{Time: at, CVE: []string{"cve-2026-1", "CVE-2026-2"}, Clients: []string{"acme", "globex"}}, "ACME-GLOBEX-CVE-2026-1_2026-2-20261119"},
-		{Turn{Time: at, Mode: "dat", Clients: []string{"acme"}}, "ACME-DAT-20261119"},
-		{Turn{Time: at, Mode: "diagram", Clients: []string{"a b/c"}}, "A-B-C-DIAGRAM-20261119"},
-		{Turn{Time: at, Mode: "dat"}, "DAT-20261119"},
-		{Turn{Time: at, Mode: "minutes", Clients: []string{"acme"}}, "ACME-CR-20261119"},
+		{Turn{Time: at, CVE: []string{"CVE-2026-114938"}, Clients: []string{"acme"}, Projects: []string{"P-1"}}, "P-1_ACME_CVE-2026-114938_20261119"},
+		{Turn{Time: at, CVE: []string{"CVE-2026-114938"}, Clients: []string{"acme"}}, "ACME_CVE-2026-114938_20261119"},
+		{Turn{Time: at, CVE: []string{"cve-2026-1", "CVE-2026-2"}, Clients: []string{"acme", "globex"}, Projects: []string{"P-A", "P-B"}}, "P-A_P-B_ACME_GLOBEX_CVE-2026-1+2026-2_20261119"},
+		{Turn{Time: at, Mode: "dat", Clients: []string{"acme"}, Projects: []string{"P-A"}}, "P-A_ACME_DAT_20261119"},
+		{Turn{Time: at, Mode: "diagram", Clients: []string{"a b/c_d"}}, "A-B-C-D_DIAGRAM_20261119"},
+		{Turn{Time: at, Mode: "dat"}, "DAT_20261119"},
+		{Turn{Time: at, Mode: "minutes", Clients: []string{"acme"}}, "ACME_CR_20261119"},
 		{Turn{Time: at, Mode: "incident", Clients: []string{"acme"}}, "report"},
 	} {
 		if got := c.turn.ReportName(); got != c.want {
 			t.Errorf("%+v : %q, attendu %q", c.turn, got, c.want)
 		}
+	}
+	recap := Turn{Time: at, CVE: []string{"CVE-2026-114938"}, Clients: []string{"acme"}, Projects: []string{"P-1"}}.RecapName()
+	if recap != "P-1_ACME_CVE-2026-114938_RECAP_20261119" {
+		t.Errorf("récap : %q", recap)
 	}
 }
 

@@ -122,7 +122,7 @@ type exportJob struct {
 }
 
 func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *session.Session, n int, md string) error {
-	turn := withClients(sess, n)
+	turn := withClients(cfg, sess, n)
 	mode := turn.Mode
 	if mode == "" && len(turn.CVE) > 0 {
 		mode = report.ModeCVE
@@ -139,12 +139,14 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	if len(turn.CVE) > 1 {
 		title = cveReportTitle(lang, turn.CVE)
 	}
+	title = scopedTitle(title, turn.Projects)
 	dest := ""
 	if len(turn.CVE) > 0 {
 		dest = turn.ReportName() + "." + o.exportFmt
 	}
 	return renderExport(ctx, o, cfg, exportJob{
 		input: template.DocumentInput{
+			Projects: documentProjects(cfg, turn.Projects),
 			Images:   reportImages(md, sess.TurnDir(n), false),
 			Markdown: md,
 			Title:    title,
@@ -162,15 +164,60 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	})
 }
 
-func withClients(sess *session.Session, n int) session.Turn {
-	if t := &sess.Turns[n-1]; len(t.Clients) == 0 {
-		t.Clients = clientsFromAudit(filepath.Join(sess.TurnDir(n), "audit.jsonl"))
+func withClients(cfg *config.Config, sess *session.Session, n int) session.Turn {
+	if t := &sess.Turns[n-1]; len(t.Clients) == 0 || len(t.Projects) == 0 {
+		var instances []config.Instance
+		if cfg != nil {
+			instances = cfg.Instances
+		}
+		clients, projects := scopeFromAudit(filepath.Join(sess.TurnDir(n), "audit.jsonl"), instances)
+		if len(t.Clients) == 0 {
+			t.Clients = clients
+		}
+		if len(t.Projects) == 0 {
+			t.Projects = projects
+		}
 	}
 	return sess.Turns[n-1]
 }
 
-func writeRecap(o *options, sess *session.Session, n int, md string) {
-	turn := withClients(sess, n)
+func documentProjects(cfg *config.Config, names []string) []template.DocumentProject {
+	out := make([]template.DocumentProject, 0, len(names))
+	for _, n := range names {
+		pr := template.DocumentProject{Name: n}
+		if cfg != nil {
+			for _, cl := range cfg.Clients {
+				for _, p := range cl.Projects {
+					if p.Name == n && pr.Client == "" {
+						pr.Label, pr.Client, pr.ClientLabel = p.Label, cl.Name, cl.Label
+					}
+				}
+			}
+		}
+		out = append(out, pr)
+	}
+	return out
+}
+
+func scopedTitle(title string, projects []string) string {
+	var missing []string
+	for _, p := range projects {
+		if !strings.Contains(title, p) {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) == 0 {
+		return title
+	}
+	label := strings.Join(missing, ", ")
+	if title == "" {
+		return label
+	}
+	return label + " · " + title
+}
+
+func writeRecap(o *options, cfg *config.Config, sess *session.Session, n int, md string) {
+	turn := withClients(cfg, sess, n)
 	if len(turn.CVE) == 0 || md == "" {
 		return
 	}

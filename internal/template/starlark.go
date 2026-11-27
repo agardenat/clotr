@@ -66,7 +66,9 @@ func checkScript(t *Template) error {
 		return slices.Contains(scriptPredeclared, name) || (t.Startup() && name == "git")
 	}
 	if t.Document() {
-		known = documentName
+		known = func(name string) bool {
+			return documentName(name) || (len(t.Connectors) > 0 && (name == "mcp" || name == "http"))
+		}
 	}
 	_, _, err := starlark.SourceProgramOptions(fileOptions, t.ScriptPath, t.ScriptSrc, known)
 	return err

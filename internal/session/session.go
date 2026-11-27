@@ -59,21 +59,22 @@ var nounsFR = []string{
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 type Turn struct {
-	N       int       `json:"n"`
-	Time    time.Time `json:"time"`
-	Request string    `json:"request"`
-	Tools   []string  `json:"tools,omitempty"`
-	Exclude []string  `json:"exclude,omitempty"`
-	Access  string    `json:"access,omitempty"`
-	CVE     []string  `json:"cve,omitempty"`
-	Mode    string    `json:"mode,omitempty"`
-	DAT     string    `json:"dat,omitempty"`
-	Ticket  string    `json:"ticket,omitempty"`
-	Clients []string  `json:"clients,omitempty"`
-	Status  string    `json:"status"`
-	Error   string    `json:"error,omitempty"`
-	Models  []string  `json:"models,omitempty"`
-	Cost    float64   `json:"cost,omitempty"`
+	N        int       `json:"n"`
+	Time     time.Time `json:"time"`
+	Request  string    `json:"request"`
+	Tools    []string  `json:"tools,omitempty"`
+	Exclude  []string  `json:"exclude,omitempty"`
+	Access   string    `json:"access,omitempty"`
+	CVE      []string  `json:"cve,omitempty"`
+	Mode     string    `json:"mode,omitempty"`
+	DAT      string    `json:"dat,omitempty"`
+	Ticket   string    `json:"ticket,omitempty"`
+	Clients  []string  `json:"clients,omitempty"`
+	Projects []string  `json:"projects,omitempty"`
+	Status   string    `json:"status"`
+	Error    string    `json:"error,omitempty"`
+	Models   []string  `json:"models,omitempty"`
+	Cost     float64   `json:"cost,omitempty"`
 }
 
 type Session struct {
@@ -279,7 +280,7 @@ func (s *Session) WriteJSON(dir, name string, v any) error {
 	return writeAtomic(filepath.Join(dir, name), data)
 }
 
-var unsafeName = regexp.MustCompile(`[^A-Za-z0-9_]+`)
+var unsafeName = regexp.MustCompile(`[^A-Za-z0-9-]+`)
 
 func (t Turn) ReportName() string { return t.name("") }
 
@@ -293,7 +294,7 @@ func (t Turn) name(suffix string) string {
 		for i, id := range t.CVE {
 			ids[i] = strings.TrimPrefix(strings.ToUpper(id), "CVE-")
 		}
-		kind = "CVE-" + strings.Join(ids, "_")
+		kind = "CVE-" + strings.Join(ids, "+")
 	case t.Mode == "dat":
 		kind = "DAT"
 	case t.Mode == "diagram":
@@ -304,15 +305,16 @@ func (t Turn) name(suffix string) string {
 		return "report"
 	}
 	var parts []string
-	for _, c := range t.Clients {
-		if c = strings.Trim(unsafeName.ReplaceAllString(strings.ToUpper(c), "-"), "-"); c != "" {
+	for _, c := range append(slices.Clone(t.Projects), t.Clients...) {
+		if c = strings.Trim(unsafeName.ReplaceAllString(strings.ToUpper(c), "-"), "-"); c != "" && !slices.Contains(parts, c) {
 			parts = append(parts, c)
 		}
 	}
+	parts = append(parts, kind)
 	if suffix != "" {
-		kind += "-" + suffix
+		parts = append(parts, suffix)
 	}
-	return strings.Join(append(parts, kind, t.Time.Local().Format("20060102")), "-")
+	return strings.Join(append(parts, t.Time.Local().Format("20060102")), "_")
 }
 
 func (s *Session) RecapPath(n int, ext string) string {

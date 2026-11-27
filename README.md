@@ -137,7 +137,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 - Sortie complète de chaque outil archivée en preuve (`E001`…), citée dans le rapport.
 - `evidence_read`, `evidence_search` sur les preuves de tous les tours.
 - Mémoire partagée `memory_write`, `memory_search`.
-- Rapports nommés `<CLIENT>-CVE-…`, `<CLIENT>-DAT-…`, `<CLIENT>-DIAGRAM-…`, `<CLIENT>-CR-…`.
+- Rapports nommés `<PROJET>_<CLIENT>_CVE-…_<AAAAMMJJ>` (idem `DAT`, `DIAGRAM`, `CR`), projet(s) du périmètre en tête du titre du document.
 - Audit JSONL par tour.
 
 ### Modes

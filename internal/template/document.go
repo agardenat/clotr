@@ -77,8 +77,16 @@ type Image struct {
 	Height int
 }
 
+type DocumentProject struct {
+	Name        string
+	Label       string
+	Client      string
+	ClientLabel string
+}
+
 type DocumentInput struct {
 	Images   map[string]Image
+	Projects []DocumentProject
 	Markdown string
 	Title    string
 	Mode     string
@@ -105,8 +113,18 @@ func (d DocumentInput) value(params map[string]any) (starlark.Value, error) {
 		}))
 	}
 	images.Freeze()
+	projects := make([]starlark.Value, 0, len(d.Projects))
+	for _, pr := range d.Projects {
+		projects = append(projects, starlarkstruct.FromStringDict(starlark.String("project"), starlark.StringDict{
+			"name":         starlark.String(pr.Name),
+			"label":        starlark.String(pr.Label),
+			"client":       starlark.String(pr.Client),
+			"client_label": starlark.String(pr.ClientLabel),
+		}))
+	}
 	return starlarkstruct.FromStringDict(starlark.String("document"), starlark.StringDict{
 		"images":   images,
+		"projects": starlark.NewList(projects),
 		"markdown": starlark.String(d.Markdown),
 		"title":    starlark.String(d.Title),
 		"mode":     starlark.String(d.Mode),
