@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.90.0] - 2026-11-27
 - Ajout : section `secrets` de la configuration, sources de secrets globales par templates `kind: secrets` (`read(ref)`), chargées à chaque démarrage.
 - Ajout : références `<source>:<ref>` dans les champs `*_vault`, `vault:` explicite, sans préfixe toujours vers Vault.
 - Ajout : `user_vault` sur les blocs `auth` et `proxy_auth`.
