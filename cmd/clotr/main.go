@@ -484,6 +484,7 @@ func loadConfig(o *options) (*config.Config, error) {
 	creds.UseVaultStore(cfg.Vault.CredentialsCache)
 	registerSecretSources(cfg, func(msg string) { fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), msg) })
 	mcp.Unattended(creds.CanPrompt())
+	mcp.GateFor = providerGates(cfg)
 	for _, l := range []struct {
 		flag string
 		v    int

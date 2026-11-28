@@ -21,6 +21,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/httpx"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/llm"
 	"github.com/agardenat/clotr/internal/tools"
 )
 
@@ -28,7 +29,12 @@ var invalidChars = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 const emptySchema = `{"type":"object","properties":{}}`
 
+var GateFor func(config.MCPServer) *llm.Gate
+
+const rateAttempts = 3
+
 type Server struct {
+	gate    *llm.Gate
 	cfg     config.MCPServer
 	session *sdk.ClientSession
 	exposed []tools.Tool
@@ -138,6 +144,9 @@ func connect(ctx context.Context, cfg config.MCPServer, t sdk.Transport, version
 		return nil, i18n.E("mcp.connect", cfg.Name, err)
 	}
 	s := &Server{cfg: cfg, session: session, remotes: map[string]bool{}}
+	if GateFor != nil {
+		s.gate = GateFor(cfg)
+	}
 	allow := globs(cfg.Allow)
 	deny := globs(cfg.Deny)
 	names := map[string]bool{}
@@ -216,13 +225,11 @@ func (t *tool) Description() string     { return t.desc }
 func (t *tool) Schema() json.RawMessage { return t.schema }
 
 func (t *tool) Call(ctx context.Context, args json.RawMessage) (string, error) {
-	cctx, cancel := context.WithTimeout(ctx, t.srv.cfg.Timeout.Duration)
-	defer cancel()
 	var params any = map[string]any{}
 	if len(args) > 0 {
 		params = args
 	}
-	res, err := t.srv.session.CallTool(cctx, &sdk.CallToolParams{Name: t.remote, Arguments: params})
+	res, err := t.srv.callTool(ctx, &sdk.CallToolParams{Name: t.remote, Arguments: params})
 	if err != nil {
 		return "", err
 	}
@@ -244,6 +251,38 @@ func (t *tool) Call(ctx context.Context, args json.RawMessage) (string, error) {
 		return "", errors.New(strings.TrimSpace(b.String()))
 	}
 	return b.String(), nil
+}
+
+func (s *Server) callTool(ctx context.Context, params *sdk.CallToolParams) (*sdk.CallToolResult, error) {
+	for attempt := 1; ; attempt++ {
+		if s.gate != nil {
+			if err := s.gate.Wait(ctx); err != nil {
+				return nil, err
+			}
+		}
+		cctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout.Duration)
+		res, err := s.session.CallTool(cctx, params)
+		cancel()
+		if s.gate == nil || attempt >= rateAttempts || !s.gate.Limited(resultText(res, err)) {
+			return res, err
+		}
+	}
+}
+
+func resultText(res *sdk.CallToolResult, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	if res == nil || !res.IsError {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range res.Content {
+		if v, ok := c.(*sdk.TextContent); ok {
+			b.WriteString(v.Text)
+		}
+	}
+	return b.String()
 }
 
 func (s *Server) Fetch(ctx context.Context, raw string, maxBytes int64) ([]byte, error) {
@@ -347,12 +386,10 @@ func (s *Server) CallExposed(ctx context.Context, remote string, args map[string
 	if !s.remotes[remote] {
 		return "", nil, false, i18n.E("mcp.not_exposed", s.cfg.Name, remote)
 	}
-	cctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout.Duration)
-	defer cancel()
 	if args == nil {
 		args = map[string]any{}
 	}
-	res, err := s.session.CallTool(cctx, &sdk.CallToolParams{Name: remote, Arguments: args})
+	res, err := s.callTool(ctx, &sdk.CallToolParams{Name: remote, Arguments: args})
 	if err != nil {
 		return "", nil, false, err
 	}

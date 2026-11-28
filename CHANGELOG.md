@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.97.2] - 2026-11-28
+- Correction : appels MCP d'un serveur hébergé sur l'hôte d'un fournisseur (gateway) soumis à sa limite `max_requests_per_minute` et à sa pause partagée ; réponse « Rate limit exceeded » attendue puis rejouée (3 essais), export de document compris.
+
 ## [0.97.1] - 2026-11-28
 - Correction : récapitulatif CVE, icône et « En l'état » d'une entrée du plan d'action regroupant des actifs (segment du chemin ou nom court de l'hôte dans le titre).
 

@@ -193,3 +193,23 @@ func TestRateGateSharedCorruptState(t *testing.T) {
 		t.Fatalf("état illisible repris à vide : %v %v", err, c.waits)
 	}
 }
+
+func TestGateLimitedBlocksUntilReset(t *testing.T) {
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	g := NewGate(0)
+	g.g.now = func() time.Time { return now }
+	if g.Limited("ok") || g.Limited("") {
+		t.Fatal("texte sans limite pris pour une limite")
+	}
+	if !g.Limited("Error: Rate limit exceeded for api_key: x. Limit resets at: 2026-01-02 03:04:15 UTC") {
+		t.Fatal("limite non reconnue")
+	}
+	if d := g.g.delay(); d != 10*time.Second {
+		t.Fatalf("attente %v, 10s attendues", d)
+	}
+	g2 := NewGate(0)
+	g2.g.now = func() time.Time { return now }
+	if !g2.Limited("HTTP 429 Too Many Requests") || g2.g.delay() != defaultRatePause {
+		t.Fatalf("pause par défaut %v", g2.g.delay())
+	}
+}

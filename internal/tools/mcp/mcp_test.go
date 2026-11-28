@@ -13,6 +13,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/llm"
 )
 
 var objSchema = map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}
@@ -171,5 +172,66 @@ func TestCallExposedOnlyReadTools(t *testing.T) {
 	text, _, isErr, err := s.CallExposed(ctx, "query", map[string]any{"q": "x"})
 	if err != nil || isErr || text != "ok:x" {
 		t.Fatalf("lecture: %q %v %v", text, isErr, err)
+	}
+}
+
+func TestRateLimitedCallRetried(t *testing.T) {
+	ctx := context.Background()
+	srv := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "1"}, nil)
+	calls := 0
+	srv.AddTool(&sdk.Tool{Name: "report", InputSchema: objSchema, Annotations: &sdk.ToolAnnotations{ReadOnlyHint: true}},
+		func(_ context.Context, _ *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			calls++
+			if calls == 1 {
+				reset := time.Now().UTC().Add(time.Second).Format("2006-01-02 15:04:05")
+				return &sdk.CallToolResult{IsError: true, Content: []sdk.Content{&sdk.TextContent{Text: "Error: Rate limit exceeded. Limit resets at: " + reset + " UTC"}}}, nil
+			}
+			return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "done"}}}, nil
+		})
+	st, ct := sdk.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	saved := GateFor
+	GateFor = func(config.MCPServer) *llm.Gate { return llm.NewGate(0) }
+	defer func() { GateFor = saved }()
+	s, err := ConnectTransport(ctx, config.MCPServer{Name: "gw", Timeout: config.Duration{Duration: 5 * time.Second}}, ct, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	text, _, isErr, err := s.CallExposed(ctx, "report", nil)
+	if err != nil || isErr || text != "done" || calls != 2 {
+		t.Fatalf("text=%q isErr=%v err=%v calls=%d", text, isErr, err, calls)
+	}
+}
+
+func TestNoGateNoRetry(t *testing.T) {
+	ctx := context.Background()
+	srv := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "1"}, nil)
+	calls := 0
+	srv.AddTool(&sdk.Tool{Name: "report", InputSchema: objSchema, Annotations: &sdk.ToolAnnotations{ReadOnlyHint: true}},
+		func(_ context.Context, _ *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			calls++
+			return &sdk.CallToolResult{IsError: true, Content: []sdk.Content{&sdk.TextContent{Text: "Rate limit exceeded"}}}, nil
+		})
+	st, ct := sdk.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	saved := GateFor
+	GateFor = nil
+	defer func() { GateFor = saved }()
+	s, err := ConnectTransport(ctx, config.MCPServer{Name: "other", Timeout: config.Duration{Duration: 5 * time.Second}}, ct, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, _, isErr, _ := s.CallExposed(ctx, "report", nil); !isErr || calls != 1 {
+		t.Fatalf("isErr=%v calls=%d", isErr, calls)
 	}
 }

@@ -132,3 +132,35 @@ func parseLimitReset(body string, now time.Time) time.Duration {
 	}
 	return 0
 }
+
+type Gate struct {
+	g *rateGate
+}
+
+func NewGate(limit int) *Gate {
+	return &Gate{g: newRateGate(limit)}
+}
+
+func SharedGate(limit int, provider string) *Gate {
+	return &Gate{g: newSharedRateGate(limit, provider)}
+}
+
+func (g *Gate) Wait(ctx context.Context) error {
+	return g.g.wait(ctx)
+}
+
+var rateLimited = regexp.MustCompile(`(?i)rate limit exceeded|too many requests`)
+
+const defaultRatePause = 20 * time.Second
+
+func (g *Gate) Limited(text string) bool {
+	if !rateLimited.MatchString(text) {
+		return false
+	}
+	d := parseLimitReset(text, g.g.now().UTC())
+	if d <= 0 {
+		d = defaultRatePause
+	}
+	g.g.block(d)
+	return true
+}
