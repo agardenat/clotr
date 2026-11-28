@@ -78,6 +78,7 @@ type options struct {
 	sovereign    string
 	confidential bool
 	plain        bool
+	progressJSON bool
 	session      string
 	turn         int
 	showPath     bool
@@ -287,6 +288,7 @@ func newRoot() *cobra.Command {
 	run.Flags().BoolVar(&o.json, "json", false, i18n.T("cli.flag.run_json"))
 	run.Flags().BoolVarP(&o.quiet, "quiet", "q", false, i18n.T("cli.flag.quiet"))
 	run.Flags().BoolVar(&o.plain, "plain", false, i18n.T("cli.flag.plain"))
+	run.Flags().BoolVar(&o.progressJSON, "progress-json", false, i18n.T("cli.flag.progress_json"))
 	run.Flags().StringVarP(&o.session, "session", "s", "", i18n.T("cli.flag.session"))
 	run.Flags().StringVar(&o.direct, "direct", "", i18n.T("cli.flag.direct"))
 	run.Flags().Lookup("direct").NoOptDefVal = directAuto
@@ -431,7 +433,7 @@ func newRoot() *cobra.Command {
 		},
 	}
 
-	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, exportCmd, toolsCmd, templatesCmd, syncCmd, secretsCmd(o), cveCmd(o), ver)
+	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, exportCmd, toolsCmd, templatesCmd, syncCmd, secretsCmd(o), cveCmd(o), clientsCmd(o), ver)
 	localizeCobra(root)
 	return root
 }
@@ -3155,6 +3157,9 @@ func newProgress(o *options, maxSteps int, title string) progress.Closer {
 	if o.quiet {
 		return progress.Nop{}
 	}
+	if o.progressJSON {
+		return progress.NewJSON(os.Stderr)
+	}
 	if !o.plain && term.IsTerminal(os.Stderr.Fd()) {
 		t := progress.NewTUI(os.Stderr, maxSteps, title)
 		creds.Suspend = t.Suspend
@@ -3165,7 +3170,7 @@ func newProgress(o *options, maxSteps int, title string) progress.Closer {
 }
 
 func (o *options) sessName(name string) string {
-	if o.plain || !term.IsTerminal(os.Stderr.Fd()) {
+	if o.plain || o.progressJSON || !term.IsTerminal(os.Stderr.Fd()) {
 		return name
 	}
 	return progress.Session(name)

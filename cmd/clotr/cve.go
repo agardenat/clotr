@@ -46,6 +46,7 @@ func cveCmd(o *options) *cobra.Command {
 	cmd.Flags().BoolVar(&o.raw, "raw", false, i18n.T("cli.flag.raw"))
 	cmd.Flags().BoolVarP(&o.quiet, "quiet", "q", false, i18n.T("cli.flag.quiet"))
 	cmd.Flags().BoolVar(&o.plain, "plain", false, i18n.T("cli.flag.plain"))
+	cmd.Flags().BoolVar(&o.progressJSON, "progress-json", false, i18n.T("cli.flag.progress_json"))
 	return cmd
 }
 

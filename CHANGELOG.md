@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.96.0] - 2026-11-28
+- Ajout : `--progress-json` (`run`, `cve`), progression en JSON Lines sur stderr, un objet par événement (`kind`, `task`, `detail`, `status`, `plan`…).
+- Ajout : `clotr clients [--json]`, clients de la configuration avec leurs projets et libellés.
+
 ## [0.95.0] - 2026-11-28
 - Ajout : `clotr cve <CVE|GHSA>…`, fiche seule comme la première étape de `run --cve` (sources officielles, fiche du cache si inchangées, sinon rédaction par le modèle et mise en cache) ; `--force`, `--json` (`advisories`, `fiches`, `missing`).
 

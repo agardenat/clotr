@@ -88,6 +88,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 | `clotr export <fichier.md\|->` | Markdown vers `.docx` ou `.pdf` |
 | `clotr sync` | exécution des templates de démarrage |
 | `clotr secrets test <ref>` | lecture d'une référence de secret, longueur et compte déduit, jamais la valeur |
+| `clotr clients [--json]` | clients de la configuration avec leurs projets et libellés |
 | `clotr secrets check [cible…]` | résolution sans saisie des identifiants de Vault, des sources, tunnels et instances des cibles, code retour 1 si une saisie serait nécessaire |
 
 ## Options de `run`
@@ -102,6 +103,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 | `--lang`, `--ui-lang` | langue du rapport, de l'interface |
 | `--web yes\|no` | recherche web |
 | `-o`, `--json`, `--raw`, `-q`, `--plain` | sortie et progression |
+| `--progress-json` | progression en JSON Lines sur stderr, un objet par événement |
 | `--with-evidence` | annexe complète des preuves citées |
 | `--export docx\|pdf`, `--export-template` | export du rapport |
 | `--direct[=<rôle>]` | réponse par un seul agent |
