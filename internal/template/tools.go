@@ -153,6 +153,7 @@ func (t activatingTool) Description() string {
 }
 
 func (t activatingTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
+	ctx = context.WithValue(ctx, toolCallKey{}, toolCall{name: t.Name(), raw: raw})
 	ctx, err := t.in.escalate(ctx, t.Name(), t.level, raw)
 	if err != nil {
 		return "", err

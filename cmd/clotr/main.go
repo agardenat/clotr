@@ -43,6 +43,7 @@ import (
 	"github.com/agardenat/clotr/internal/markdown"
 	"github.com/agardenat/clotr/internal/memory"
 	"github.com/agardenat/clotr/internal/orchestrator"
+	"github.com/agardenat/clotr/internal/pending"
 	"github.com/agardenat/clotr/internal/progress"
 	"github.com/agardenat/clotr/internal/router"
 	"github.com/agardenat/clotr/internal/session"
@@ -85,6 +86,8 @@ type options struct {
 	uiLangFlag   string
 	evidenceID   string
 	synthesize   bool
+	pendingRun   bool
+	ceilings     map[string]access.Level
 	web          string
 	webAllowed   bool
 	evidence     *evidence.Store
@@ -144,6 +147,8 @@ type app struct {
 	evidence     *evidence.Store
 	leads        *lead.Store
 	cves         *cve.Store
+	pending      *pending.Store
+	resume       *orchestrator.Resume
 	tickets      *ticket.Store
 	ticketSrc    *template.Instance
 	diagramSrc   *template.Instance
@@ -318,6 +323,7 @@ func newRoot() *cobra.Command {
 	run.Flags().StringVar(&o.datFlag, "dat", "", i18n.T("cli.flag.dat"))
 	run.Flags().StringVar(&o.diagramFlag, "diagram", "", i18n.T("cli.flag.diagram"))
 	run.Flags().StringVar(&o.accessFlag, "access", "", i18n.T("cli.flag.access"))
+	run.Flags().BoolVar(&o.pendingRun, "pending", false, i18n.T("cli.flag.pending"))
 
 	sessionsCmd := &cobra.Command{
 		Use:   "sessions",
@@ -327,6 +333,7 @@ func newRoot() *cobra.Command {
 			return cmdSessions(o, cmd.OutOrStdout())
 		},
 	}
+	sessionsCmd.AddCommand(sessionsCommandsCmd(o))
 	sessionCmd := &cobra.Command{
 		Use:   i18n.T("cli.session.use"),
 		Short: i18n.T("cli.session.short"),
@@ -1038,6 +1045,8 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 		warn(w)
 	}
 	rt.instanceEnv = map[string][]string{}
+	rt.pending = &pending.Store{}
+	headless := creds.CanPrompt() != nil
 	tunnels := rt.openTunnels(active, warn)
 	tunnelURL := func(ic config.Instance) string {
 		cl, _ := cfg.Client(ic.Client)
@@ -1078,9 +1087,16 @@ func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter
 			in.Audit = rt.audit.Log
 			in.MCP = rt.templateMCP
 			in.Warn = warn
-			in.Confirm = confirmWithin(cfg.Limits.ConfirmTimeout.Duration)
+			if headless {
+				in.Pending = rt.pending
+			} else {
+				in.Confirm = confirmWithin(cfg.Limits.ConfirmTimeout.Duration)
+			}
 			in.Approvals = approvals
 			in.Highlight = progress.Command
+			if l, ok := o.ceilings[in.Name]; ok {
+				in.RaiseCeiling(l)
+			}
 			if len(o.cveIDs) > 0 {
 				in.SetCeiling(access.Create)
 				in.Trusted = func() []string {
@@ -1958,6 +1974,9 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.session"), err)
 	}
 	rt.evidence.Begin(filepath.Join(turnDir, "evidence"), n)
+	if rt.pending != nil {
+		rt.pending.Begin(filepath.Join(turnDir, pending.FileName))
+	}
 	if err := rt.audit.Reopen(turnDir, "audit"); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.T("cli.warn.audit"), err)
 	}
@@ -1998,6 +2017,10 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	orch.History, orch.Turn = history, n
 	orch.AfterTask = rt.budgetRefresher(events)
 	orch.OnAnswer = answer
+	if rt.resume != nil {
+		rt.resume.Call = func(ctx context.Context, it pending.Item) (string, error) { return rt.callPending(ctx, reg, it) }
+		orch.Resume = rt.resume
+	}
 	orch.EvidenceDisplay = func(p string) string {
 		if rel, err := filepath.Rel(sess.Dir(), p); err == nil {
 			return rel
@@ -2014,6 +2037,10 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 		orch.OnResult = rt.resultSaver(sess, turnDir)
 		report, runErr = orch.Run(ctx, request)
 		interruptHook.Store(nil)
+	}
+	queued := rt.pending.Items()
+	if report != nil && report.Markdown != "" && len(queued) > 0 {
+		report.Markdown = withPendingSection(report.Markdown, queued, o.sessName(sess.Name))
 	}
 	var comment string
 	if report != nil && report.Markdown != "" && ctx.Err() == nil {
@@ -2066,6 +2093,9 @@ func (rt *app) runTurn(ctx context.Context, o *options, sess *session.Session, r
 	}
 	if k := rt.evidence.Len(); k > 0 {
 		res.info = append(res.info, i18n.T("evidence.line", k, filepath.Join(turnDir, "evidence"), sess.Name))
+	}
+	if len(queued) > 0 {
+		res.info = append(res.info, i18n.T("pending.line", len(queued), filepath.Join(turnDir, pending.FileName), o.sessName(sess.Name)))
 	}
 	res.info = append(res.info, i18n.T("session.line", o.sessName(sess.Name), n, sess.Dir()))
 	return res
@@ -2183,12 +2213,19 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 	if len(args) == 0 && o.ticketFlag != "" && o.ticketFlag != "auto" {
 		args = []string{o.ticketFlag}
 	}
+	var src *pendingSource
+	if o.pendingRun {
+		if src, err = preparePending(o, args); err != nil {
+			return err
+		}
+		args = []string{src.request}
+	}
 	request, err := readRequest(args)
 	if err != nil {
 		return err
 	}
 	o.request = request
-	if o.cveFlag != "" {
+	if o.cveFlag != "" && src == nil {
 		if o.cveIDs = cve.Subjects(o.cveFlag, request); len(o.cveIDs) == 0 {
 			return i18n.E("cve.no_id")
 		}
@@ -2204,10 +2241,20 @@ func cmdRun(ctx context.Context, o *options, args []string, w io.Writer) error {
 			fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cve.no_web"))
 		}
 	}
+	if src != nil {
+		if err := rt.askPending(ctx, src); err != nil {
+			return err
+		}
+	}
 	events := newProgress(o, rt.cfg.Limits.MaxSteps, sess.Name)
 	defer events.Close()
 	res := rt.runTurn(ctx, o, sess, request, events, nil)
 	events.Close()
+	if src != nil {
+		if err := src.save(rt.resume.Items, res.n); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), err)
+		}
+	}
 	for _, l := range res.info {
 		fmt.Fprintln(os.Stderr, l)
 	}

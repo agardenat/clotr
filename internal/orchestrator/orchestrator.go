@@ -118,6 +118,8 @@ type Orchestrator struct {
 	procedure       *Result
 	watchPrep       *Result
 	capture         *Result
+	resumed         *Result
+	Resume          *Resume
 	stopVerify      atomic.Pointer[context.CancelFunc]
 }
 
@@ -237,6 +239,9 @@ func (o *Orchestrator) causeEstablished() string {
 
 func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error) {
 	i18n.ReportFrom(o.Language, request)
+	if o.Resume != nil {
+		return o.runResume(ctx, request)
+	}
 	var results []Result
 	if o.CVE != nil {
 		o.CVE.Prepare(ctx)

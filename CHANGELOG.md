@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.93.0] - 2026-11-28
+- Ajout : `clotr sessions commands [--all]`, commandes soumises à l'utilisateur dans les audits des sessions, rejouées avec l'analyse de lecture seule et les templates actuels.
+- Ajout : sans terminal, commande non reconnue en lecture seule ou appel exigeant un niveau d'accès supérieur mis en attente (`pending.json` du tour, section « Commandes en attente de validation » du rapport) au lieu d'être refusé.
+- Ajout : `run -s <session> --pending`, validation de chaque commande en attente, exécution des commandes validées, tâches d'origine relancées avec leurs sorties, rapport du tour mis à jour.
+- Ajout : lecture seule de `sysctl`, `lsmod`, `swapon --show`, `vgs`/`pvs`/`lvs`, `getenforce`, `sestatus`, `hostnamectl`/`timedatectl`/`localectl` en consultation, `mount` sans montage, `showmount`, `rpcinfo`, `nfsstat`, `vmstat`/`iostat`/`mpstat`/`sar` avec nombre de mesures, `top -b -n`, `dmesg` sans effacement ni suivi, `nft list`, `iptables -L/-S`, `iptables-save`, `update-alternatives`/`alternatives` en consultation, `systemd-analyze` en consultation, `crictl`, `docker`, `podman`, `nerdctl` en consultation, `pcs status`, `crm_mon -1`, `corosync-cfgtool -s`, `datadog-agent version|status|health`, `unzip -l/-v/-p`, `zipinfo`, `tar -t`, `nginx -t/-T/-V`, `httpd`/`apachectl -S/-M/-t -D DUMP_*`, `sshd -T/-t/-G`, `sleep`, `ping -c`, `nc -z`, `dig`, `host`, `nslookup`, `fuser` sans signal, `curl` et `wget` en GET/HEAD sans écriture de fichier, `sed` sans écriture ni exécution, `awk` sans `system`, `getline`, tube ni fichier (parseur goawk), `find -exec` et `xargs` vers une commande de métadonnées, `python -m pip list`, `sudo -l`, `node -p` en concaténation et `JSON.stringify` de `process.version(s)` et des constantes des modules intégrés.
+- Modification : filtre des chemins sensibles appliqué aux arguments qui désignent un fichier, plus aux motifs de `grep`, scripts `sed`/`awk`, valeurs `-o`/`-l` de `kubectl`, arguments de `ls`, `stat`, `echo` ; `environ` reconnu comme mot entier ; `passwd` remplacé par `htpasswd` et `opasswd`.
+- Correction : lecture seule, `getent shadow` et `getent gshadow` refusés ; motifs glob pouvant désigner un fichier sensible (`/etc/sha?ow`, `/etc/*`, `.ssh/id_*`) refusés ; affectation de `PATH`, `LD_*`, `IFS`, `BASH_ENV`, `*PAGER` et voisines refusée, variables devant une commande limitées à `LANG`, `LC_*`, `TZ`, `TERM`, `COLUMNS`, `LINES`, `NO_COLOR` ; `ps` avec l'environnement des processus (`e`) refusé ; `tail -f` refusé.
+- Modification : `curl`, `wget` et `ping` refusés vers les services de métadonnées cloud et les adresses lien-local ou numériques non standard.
+- Modification : refus sans terminal, motif de l'analyse de lecture seule indiqué à l'agent.
+
 ## [0.92.0] - 2026-11-28
 - Ajout : `clotr secrets check [cible…]`, identifiants de Vault, des sources, tunnels et instances résolus sans saisie, code retour 1 si une saisie serait nécessaire.
 - Correction : en arrière-plan de son terminal, clotr ne demande plus rien (identifiants, questions) et échoue aussitôt au lieu de rester suspendu.

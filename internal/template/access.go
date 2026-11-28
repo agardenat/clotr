@@ -2,6 +2,7 @@ package template
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/netx"
+	"github.com/agardenat/clotr/internal/pending"
 	"github.com/agardenat/clotr/internal/tools"
 )
 
@@ -95,6 +97,12 @@ func (in *Instance) SetCeiling(l access.Level) {
 	in.ceiling = l
 }
 
+func (in *Instance) RaiseCeiling(l access.Level) {
+	in.accessMu.Lock()
+	defer in.accessMu.Unlock()
+	in.ceiling = max(in.ceiling, l)
+}
+
 func (in *Instance) Access() access.Level {
 	in.accessMu.Lock()
 	defer in.accessMu.Unlock()
@@ -113,6 +121,37 @@ func withGrant(ctx context.Context, l access.Level) context.Context {
 	return context.WithValue(ctx, grantKey{}, l)
 }
 
+func WithGrant(ctx context.Context, l access.Level) context.Context {
+	return withGrant(ctx, l)
+}
+
+type toolCallKey struct{}
+
+type toolCall struct {
+	name string
+	raw  json.RawMessage
+}
+
+func (in *Instance) defer_(ctx context.Context, it pending.Item) (pending.Item, error) {
+	tc, _ := ctx.Value(toolCallKey{}).(toolCall)
+	it.Instance, it.Task = in.Name, tools.CallerFrom(ctx).Task
+	if it.Tool == "" {
+		it.Tool = tc.name
+	}
+	if len(it.Args) == 0 {
+		it.Args = tc.raw
+	}
+	got, _, err := in.Pending.Add(it)
+	if err != nil {
+		in.warn(i18n.T("pending.save_failed", err))
+	}
+	return got, nil
+}
+
+func (in *Instance) Approve(argv []string) {
+	in.approvals().Grant(strings.Join(argv, "\x00"))
+}
+
 func (in *Instance) allowed(ctx context.Context, required access.Level) bool {
 	if in.Access().Allows(required) {
 		return true
@@ -126,8 +165,17 @@ func (in *Instance) escalate(ctx context.Context, tool string, required access.L
 	if granted.Allows(required) {
 		return ctx, nil
 	}
+	if g, ok := ctx.Value(grantKey{}).(access.Level); ok && g.Allows(required) {
+		return ctx, nil
+	}
 	c := tools.CallerFrom(ctx)
 	f := map[string]any{"tool": tool, "task": c.Task, "granted": granted.String(), "required": required.String()}
+	if in.Confirm == nil && in.Pending != nil {
+		it, _ := in.defer_(ctx, pending.Item{Kind: pending.KindAccess, Tool: tool, Args: raw, Level: required.String()})
+		f["decision"], f["pending"] = "deferred", it.ID
+		in.audit("access_escalation", f)
+		return ctx, i18n.E("tpl.escalate.deferred", tool, required, in.Name, granted)
+	}
 	if in.Confirm == nil {
 		f["decision"] = "refused"
 		in.audit("access_escalation", f)
@@ -183,6 +231,9 @@ func (in *Instance) commandsDesc() string {
 	s := "Commandes exécutées sans confirmation, seules, derrière sudo ou -n, ou dans un sh -c : " + allow + "."
 	if len(src.Deny) > 0 {
 		s += " Refusées : " + strings.Join(src.Deny, " ; ") + "."
+	}
+	if in.Confirm == nil && in.Pending != nil {
+		return s + " Run sans terminal : toute autre commande non reconnue en lecture seule n'est pas exécutée, elle est mise en attente de validation par l'utilisateur après le run. Préfère les commandes de lecture reconnues (programmes de consultation et leurs options d'affichage, sans écriture de fichier, sans suivi sans fin, sans variable d'environnement modifiée) ; jamais de modification."
 	}
 	return s + " Toute autre commande est soumise à l'utilisateur, qui peut la refuser : ne demander que des commandes sans effet de bord (versions, inventaire de paquets, état), jamais de modification."
 }
@@ -247,10 +298,16 @@ func (in *Instance) authorizeCommand(ctx context.Context, where string, argv []s
 		in.audit("exec_decision", f)
 		return i18n.E("tpl.exec.unanswered", shown)
 	}
+	if in.Confirm == nil && in.Pending != nil {
+		it, _ := in.defer_(ctx, pending.Item{Kind: pending.KindExec, Where: where, Argv: argv, Level: access.Exec.String(), Reason: roErr.Error()})
+		f["decision"], f["pending"] = "deferred", it.ID
+		in.audit("exec_decision", f)
+		return i18n.E("tpl.exec.deferred", shown, roErr)
+	}
 	if in.Confirm == nil {
 		f["decision"] = "refused"
 		in.audit("exec_decision", f)
-		return i18n.E("tpl.exec.no_confirm", shown)
+		return i18n.E("tpl.exec.no_confirm", shown, roErr)
 	}
 	ans, err := in.Confirm(ctx, i18n.T("exec.ask", in.Name, where, in.highlight(shown), roErr))
 	if errors.Is(err, access.ErrNoAnswer) {

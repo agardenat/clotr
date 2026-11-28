@@ -91,7 +91,7 @@ func TestReadOnlyRefused(t *testing.T) {
 		"node -p code":       {"node", "-p", "require('fs').writeFileSync('/tmp/x','')"},
 		"node -e sans print": {"node", "-e", "process.versions.brotli"},
 		"node -p double":     {"node", "-p", "process.version", "x"},
-		"awk":                sh("dpkg -l | awk '{print $2}'"),
+		"awk system":         sh("dpkg -l | awk '{system($2)}'"),
 		"redirection":        sh("php -v > /tmp/out"),
 		"append":             sh("echo x >> /etc/hosts"),
 		"find -delete":       {"find", "/tmp", "-name", "x", "-delete"},
@@ -169,7 +169,7 @@ func TestReadOnlyRefused(t *testing.T) {
 			t.Errorf("%s : %q accepté", name, argv)
 		}
 	}
-	if err := ReadOnly(sh("sed -n 1p /etc/php.ini")); err == nil || !strings.Contains(err.Error(), "sed") {
+	if err := ReadOnly(sh("sed -i 1d /etc/php.ini")); err == nil || !strings.Contains(err.Error(), "sed") {
 		t.Fatalf("raison: %v", err)
 	}
 }

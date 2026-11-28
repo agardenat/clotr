@@ -97,6 +97,9 @@ func (o *Orchestrator) priorResults() []Result {
 	if o.capture != nil {
 		out = append(out, *o.capture)
 	}
+	if o.resumed != nil {
+		out = append(out, *o.resumed)
+	}
 	return out
 }
 

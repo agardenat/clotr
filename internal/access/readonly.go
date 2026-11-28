@@ -31,12 +31,12 @@ func ReadOnlyAllowing(argv []string, trusted []string, rules *Commands) error {
 	if err := CheckArgv(argv); err != nil {
 		return err
 	}
-	if err := sensitive(strings.Join(argv, " ")); err != nil {
-		return err
-	}
 	args := make([]arg, len(argv))
 	for i, a := range argv {
 		args[i] = arg{a, true}
+	}
+	if err := sensitiveArgs(args); err != nil {
+		return err
 	}
 	return checkCall(args, trusted, rules)
 }
@@ -52,8 +52,24 @@ func sudoLen(args []arg) int {
 	return n
 }
 
+func sudoList(rest []arg) bool {
+	if len(rest) == 0 || !rest[0].lit || rest[0].s != "-l" && rest[0].s != "-ll" {
+		return false
+	}
+	switch len(rest) {
+	case 1:
+		return true
+	case 3:
+		return rest[1].lit && rest[1].s == "-U"
+	}
+	return false
+}
+
 func checkCall(args []arg, trusted []string, rules *Commands) error {
 	if n := sudoLen(args); n > 0 {
+		if sudoList(args[n:]) {
+			return nil
+		}
 		args = args[n:]
 		if len(args) == 0 {
 			return fmt.Errorf("sudo sans commande")
@@ -85,7 +101,7 @@ func checkCall(args []arg, trusted []string, rules *Commands) error {
 	return nil
 }
 
-var sensitivePatterns = regexp.MustCompile(`(?i)/var/run/secrets|/run/secrets|serviceaccount|\.kube/config|/etc/shadow|/etc/gshadow|/etc/sudoers|environ|id_rsa|id_ecdsa|id_ed25519|\.pem\b|\.key\b|\.p12\b|\.pfx\b|\.jks\b|keytab|\.vault-token|\.[a-z_]*history\b|\.aws/credentials|\.docker/config\.json|password|passwd|secret|token|credential`)
+var sensitivePatterns = regexp.MustCompile(`(?i)/var/run/secrets|/run/secrets|serviceaccount|\.kube/config|/etc/shadow|/etc/gshadow|/etc/sudoers|\benviron\b|id_rsa|id_ecdsa|id_ed25519|\.pem\b|\.key\b|\.p12\b|\.pfx\b|\.jks\b|keytab|\.vault-token|\.[a-z_]*history\b|\.aws/credentials|\.docker/config\.json|password|htpasswd|opasswd|secret|token|credential`)
 
 func sensitive(text string) error {
 	if m := sensitivePatterns.FindString(text); m != "" {
@@ -95,12 +111,15 @@ func sensitive(text string) error {
 }
 
 func readOnlyScript(script string, trusted []string, rules *Commands) error {
-	if err := sensitive(script); err != nil {
-		return err
-	}
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(script), "")
 	if err != nil {
+		if serr := sensitive(script); serr != nil {
+			return serr
+		}
 		return fmt.Errorf("script illisible : %v", err)
+	}
+	if err := sensitiveScript(f, script); err != nil {
+		return err
 	}
 	var first error
 	fail := func(format string, a ...any) bool {
@@ -115,11 +134,11 @@ func readOnlyScript(script string, trusted []string, rules *Commands) error {
 		}
 		switch x := n.(type) {
 		case nil, *syntax.File, *syntax.Comment, *syntax.Word, *syntax.Lit, *syntax.SglQuoted, *syntax.DblQuoted,
-			*syntax.ParamExp, *syntax.CmdSubst, *syntax.ArithmExp,
+			*syntax.CmdSubst, *syntax.ArithmExp,
 			*syntax.BinaryArithm, *syntax.UnaryArithm, *syntax.ParenArithm, *syntax.Subshell, *syntax.Block,
-			*syntax.IfClause, *syntax.WhileClause, *syntax.ForClause, *syntax.WordIter, *syntax.CStyleLoop,
+			*syntax.IfClause, *syntax.WhileClause, *syntax.ForClause, *syntax.CStyleLoop,
 			*syntax.CaseClause, *syntax.CaseItem, *syntax.TestClause, *syntax.BinaryTest, *syntax.UnaryTest,
-			*syntax.ParenTest, *syntax.ArithmCmd, *syntax.LetClause, *syntax.TimeClause, *syntax.Assign,
+			*syntax.ParenTest, *syntax.ArithmCmd, *syntax.LetClause, *syntax.TimeClause,
 			*syntax.ArrayExpr, *syntax.ArrayElem, *syntax.ExtGlob, *syntax.BraceExp:
 			return true
 		case *syntax.Stmt:
@@ -139,7 +158,29 @@ func readOnlyScript(script string, trusted []string, rules *Commands) error {
 				return fail("%v", err)
 			}
 			return true
+		case *syntax.Assign:
+			if x.Name != nil && dangerousVar(x.Name.Value) {
+				return fail("affectation de %s", x.Name.Value)
+			}
+			return true
+		case *syntax.WordIter:
+			if x.Name != nil && dangerousVar(x.Name.Value) {
+				return fail("affectation de %s", x.Name.Value)
+			}
+			return true
+		case *syntax.ParamExp:
+			if x.Exp != nil && (x.Exp.Op == syntax.AssignUnset || x.Exp.Op == syntax.AssignUnsetOrNull) && x.Param != nil && dangerousVar(x.Param.Value) {
+				return fail("affectation de %s", x.Param.Value)
+			}
+			return true
 		case *syntax.CallExpr:
+			if len(x.Args) > 0 {
+				for _, as := range x.Assigns {
+					if as.Name == nil || !prefixVar(as.Name.Value) {
+						return fail("variable d'environnement %s devant une commande", varName(as))
+					}
+				}
+			}
 			if len(x.Args) == 0 {
 				return true
 			}
@@ -206,36 +247,35 @@ func wordArg(w *syntax.Word) arg {
 }
 
 var (
-	anyArgs = set("ls", "cat", "head", "tail", "grep", "egrep", "fgrep", "zgrep", "zcat", "wc", "cut", "tr", "stat", "file",
+	anyArgs = set("ls", "cat", "head", "grep", "egrep", "fgrep", "zgrep", "zcat", "wc", "cut", "tr", "stat", "file",
 		"readlink", "realpath", "basename", "dirname", "which", "whereis", "type", "uname", "id", "whoami", "groups",
-		"ps", "df", "du", "free", "uptime", "echo", "printf", "true", "false", "test", "[", "pwd", "nproc", "arch",
+		"df", "du", "free", "uptime", "echo", "printf", "true", "false", "test", "[", "pwd", "nproc", "arch",
 		"getconf", "lsb_release", "sha1sum", "sha256sum", "sha512sum", "md5sum", "strings", "od", "tac", "nl", "comm",
-		"diff", "cmp", "getent", "locale", "lscpu", "column", "expr", "seq", "dpkg-query", "ldconfig", "netstat",
+		"diff", "cmp", "locale", "lscpu", "column", "expr", "seq", "dpkg-query", "ldconfig", "netstat",
 		"lsof", "last", "lastlog", "who", "w", "getfacl", "lsattr", "pgrep", "ldd", "findmnt", "lsblk", "namei")
-	dateLongValue   = set("date", "file", "reference")
-	dateLongFlag    = set("utc", "universal", "rfc-email", "rfc-3339", "iso-8601", "debug", "help", "version", "resolution")
-	nodeEval        = set("-p", "--print", "-e", "--eval")
-	nodeVersionExpr = regexp.MustCompile(`^\s*(console\.log\(\s*)?process\.(version|versions(\.[A-Za-z0-9_]+|\[\s*["'][A-Za-z0-9_]+["']\s*\])?)(\s*\))?\s*;?\s*$`)
-	versionArgs     = []string{"-v", "-V", "--version", "-version", "version", "-m", "-i", "-M", "-l"}
-	versioned       = regexp.MustCompile(`^(php[0-9.]*|php-fpm[0-9.]*|php-cgi[0-9.]*|java|python[0-9.]*|node|nodejs|nginx|httpd|apache2|apachectl|apache2ctl|perl|ruby|go|mysql|mysqld|mariadb|postgres|psql|redis-server|curl|wget|git|openssl|dotnet|tomcat[0-9.]*|catalina\.sh|lighttpd|caddy|frankenphp|litespeed|lsphp[0-9.]*|rke2|k3s)$`)
-	dupTarget       = regexp.MustCompile(`^(\d+|-)$`)
-	sortOutput      = regexp.MustCompile(`^-[a-zA-Z]*o`)
-	pipName         = regexp.MustCompile(`^pip[0-9.]*$`)
-	rpmVerify       = regexp.MustCompile(`^-V[a-zA-Z]*$`)
-	dnfCached       = set("list", "info", "repoquery", "check-update")
-	dnfHistoryRead  = set("list", "info", "summary", "userinstalled")
-	findActions     = set("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls")
-	rpmWrite        = set("-i", "-U", "-F", "-e", "--install", "--upgrade", "--freshen", "--erase", "--import", "--rebuilddb", "--initdb", "--setperms", "--setugids", "--restore", "--delsign", "--addsign", "--reinstall")
-	ssWrite         = set("-K", "--kill")
-	journalWrite    = set("--rotate", "--flush", "--relinquish-var", "--smart-relinquish-var", "--sync", "--setup-keys", "--update-catalog")
-	ipWrite         = set("add", "del", "delete", "change", "replace", "set", "flush", "append", "save", "restore", "exec", "up", "down", "attach", "detach")
-	systemctlRead   = set("list-units", "list-unit-files", "list-timers", "list-sockets", "list-dependencies", "list-jobs", "status", "show", "cat", "is-active", "is-enabled", "is-failed", "is-system-running", "get-default")
-	kubectlRead     = set("get", "describe", "logs", "top", "version", "api-resources", "api-versions", "explain", "events")
-	kubectlGlobal   = set("-n", "--namespace", "--kubeconfig", "--context", "--cluster", "--user")
-	kubectlOption   = regexp.MustCompile(`^(-A|--all-namespaces|--(namespace|kubeconfig|context|cluster|user|request-timeout)=.*)$`)
-	kubectlRefused  = regexp.MustCompile(`^(-[a-zA-Z]*w[a-zA-Z]*|--watch(-only)?(=.*)?|--follow(=.*)?|--raw(=.*)?|-v(=.*)?|--v(=.*)?|--as(-group|-uid)?(=.*)?)$`)
-	kubectlFollow   = regexp.MustCompile(`^-[a-zA-Z]*f[a-zA-Z]*$`)
-	dpkgRead        = set("-l", "-L", "-s", "-S", "-p", "--list", "--listfiles", "--status", "--search", "--print-avail", "--print-architecture", "--version")
+	dateLongValue  = set("date", "file", "reference")
+	dateLongFlag   = set("utc", "universal", "rfc-email", "rfc-3339", "iso-8601", "debug", "help", "version", "resolution")
+	nodeEval       = set("-p", "--print", "-e", "--eval")
+	versionArgs    = []string{"-v", "-V", "--version", "-version", "version", "-m", "-i", "-M", "-l"}
+	versioned      = regexp.MustCompile(`^(php[0-9.]*|php-fpm[0-9.]*|php-cgi[0-9.]*|java|python[0-9.]*|node|nodejs|nginx|httpd|apache2|apachectl|apache2ctl|perl|ruby|go|mysql|mysqld|mariadb|postgres|psql|redis-server|curl|wget|git|openssl|dotnet|tomcat[0-9.]*|catalina\.sh|lighttpd|caddy|frankenphp|litespeed|lsphp[0-9.]*|rke2|k3s)$`)
+	dupTarget      = regexp.MustCompile(`^(\d+|-)$`)
+	sortOutput     = regexp.MustCompile(`^-[a-zA-Z]*o`)
+	pipName        = regexp.MustCompile(`^pip[0-9.]*$`)
+	rpmVerify      = regexp.MustCompile(`^-V[a-zA-Z]*$`)
+	dnfCached      = set("list", "info", "repoquery", "check-update")
+	dnfHistoryRead = set("list", "info", "summary", "userinstalled")
+	findActions    = set("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls")
+	rpmWrite       = set("-i", "-U", "-F", "-e", "--install", "--upgrade", "--freshen", "--erase", "--import", "--rebuilddb", "--initdb", "--setperms", "--setugids", "--restore", "--delsign", "--addsign", "--reinstall")
+	ssWrite        = set("-K", "--kill")
+	journalWrite   = set("--rotate", "--flush", "--relinquish-var", "--smart-relinquish-var", "--sync", "--setup-keys", "--update-catalog")
+	ipWrite        = set("add", "del", "delete", "change", "replace", "set", "flush", "append", "save", "restore", "exec", "up", "down", "attach", "detach")
+	systemctlRead  = set("list-units", "list-unit-files", "list-timers", "list-sockets", "list-dependencies", "list-jobs", "status", "show", "cat", "is-active", "is-enabled", "is-failed", "is-system-running", "get-default")
+	kubectlRead    = set("get", "describe", "logs", "top", "version", "api-resources", "api-versions", "explain", "events")
+	kubectlGlobal  = set("-n", "--namespace", "--kubeconfig", "--context", "--cluster", "--user")
+	kubectlOption  = regexp.MustCompile(`^(-A|--all-namespaces|--(namespace|kubeconfig|context|cluster|user|request-timeout)=.*)$`)
+	kubectlRefused = regexp.MustCompile(`^(-[a-zA-Z]*w[a-zA-Z]*|--watch(-only)?(=.*)?|--follow(=.*)?|--raw(=.*)?|-v(=.*)?|--v(=.*)?|--as(-group|-uid)?(=.*)?)$`)
+	kubectlFollow  = regexp.MustCompile(`^-[a-zA-Z]*f[a-zA-Z]*$`)
+	dpkgRead       = set("-l", "-L", "-s", "-S", "-p", "--list", "--listfiles", "--status", "--search", "--print-avail", "--print-architecture", "--version")
 )
 
 func set(items ...string) map[string]bool {
@@ -278,6 +318,11 @@ func readOnlyCall(args []arg) error {
 		first = rest[0].s
 	}
 	switch {
+	case programChecks[prog] != nil:
+		if versioned.MatchString(prog) && versionOnly(rest) {
+			return nil
+		}
+		return programChecks[prog](prog, rest)
 	case anyArgs[prog]:
 		if prog == "ldconfig" && (len(rest) != 1 || first != "-p") {
 			return fmt.Errorf("ldconfig : seul -p est en lecture seule")
@@ -288,11 +333,11 @@ func readOnlyCall(args []arg) error {
 			return err
 		}
 		for _, a := range rest {
-			if findActions[a.s] {
+			if findActions[a.s] && a.s != "-exec" && a.s != "-execdir" {
 				return fmt.Errorf("find %s écrit ou exécute", a.s)
 			}
 		}
-		return nil
+		return findExec(rest)
 	case prog == "sort":
 		if err := literal(); err != nil {
 			return err
@@ -440,10 +485,12 @@ func readOnlyCall(args []arg) error {
 		if err := literal(); err != nil {
 			return err
 		}
-		if !nodeVersionExpr.MatchString(rest[1].s) || first != "-p" && first != "--print" && !strings.HasPrefix(strings.TrimSpace(rest[1].s), "console.log(") {
-			return fmt.Errorf("%s %s : seule la lecture de process.version ou process.versions est admise", prog, first)
+		if err := nodeExpression(rest[1].s, first != "-p" && first != "--print"); err != nil {
+			return fmt.Errorf("%s %s : %v ; seules les lectures de process.version(s) et des constantes des modules intégrés sont admises", prog, first, err)
 		}
 		return nil
+	case strings.HasPrefix(prog, "python") && len(rest) >= 3 && first == "-m" && rest[1].lit && pipName.MatchString(rest[1].s):
+		return readOnlyCall(rest[1:])
 	case versioned.MatchString(prog):
 		if err := literal(); err != nil {
 			return err

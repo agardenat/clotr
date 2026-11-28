@@ -29,6 +29,7 @@ import (
 	"github.com/agardenat/clotr/internal/gitsync"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/netx"
+	"github.com/agardenat/clotr/internal/pending"
 )
 
 type Inventory struct {
@@ -98,6 +99,7 @@ type Instance struct {
 	Confirm    func(ctx context.Context, question string) (access.Answer, error)
 	Trusted    func() []string
 	Approvals  *access.Approvals
+	Pending    *pending.Store
 	Highlight  func(string) string
 
 	Mode         string

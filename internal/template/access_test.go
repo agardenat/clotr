@@ -22,6 +22,8 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/driver/ssh"
+	"github.com/agardenat/clotr/internal/pending"
+	"github.com/agardenat/clotr/internal/tools"
 )
 
 type execSSH struct {
@@ -1008,4 +1010,51 @@ func TestConcurrentSameCommandAskedOnce(t *testing.T) {
 		t.Fatal("attente non interrompue par l'annulation")
 	}
 	held()
+}
+
+func TestDeferredWithoutTerminal(t *testing.T) {
+	store := &pending.Store{}
+	dir := t.TempDir()
+	store.Begin(filepath.Join(dir, pending.FileName))
+	in := &Instance{Name: "demo", Pending: store}
+	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t2"})
+	ctx = context.WithValue(ctx, toolCallKey{}, toolCall{name: "demo_ssh_exec", raw: json.RawMessage(`{"host":"h1","argv":["demo-tool","--run"]}`)})
+	argv := []string{"demo-tool", "--run"}
+	err := in.authorizeCommand(ctx, "h1", argv)
+	queued := func(err error) bool {
+		return err != nil && (strings.Contains(err.Error(), "attente") || strings.Contains(err.Error(), "queued"))
+	}
+	if !queued(err) {
+		t.Fatalf("commande non mise en attente : %v", err)
+	}
+	if err := in.authorizeCommand(ctx, "h1", argv); err == nil {
+		t.Fatal("commande en attente exécutée")
+	}
+	if err := in.authorizeCommand(ctx, "h1", []string{"cat", "/etc/os-release"}); err != nil {
+		t.Fatalf("lecture seule mise en attente : %v", err)
+	}
+	items, err := pending.Load(filepath.Join(dir, pending.FileName))
+	if err != nil || len(items) != 1 {
+		t.Fatalf("pending.json : %v %+v", err, items)
+	}
+	it := items[0]
+	if it.Kind != pending.KindExec || it.Instance != "demo" || it.Tool != "demo_ssh_exec" || it.Where != "h1" || it.Task != "t2" || it.Status != pending.StatusPending || !strings.Contains(string(it.Args), "demo-tool") || it.Reason == "" {
+		t.Fatalf("élément : %+v", it)
+	}
+	if !strings.Contains(in.commandsDesc(), "mise en attente") {
+		t.Fatalf("consigne sans terminal : %s", in.commandsDesc())
+	}
+	in.Approve(argv)
+	if err := in.authorizeCommand(ctx, "h1", argv); err != nil {
+		t.Fatalf("commande validée refusée : %v", err)
+	}
+	if _, err := in.escalate(ctx, "demo_run_pod", access.Create, json.RawMessage(`{"image":"x"}`)); !queued(err) {
+		t.Fatalf("élévation non mise en attente : %v", err)
+	}
+	if got := store.Items(); len(got) != 2 || got[1].Kind != pending.KindAccess || got[1].Level != "create" || got[1].Tool != "demo_run_pod" {
+		t.Fatalf("élévation : %+v", got)
+	}
+	if _, err := in.escalate(WithGrant(ctx, access.Create), "demo_run_pod", access.Create, nil); err != nil {
+		t.Fatalf("accord explicite ignoré : %v", err)
+	}
 }

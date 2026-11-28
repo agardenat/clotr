@@ -2,6 +2,16 @@ package i18n
 
 func init() {
 	add(accessMsgs)
+	for k, v := range accessReportMsgs {
+		reportMsgs[k] = v
+	}
+}
+
+var accessReportMsgs = map[string]msg{
+	"pending.request":      {"Resume of turn %d: commands queued during that run without a terminal have been approved by the user and run. Write the full, up-to-date report of that turn: keep its findings and conclusions, corrected or completed by these outputs.", "Reprise du tour %d : les commandes mises en attente pendant ce run sans terminal ont été validées par l'utilisateur et exécutées. Rédige le rapport complet et à jour de ce tour : reprends ses constats et ses conclusions, corrigés ou complétés par ces sorties."},
+	"pending.title":        {"Commands awaiting approval", "Commandes en attente de validation"},
+	"pending.report_intro": {"Run without a terminal: these commands were not run, the conclusions above do without them. To approve them and complete this report: `clotr run -s %s --pending`.", "Run sans terminal : ces commandes n'ont pas été exécutées, les conclusions ci-dessus s'en passent. Pour les valider et compléter ce rapport : `clotr run -s %s --pending`."},
+	"pending.head":         {"| Task | Instance | Host | Command | Reason |", "| Tâche | Instance | Hôte | Commande | Motif |"},
 }
 
 var accessMsgs = map[string]msg{
@@ -20,8 +30,29 @@ var accessMsgs = map[string]msg{
 	"exec.unanswered":             {"instance %s, %s: no answer, %s not run", "instance %s, %s : pas de réponse, %s non exécutée"},
 	"tpl.exec.unanswered":         {"command %s not run: the user did not answer. Do not ask for it again, continue without it and list it in your gaps", "commande %s non exécutée : l'utilisateur n'a pas répondu. Ne la redemande pas, continue sans elle et indique-la dans tes lacunes"},
 	"tpl.exec.denied":             {"command %s refused by commands.deny", "commande %s refusée par commands.deny"},
-	"tpl.exec.no_confirm":         {"command %s is not in commands.allow and cannot be confirmed (no terminal)", "commande %s hors de commands.allow et confirmation impossible (pas de terminal)"},
+	"tpl.exec.no_confirm":         {"command %s is not in commands.allow and cannot be confirmed (no terminal; not recognized as read-only: %v)", "commande %s hors de commands.allow et confirmation impossible (pas de terminal ; non reconnue en lecture seule : %v)"},
+	"tpl.exec.deferred":           {"command %s not run: no terminal, it is queued for the user's approval after the run (not recognized as read-only: %v). Do not ask for it again; use recognized read-only commands, and if only this command can settle a point, list it in your gaps (in CVE mode, report the asset as unknown, citing the queued command)", "commande %s non exécutée : pas de terminal, elle est mise en attente de validation par l'utilisateur après le run (non reconnue en lecture seule : %v). Ne la redemande pas ; utilise des commandes de lecture reconnues, et si elle seule permet de conclure, indique-la dans tes lacunes (en mode CVE, signale l'actif en unknown en citant la commande en attente)"},
+	"tpl.escalate.deferred":       {"%s not run: it requires access level %s, instance %s is at %s, and there is no terminal; the call is queued for the user's approval after the run. Do not call it again; if only this call can settle a point, list it in your gaps (in CVE mode, report the asset as unknown, citing the queued call)", "%s non exécuté : il exige le niveau d'accès %s, l'instance %s est en %s et il n'y a pas de terminal ; l'appel est mis en attente de validation par l'utilisateur après le run. Ne le rappelle pas ; si lui seul permet de conclure, indique-le dans tes lacunes (en mode CVE, signale l'actif en unknown en citant l'appel en attente)"},
+	"cli.flag.pending":            {"replays, after approval, the commands queued by a previous run without a terminal, then updates its report (requires -s and a terminal)", "rejoue, après validation, les commandes mises en attente par un run précédent sans terminal, puis met à jour son rapport (exige -s et un terminal)"},
+	"pending.args":                {"--pending takes no request: it resumes the queued commands of the session", "--pending ne prend pas de demande : il reprend les commandes en attente de la session"},
+	"pending.session_required":    {"--pending requires -s <session>", "--pending exige -s <session>"},
+	"pending.terminal":            {"--pending asks for each command and needs a terminal: %v", "--pending demande la validation de chaque commande et exige un terminal : %v"},
+	"pending.none":                {"session %s has no queued command", "la session %s n'a aucune commande en attente"},
+	"pending.instance_missing":    {"instance %s is not active for this run", "instance %s inactive pour ce run"},
+	"pending.intro":               {"[clotr] %d command(s) queued in turn %d, run without a terminal: approve each one (nothing runs before the answers).", "[clotr] %d commande(s) mise(s) en attente au tour %d, run sans terminal : valide chacune (rien n'est exécuté avant les réponses)."},
+	"pending.ask":                 {"\n[clotr] %d/%d instance %s, %s, task %s: run %s ? (%s) [y]es / [n]o: ", "\n[clotr] %d/%d instance %s, %s, tâche %s : exécuter %s ? (%s) [o]ui / [n]on : "},
+	"pending.step":                {"commands approved after turn %d", "commandes validées après le tour %d"},
+	"pending.line":                {"%d command(s) queued for approval (%s): clotr run -s %s --pending", "%d commande(s) en attente de validation (%s) : clotr run -s %s --pending"},
+	"pending.save_failed":         {"queued commands not saved: %v", "commandes en attente non enregistrées : %v"},
 	"tpl.exec.unconfirmed":        {"command %s not confirmed: %v", "commande %s non confirmée : %v"},
+	"cli.sessions_commands.short": {"Replays the commands submitted to the user in the session audits against the current read-only analysis and templates", "Rejoue les commandes soumises à l'utilisateur dans les audits des sessions avec l'analyse de lecture seule et les templates actuels"},
+	"cli.flag.commands_all":       {"also list the commands that now run without a question", "liste aussi les commandes qui passent désormais sans question"},
+	"commands.summary":            {"%d audits, %d distinct commands submitted to the user: %d would still be, %d now run without a question", "%d audits, %d commandes distinctes soumises à l'utilisateur : %d le seraient encore, %d passent désormais sans question"},
+	"commands.passing":            {"Now run without a question:", "Passent désormais sans question :"},
+	"commands.denied":             {"refused by commands.deny", "refusée par commands.deny"},
+	"commands.missing":            {"Instances absent from the configuration or without a template (engine analysis only): %s", "Instances absentes de la configuration ou sans template (analyse du moteur seule) : %s"},
+	"commands.ignored":            {"%d invalid argv ignored (empty program or punctuation only)", "%d argv invalides ignorés (programme vide ou ponctuation seule)"},
+	"commands.trusted_note":       {"Detection commands of CVE sheets are trusted during a run and are not replayed here.", "Les commandes de détection des fiches CVE sont de confiance pendant un run et ne sont pas rejouées ici."},
 	"tpl.exec.refused":            {"command %s refused by the user", "commande %s refusée par l'utilisateur"},
 	"tpl.access.required":         {"%s requires --access %s", "%s exige --access %s"},
 	"tpl.http.level":              {"levels: unknown level %q (exec, create)", "levels : niveau %q inconnu (exec, create)"},

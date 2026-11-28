@@ -82,6 +82,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 | `clotr run "<demande>"` | plan, sous-agents, rapport |
 | `clotr run -s <session\|last> "<demande>"` | nouveau tour d'une session |
 | `clotr sessions` | liste des sessions |
+| `clotr sessions commands [--all]` | commandes soumises à l'utilisateur dans les audits, rejouées avec l'analyse de lecture seule et les templates actuels |
 | `clotr session <nom\|last>` | rapport d'un tour, `--evidence`, `--synthesize`, `--export` |
 | `clotr export <fichier.md\|->` | Markdown vers `.docx` ou `.pdf` |
 | `clotr sync` | exécution des templates de démarrage |
@@ -96,6 +97,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 | `-m role=provider/model` | modèle forcé pour un rôle |
 | `--sovereign any\|prefer\|require`, `--confidential` | politique souveraine |
 | `--access read\|exec\|create` | niveau d'accès |
+| `--pending` | avec `-s`, validation et exécution des commandes mises en attente par un run sans terminal, rapport mis à jour |
 | `--lang`, `--ui-lang` | langue du rapport, de l'interface |
 | `--web yes\|no` | recherche web |
 | `-o`, `--json`, `--raw`, `-q`, `--plain` | sortie et progression |
@@ -173,6 +175,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 
 - Niveaux `read`, `exec`, `create` par client ou par `--access`.
 - `exec` : motifs `commands`, analyse de lecture seule, confirmation sur le terminal.
+- Sans terminal : commande non reconnue mise en attente (`pending.json`, section du rapport), reprise par `run -s <session> --pending`.
 - `create` : ressources éphémères suivies et supprimées en fin de tour.
 - `ssh_paths` autorisés et interdits, valeurs sensibles masquées.
 - `known_hosts` propre à clotr, `accept-new`, `accept-changed`, `strict`, `insecure`.
