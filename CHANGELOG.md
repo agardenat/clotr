@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.97.1] - 2026-11-28
+- Correction : récapitulatif CVE, icône et « En l'état » d'une entrée du plan d'action regroupant des actifs (segment du chemin ou nom court de l'hôte dans le titre).
+
 ## [0.97.0] - 2026-11-28
 - Modification : avec le contrôle d'intégrité, surcharge `local/` de `max_requests_per_minute` d'un fournisseur (`providers` : `name`, `max_requests_per_minute`, sans `!remove`).
 

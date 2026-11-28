@@ -3,8 +3,10 @@ package cve
 import (
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/agardenat/clotr/internal/i18n"
 	"golang.org/x/text/unicode/norm"
@@ -218,10 +220,54 @@ func (s *recapSubject) cardsFor(text string) []*recapCard {
 			}
 		}
 	}
+	if len(out) == 0 {
+		lower := strings.ToLower(text)
+		for _, c := range s.positive {
+			if slices.ContainsFunc(assetTokens(c.asset), func(tok string) bool { return containsWord(lower, tok) }) {
+				out = append(out, c)
+			}
+		}
+	}
 	if len(out) == 0 && len(s.positive) == 1 {
 		return s.positive
 	}
 	return out
+}
+
+func assetTokens(asset string) []string {
+	parts := strings.Split(strings.ToLower(asset), "/")
+	var out []string
+	if len(parts) > 2 {
+		out = append(out, parts[1:len(parts)-1]...)
+	}
+	if host, _, ok := strings.Cut(parts[len(parts)-1], "."); ok {
+		out = append(out, host)
+	}
+	return slices.DeleteFunc(out, func(t string) bool { return len(t) <= 4 })
+}
+
+func containsWord(text, word string) bool {
+	for i := 0; ; {
+		j := strings.Index(text[i:], word)
+		if j < 0 {
+			return false
+		}
+		start, end := i+j, i+j+len(word)
+		if (start == 0 || !wordRune(text[:start], true)) && (end == len(text) || !wordRune(text[end:], false)) {
+			return true
+		}
+		i = start + 1
+	}
+}
+
+func wordRune(s string, last bool) bool {
+	var r rune
+	if last {
+		r, _ = utf8.DecodeLastRuneInString(s)
+	} else {
+		r, _ = utf8.DecodeRuneInString(s)
+	}
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_'
 }
 
 const groupFrom = 3

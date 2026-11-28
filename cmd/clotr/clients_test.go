@@ -11,7 +11,7 @@ import (
 
 func TestWriteClients(t *testing.T) {
 	cfg := &config.Config{Clients: []config.Client{
-		{Name: "acme", Label: "Acme", Projects: []config.Project{{Name: "PRJ-AAAA", Label: "Data"}, {Name: "PRJ-BBBB"}}},
+		{Name: "acme", Label: "Acme", Projects: []config.Project{{Name: "data-platform", Label: "Data"}, {Name: "web"}}},
 		{Name: "solo"},
 	}}
 	var buf bytes.Buffer
@@ -34,7 +34,7 @@ func TestWriteClients(t *testing.T) {
 	if err := writeClients(&buf, cfg, false); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "PRJ-AAAA (Data), PRJ-BBBB") {
+	if !strings.Contains(buf.String(), "data-platform (Data), web") {
 		t.Fatalf("texte : %q", buf.String())
 	}
 }

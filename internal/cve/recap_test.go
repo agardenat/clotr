@@ -170,3 +170,68 @@ func TestCleanEvidenceRanges(t *testing.T) {
 		}
 	}
 }
+
+const groupedPlanReport = `# CVE-2026-33333 — kernel
+
+## 3. Actifs positifs
+
+**🟠 dl-x/sales-prd/sales-prd-master0.cloud.example.test** (hôte, rhel 8.10)
+
+- **Exposition** : **limitée** : réseau interne [E001]
+
+**🟠 dl-x/sales-prd/sales-prd-executor1.cloud.example.test** (hôte, rhel 8.10)
+
+- **Exposition** : **limitée** : réseau interne [E002]
+
+**🟡 dl-x/freeipa/idmnode18.cloud.example.test** (hôte, rhel 9.6)
+
+- **Exposition** : **neutralisée par la configuration** : option absente [E003]
+
+**🚨 dl-x/sales-prod/sales-prod-master0.cloud.example.test** (hôte, rhel 8.10)
+
+- **Exposition** : **exposée** : publié [E004]
+
+## 6. Plan d'action
+
+1. **sales-prd (2 hôtes : master0, executor1)**
+   - Pourquoi positif : noyau ancien
+   - Correctif définitif : image CDP
+2. **FreeIPA idmnode18 (RHEL 9.6)**
+   - Mitigation immédiate : aucune
+   - Correctif définitif : image FreeIPA
+3. **sales-prod master0**
+   - Correctif définitif : image CDP
+`
+
+func TestRecapMatchesGroupedPlanEntries(t *testing.T) {
+	defer i18n.SetReport(i18n.Report())
+	i18n.SetReport("fr")
+	got := Recap(groupedPlanReport)
+	for _, want := range []string{
+		"## 🟠 CVE-2026-33333 · sales-prd (2 hôtes : master0, executor1)\n\n- **En l'état** : 🟠 limitée\n",
+		"## 🟡 CVE-2026-33333 · FreeIPA idmnode18 (RHEL 9.6)\n\n- **En l'état** : 🟡 neutralisée par la configuration\n",
+		"## 🚨 CVE-2026-33333 · sales-prod master0\n\n- **En l'état** : 🚨 exposé\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestContainsWord(t *testing.T) {
+	for _, c := range []struct {
+		text, word string
+		want       bool
+	}{
+		{"sales-prd (2 hôtes)", "sales-prd", true},
+		{"sales-prod master0", "sales-prd", false},
+		{"sales-prd-gateway", "sales-prd", false},
+		{"freeipa idmnode18.", "idmnode18", true},
+		{"idmnode180", "idmnode18", false},
+		{"é-freeipa", "freeipa", false},
+	} {
+		if got := containsWord(c.text, c.word); got != c.want {
+			t.Errorf("containsWord(%q, %q) = %v", c.text, c.word, got)
+		}
+	}
+}
