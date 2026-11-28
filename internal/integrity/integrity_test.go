@@ -281,8 +281,9 @@ func TestInit(t *testing.T) {
 	mu.Lock()
 	exempt = false
 	mu.Unlock()
+	realTrust, _ := filepath.EvalSymlinks(trust)
 	ownerOK = func(p string) error {
-		if p == trust {
+		if p == realTrust {
 			return nil
 		}
 		return errors.New("writable")
