@@ -24,7 +24,7 @@ const recapReport = `> CVE-2026-11111 et CVE-2026-22222 sur le client
 
 **🚨 vm-a** (hôte, RHEL 9)
 
-- **Trouvé** : openjdk 17.0.1 [E010][E011]
+- **Trouvé** : openjdk 17.0.1 [E010-E011][E012, E013]
 - **Exposition** : **exposée** : port 8443 publié [E012]
 - **Test déterminant** : java -version
 
@@ -154,6 +154,19 @@ func TestRecapGroupsUnknown(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("absent : %q\n%s", want, got)
+		}
+	}
+}
+
+func TestCleanEvidenceRanges(t *testing.T) {
+	for in, want := range map[string]string{
+		"réuni [E024-E031][E065-E071].": "réuni.",
+		"port publié [E012, E013] ici":  "port publié ici",
+		"vu (E2.014) puis [E7]":         "vu puis",
+		"CVE-2026-1 [ECMA] reste":       "CVE-2026-1 [ECMA] reste",
+	} {
+		if got := clean(in); got != want {
+			t.Errorf("%q : %q", in, got)
 		}
 	}
 }

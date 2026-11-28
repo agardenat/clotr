@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	evidenceRef = regexp.MustCompile(`\s*(\[E\d+\]|\(E\d+\))+`)
+	evidenceRef = regexp.MustCompile(`\s*(\[E\d+(?:\.\d+)?(?:\s*[-–,;/]\s*E?\d+(?:\.\d+)?)*\]|\(E\d+(?:\.\d+)?(?:\s*[-–,;/]\s*E?\d+(?:\.\d+)?)*\))+`)
 	sectionHead = regexp.MustCompile(`^##\s+(\d+)\.`)
 	planEntry   = regexp.MustCompile(`^\d+[.)]\s+\*\*(.+?)\*\*\s*:?\s*(.*)$`)
 	planBullet  = regexp.MustCompile(`^\s*[-*]\s+(?:\*\*)?([^:*]{2,40}?)(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.*)$`)

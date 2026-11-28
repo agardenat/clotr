@@ -385,8 +385,16 @@ func TestPoolKeyFromVault(t *testing.T) {
 			t.Fatalf("%s: %+v %v", cmd, res, err)
 		}
 	}
-	if len(refs) != 1 || refs[0] != "kv/acme/adm#private_key" {
+	if _, err := pool.Exec(context.Background(), Endpoint{Host: h, Port: port, User: "admin", KeyVault: "kv/acme/adm", KeyField: "ssh_key"}, "true", 10); err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 2 || refs[0] != "kv/acme/adm#private_key" || refs[1] != "kv/acme/adm#ssh_key" {
 		t.Fatalf("lectures Vault: %q", refs)
+	}
+	for ref, want := range map[[2]string]string{{"kv/a", ""}: "kv/a#private_key", {"kv/a", "key"}: "kv/a#key", {"kv/a#pem", "key"}: "kv/a#pem"} {
+		if got := KeyRef(ref[0], ref[1]); got != want {
+			t.Errorf("KeyRef(%q, %q) = %q, attendu %q", ref[0], ref[1], got, want)
+		}
 	}
 	nov, _ := NewPool(Options{KnownHosts: filepath.Join(t.TempDir(), "known_hosts"), HostKey: AcceptNew})
 	defer nov.Close()

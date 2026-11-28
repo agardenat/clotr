@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/agardenat/clotr/internal/config"
+	"github.com/agardenat/clotr/internal/export"
 	"github.com/agardenat/clotr/internal/session"
 )
 
@@ -196,5 +197,71 @@ func TestDocumentProjects(t *testing.T) {
 	}
 	if got := documentProjects(nil, []string{"P-1"}); len(got) != 1 || got[0].Label != "" {
 		t.Fatalf("sans configuration : %+v", got)
+	}
+}
+
+func TestClientNames(t *testing.T) {
+	cfg := &config.Config{Clients: []config.Client{
+		{Name: "acme", Label: "ACME Corp", Projects: []config.Project{{Name: "P-1", Label: "Alpha"}, {Name: "P-2"}}},
+		{Name: "globex", Projects: []config.Project{{Name: "P-3"}}},
+	}}
+	turn := session.Turn{Clients: []string{"acme"}, Projects: []string{"P-1", "P-2", "P-3"}}
+	if got := strings.Join(clientNames(cfg, turn), ","); got != "Alpha,ACME Corp,globex" {
+		t.Fatalf("noms : %q", got)
+	}
+	if got := strings.Join(clientNames(nil, turn), ","); got != "acme" {
+		t.Fatalf("sans configuration : %q", got)
+	}
+}
+
+const recordDoc = `
+def render(doc):
+    body = '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>%s</w:t></w:r></w:p></w:body></w:document>' % xml.escape("|".join([doc.title, doc.audience, doc.request, doc.session] + [p.name for p in doc.projects]))
+    return zip.write({"[Content_Types].xml": "<Types/>", "word/document.xml": body})
+`
+
+func TestExportReportAddsClientRecap(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "doc.yaml"), []byte("name: doc\nkind: document\nscript: doc.star\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "doc.star"), []byte(recordDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Templates: config.TemplatesConf{Dir: dir},
+		Export:    config.ReportExport{Template: "doc"},
+		Clients:   []config.Client{{Name: "acme", Label: "ACME Société", Projects: []config.Project{{Name: "P-1"}}}},
+	}
+	s, err := session.Create(t.TempDir(), false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.NewTurn("CVE-2026-11111 sur acme"); err != nil {
+		t.Fatal(err)
+	}
+	s.Turns[0].CVE, s.Turns[0].Clients, s.Turns[0].Projects = []string{"CVE-2026-11111"}, []string{"acme"}, []string{"P-1"}
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	if err := exportReport(t.Context(), &options{exportFmt: "docx"}, cfg, s, 1, recapSource); err != nil {
+		t.Fatal(err)
+	}
+	turn := s.Turns[0]
+	name := "ACME-SOCIETE_CVE-2026-11111_RECAP_" + turn.Time.Local().Format("20060102")
+	for _, p := range []string{filepath.Join(cwd, turn.ReportName()+".docx"), filepath.Join(cwd, name+".docx"), filepath.Join(s.TurnDir(1), name+".docx")} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("export absent : %v", err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(cwd, name+".docx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := export.Read("docx", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Text; !strings.Contains(got, "Récapitulatif CVE-2026-11111|client|||P-1") {
+		t.Fatalf("document client : %q", got)
 	}
 }

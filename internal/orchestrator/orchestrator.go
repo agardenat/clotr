@@ -874,7 +874,9 @@ func (o *Orchestrator) validatePlan(p *Plan) error {
 
 func isDiagramTool(n string) bool { return slices.Contains(dat.ToolNames(), n) }
 
-func notForTasks(n string) bool { return isDiagramTool(n) || n == watch.ToolName }
+func notForTasks(n string) bool {
+	return isDiagramTool(n) || n == watch.ToolName || n == watch.TimerName
+}
 
 func pruneSameRoleDeps(p *Plan) map[string][]string {
 	roles := map[string]string{}

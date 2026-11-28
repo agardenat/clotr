@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.92.0] - 2026-11-28
+- Ajout : `clotr secrets check [cible…]`, identifiants de Vault, des sources, tunnels et instances résolus sans saisie, code retour 1 si une saisie serait nécessaire.
+- Correction : en arrière-plan de son terminal, clotr ne demande plus rien (identifiants, questions) et échoue aussitôt au lieu de rester suspendu.
+- Modification : sans terminal, pas de connexion Vault OIDC ni OAuth MCP par navigateur, erreur immédiate.
+- Ajout : `key_field` sur les connecteurs `ssh` (attribut de cible `ssh_key_field`) et les tunnels, champ de la clé SSH lue par `key_vault` quand la référence n'a pas de `#champ`.
+- Ajout : `--export` d'un tour CVE, récapitulatif exporté aussi au même format, document destiné au client (`doc.audience = "client"`, sans demande, ticket ni session), nommé par les labels de projet et de client `<LABELS>_CVE-…_RECAP_<AAAAMMJJ>`.
+- Correction : récapitulatif CVE, plages et listes de preuves (`[E024-E031]`, `[E012, E013]`) retirées.
+- Ajout : mode suivi, durée de capture lue dans la demande (outil `watch_duration`), `--watch-for` prioritaire.
+- Ajout : mode suivi, minuteur sous le tableau pendant l'attente (écoulé, durée, restant), heure d'arrêt affichée en `--plain`, arrêt à la fin de la durée ou sur Ctrl-C.
+
 ## [0.91.0] - 2026-11-27
 - Modification : noms de rapport `<PROJET>_<CLIENT>_CVE-…_<AAAAMMJJ>` (séparateur `_`, projets du périmètre en tête, plusieurs CVE jointes par `+`) ; projet(s) en tête du titre du document exporté.
 - Modification : export ou resynthèse d'une session antérieure, projets déduits des instances proposées au tour.

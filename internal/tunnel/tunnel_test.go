@@ -172,3 +172,27 @@ func TestTunnelTargetTimeoutKeepsChain(t *testing.T) {
 		t.Fatalf("ouvertures %d, avertissements %v", opens, warnings)
 	}
 }
+
+func TestCheckCredentials(t *testing.T) {
+	_, pem := testutil.NewSSHKey(t)
+	fakeVault(t, map[string]string{"kv/jump#password": "pw", "kv/jump#username": "ops", "kv/jump#private_key": string(pem), "kv/alt#key": string(pem)})
+	tty := creds.OpenTTY
+	creds.OpenTTY = func() (*creds.Console, error) { return nil, errors.New("pas de terminal") }
+	t.Cleanup(func() { creds.OpenTTY = tty })
+	ctx := context.Background()
+	if err := CheckCredentials(ctx, "ok", config.Tunnel{PasswordVault: "kv/jump#password"}); err != nil {
+		t.Fatalf("mot de passe et compte dans Vault : %v", err)
+	}
+	if err := CheckCredentials(ctx, "key", config.Tunnel{User: "ops", KeyVault: "kv/jump"}); err != nil {
+		t.Fatalf("clé dans Vault : %v", err)
+	}
+	if err := CheckCredentials(ctx, "field", config.Tunnel{User: "ops", KeyVault: "kv/alt", KeyField: "key"}); err != nil {
+		t.Fatalf("champ de clé configuré : %v", err)
+	}
+	if err := CheckCredentials(ctx, "nokey", config.Tunnel{User: "ops", KeyVault: "kv/jump#absente"}); err == nil || !strings.Contains(err.Error(), "kv/jump#absente") {
+		t.Fatalf("clé absente : %v", err)
+	}
+	if err := CheckCredentials(ctx, "prompt", config.Tunnel{User: "ops"}); err == nil {
+		t.Fatal("mot de passe à saisir accepté sans terminal")
+	}
+}

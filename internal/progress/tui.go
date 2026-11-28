@@ -88,7 +88,13 @@ type board struct {
 	ready     bool
 	pending   []string
 	ask       promptMsg
+	wait      waitTimer
 	now       func() time.Time
+}
+
+type waitTimer struct {
+	active       bool
+	start, until time.Time
 }
 
 func newBoard(maxSteps int) *board {
@@ -148,7 +154,11 @@ func (b *board) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "source":
 			return b, b.println(stActive.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
 		case "waiting":
+			b.wait = waitTimer{active: true, start: b.now(), until: m.Until}
 			return b, b.println(stWarn.Bold(true).Render(ansi.Wrap(m.Detail, max(b.width-1, 20), "")))
+		case "wait_end":
+			b.wait = waitTimer{}
+			return b, nil
 		case "evidence":
 			return b, b.println(stFaint.Render(ansi.Wrap(m.Task+" · "+m.Detail, max(b.width-1, 20), "")))
 		case "finding", "gap":
@@ -467,6 +477,11 @@ func (b *board) render() string {
 		box = b.promptBox()
 		extra = strings.Count(box, "\n") + 1
 	}
+	timer := ""
+	if b.wait.active && !b.finished {
+		timer = b.timer()
+		extra++
+	}
 	lines := []string{b.header()}
 	if room := b.height - 2 - extra; !b.finished && b.height > 0 && len(b.rows) > room {
 		lines = append(lines, b.fit(room)...)
@@ -474,6 +489,9 @@ func (b *board) render() string {
 		for _, r := range b.rows {
 			lines = append(lines, b.line(r))
 		}
+	}
+	if timer != "" {
+		lines = append(lines, timer)
 	}
 	if b.ask.active {
 		lines = append(lines, box)
@@ -483,6 +501,31 @@ func (b *board) render() string {
 		out += "\n"
 	}
 	return out
+}
+
+func (b *board) timer() string {
+	now := b.now()
+	elapsed := max(now.Sub(b.wait.start), 0)
+	line := " ⏱ " + i18n.T("watch.timer", clock(elapsed))
+	if !b.wait.until.IsZero() {
+		total := b.wait.until.Sub(b.wait.start)
+		left := max(b.wait.until.Sub(now), 0)
+		filled := barWidth * 2
+		if total > 0 {
+			filled = min(int(int64(barWidth*2)*int64(elapsed)/int64(total)), barWidth*2)
+		}
+		line += " / " + clock(total) + " " + strings.Repeat("█", filled) + strings.Repeat("░", barWidth*2-filled) + " · " + i18n.T("watch.timer_left", clock(left+time.Second-1))
+	}
+	line += " · " + i18n.T("watch.timer_stop")
+	return stWarn.Bold(true).Render(ansi.Truncate(line, max(b.width-1, 20), "…"))
+}
+
+func clock(d time.Duration) string {
+	sec := int(d / time.Second)
+	if sec >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", sec/3600, sec/60%60, sec%60)
+	}
+	return fmt.Sprintf("%02d:%02d", sec/60, sec%60)
 }
 
 func (b *board) fit(room int) []string {

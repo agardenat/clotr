@@ -86,6 +86,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 | `clotr export <fichier.md\|->` | Markdown vers `.docx` ou `.pdf` |
 | `clotr sync` | exécution des templates de démarrage |
 | `clotr secrets test <ref>` | lecture d'une référence de secret, longueur et compte déduit, jamais la valeur |
+| `clotr secrets check [cible…]` | résolution sans saisie des identifiants de Vault, des sources, tunnels et instances des cibles, code retour 1 si une saisie serait nécessaire |
 
 ## Options de `run`
 
@@ -105,7 +106,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 | `--incident`, `--panic` | investigation d'incident, journal en direct |
 | `--change` (`--demande`) | demande de changement |
 | `--upgrade` (`--modop`) | mode opératoire de mise à jour |
-| `--watch` (`--suivi`), `--watch-for`, `--watch-every` | suivi en direct |
+| `--watch` (`--suivi`), `--watch-for`, `--watch-every` | suivi en direct, minuté par `--watch-for` ou par une durée dans la demande |
 | `--minutes` (`--cr`) | compte rendu de réunion |
 | `--cve[="<sujet>"]` | exposition à des CVE, GHSA ou compromissions |
 | `--dat iac\|drift\|clean` | document d'architecture technique |
@@ -149,7 +150,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 - Suivi : sources déclarées par `watch_source`, capture sans modèle, modèle `watch`.
 - Relevés système : sondes `system`, `cpu`, `memory`, `disk`, `network`, `connections`, attribution de l'iowait.
 - Compte rendu de réunion : transcription, décisions, actions, suivi du compte rendu précédent, modèle `minutes`.
-- CVE : fiches depuis les sources officielles, cache des fiches, `cve_report` par actif, récapitulatif des positifs.
+- CVE : fiches depuis les sources officielles, cache des fiches, `cve_report` par actif, récapitulatif des positifs (.md, et document client au format de `--export`).
 - DAT et schéma : plan fixe par instance, variantes `iac`, `drift`, `clean`, rendu drawio et PNG.
 - Réponse directe : un agent, sans planner.
 - Conversation : écran plein terminal, un tour par échange.
@@ -183,9 +184,11 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 - Identifiants saisis conservés dans `cubbyhole/`.
 - Références `<source>:<ref>` vers une source de la section `secrets` dans tout champ `*_vault`.
 - `user_vault` : compte lu dans une référence, à côté de `password_vault`.
+- Clé SSH `key_vault` : champ `#champ` de la référence, sinon `key_field` du connecteur ou du tunnel, sinon `private_key`.
 - `auth.oauth2` client credentials ou password sur les connecteurs `http`.
 - `proxy_auth` : proxy authentifié sur les connecteurs `http`.
 - OAuth des serveurs MCP avec enregistrement dynamique.
+- Sans terminal ou en arrière-plan : aucune saisie ni connexion par navigateur, échec immédiat.
 
 ### Autres
 

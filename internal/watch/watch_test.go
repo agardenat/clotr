@@ -310,3 +310,53 @@ func TestCaptureSystemProbe(t *testing.T) {
 		t.Errorf("résumé absent : %v", ek.kind("stream"))
 	}
 }
+
+func TestAskedDuration(t *testing.T) {
+	s, inst, _, ek := newStore(t)
+	inst.log("avant")
+	if _, err := call(t, s, `{"kind":"tool","instance":"vm","tool":"vm_logs","args":{"pod":"a"},"why":"pod"}`); err != nil {
+		t.Fatal(err)
+	}
+	timer := s.DurationTool()
+	for _, bad := range []string{`{"duration":"dix minutes"}`, `{"duration":"-5m"}`, `{"duration":"0s"}`} {
+		if _, err := timer.Call(context.Background(), json.RawMessage(bad)); err == nil {
+			t.Errorf("%s accepté", bad)
+		}
+	}
+	if _, err := timer.Call(context.Background(), json.RawMessage(`{"duration":"300ms"}`)); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	sum := s.Capture(context.Background(), 0)
+	if sum.Reason != "duration" || sum.Limit != 300*time.Millisecond || time.Since(start) > 5*time.Second {
+		t.Fatalf("%+v", sum)
+	}
+	if w := ek.kind("waiting"); len(w) != 1 || !strings.Contains(w[0], "300ms") {
+		t.Fatalf("%q", w)
+	}
+	if len(ek.kind("wait_end")) != 1 {
+		t.Fatal("fin d'attente non signalée")
+	}
+	if _, err := timer.Call(context.Background(), json.RawMessage(`{"duration":"1h"}`)); err != nil {
+		t.Fatal(err)
+	}
+	s2, inst2, _, _ := newStore(t)
+	inst2.log("x")
+	if _, err := call(t, s2, `{"kind":"tool","instance":"vm","tool":"vm_logs","args":{"pod":"a"},"why":"pod"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s2.DurationTool().Call(context.Background(), json.RawMessage(`{"duration":"1h"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if sum := s2.Capture(context.Background(), 200*time.Millisecond); sum.Reason != "duration" || sum.Limit != 200*time.Millisecond {
+		t.Fatalf("--watch-for ne prime pas : %+v", sum)
+	}
+}
+
+func TestFmtLimit(t *testing.T) {
+	for d, want := range map[time.Duration]string{10 * time.Minute: "10m", time.Hour: "1h", 90 * time.Minute: "1h30m", 30 * time.Second: "30s", 95 * time.Second: "1m35s"} {
+		if got := fmtLimit(d); got != want {
+			t.Errorf("%s : %q", d, got)
+		}
+	}
+}

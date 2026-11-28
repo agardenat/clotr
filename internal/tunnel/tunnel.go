@@ -42,7 +42,7 @@ var listen = func(port int) (net.Listener, error) {
 }
 
 func Open(name string, c config.Tunnel) (*Tunnel, error) {
-	t := &Tunnel{Name: name, cfg: c, label: "tunnel " + name, warned: map[string]bool{}}
+	t := &Tunnel{Name: name, cfg: c, label: Label(name), warned: map[string]bool{}}
 	for _, h := range c.Hops {
 		host, port, err := config.SplitHop(h)
 		if err != nil {
@@ -114,41 +114,70 @@ func (t *Tunnel) dial(ctx context.Context, network, addr string) (net.Conn, erro
 	return nil, err
 }
 
+func Label(name string) string {
+	return "tunnel " + name
+}
+
+func CheckCredentials(ctx context.Context, name string, c config.Tunnel) error {
+	_, password, err := credentials(ctx, name, Label(name), c)
+	if err != nil {
+		return err
+	}
+	if password != nil {
+		if _, err := password(ctx); err != nil {
+			return err
+		}
+	}
+	if c.KeyVault != "" {
+		if err := ssh.CheckVaultKey(ctx, creds.ReadVault, c.KeyVault, c.KeyField); err != nil {
+			return fmt.Errorf("tunnel %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func credentials(ctx context.Context, name, label string, c config.Tunnel) (string, func(context.Context) (string, error), error) {
+	user := c.User
+	if user == "" && c.KeyVault != "" {
+		if u, err := creds.ReadVaultUser(ctx, c.KeyVault); err == nil {
+			user = u
+		}
+	}
+	withKey := c.KeyPath != "" || c.KeyVault != ""
+	var password func(context.Context) (string, error)
+	if !withKey || c.PasswordVault != "" {
+		if user == "" {
+			p, err := creds.ResolveUser(ctx, "", "", c.PasswordVault, label)
+			if err != nil {
+				return "", nil, err
+			}
+			user = p.User
+		}
+		password = func(ctx context.Context) (string, error) {
+			p, err := creds.ResolveUser(ctx, user, "", c.PasswordVault, label)
+			return p.Pass, err
+		}
+	}
+	if user == "" {
+		return "", nil, i18n.E("tunnel.user", name)
+	}
+	return user, password, nil
+}
+
 func (t *Tunnel) connect(ctx context.Context) (*ssh.Chain, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.chain != nil {
 		return t.chain, nil
 	}
-	user := t.cfg.User
-	if user == "" && t.cfg.KeyVault != "" {
-		u, err := creds.ReadVaultUser(ctx, t.cfg.KeyVault)
-		if err == nil {
-			user = u
-		}
-	}
-	withKey := t.cfg.KeyPath != "" || t.cfg.KeyVault != ""
-	var password func(context.Context) (string, error)
-	if !withKey || t.cfg.PasswordVault != "" {
-		if user == "" {
-			p, err := creds.ResolveUser(ctx, "", "", t.cfg.PasswordVault, t.label)
-			if err != nil {
-				return nil, err
-			}
-			user = p.User
-		}
-		password = func(ctx context.Context) (string, error) {
-			p, err := creds.ResolveUser(ctx, user, "", t.cfg.PasswordVault, t.label)
-			return p.Pass, err
-		}
-	}
-	if user == "" {
-		return nil, i18n.E("tunnel.user", t.Name)
+	user, password, err := credentials(ctx, t.Name, t.label, t.cfg)
+	if err != nil {
+		return nil, err
 	}
 	t.user = user
 	hops := make([]ssh.Endpoint, len(t.hops))
 	for i, h := range t.hops {
-		h.User, h.KeyPath, h.KeyVault, h.Password = user, config.ExpandHome(t.cfg.KeyPath), t.cfg.KeyVault, password
+		h.User, h.KeyPath, h.KeyVault, h.KeyField, h.Password = user, config.ExpandHome(t.cfg.KeyPath), t.cfg.KeyVault, t.cfg.KeyField, password
 		if password != nil {
 			host := h.Host
 			h.Refused = func(pass string) {

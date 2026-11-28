@@ -286,6 +286,11 @@ func (t Turn) ReportName() string { return t.name("") }
 
 func (t Turn) RecapName() string { return t.name("RECAP") }
 
+func (t Turn) ClientRecapName(names []string) string {
+	t.Projects, t.Clients = nil, names
+	return t.name("RECAP")
+}
+
 func (t Turn) name(suffix string) string {
 	var kind string
 	switch {
@@ -306,7 +311,7 @@ func (t Turn) name(suffix string) string {
 	}
 	var parts []string
 	for _, c := range append(slices.Clone(t.Projects), t.Clients...) {
-		if c = strings.Trim(unsafeName.ReplaceAllString(strings.ToUpper(c), "-"), "-"); c != "" && !slices.Contains(parts, c) {
+		if c = strings.Trim(unsafeName.ReplaceAllString(strings.ToUpper(foldAccents(c)), "-"), "-"); c != "" && !slices.Contains(parts, c) {
 			parts = append(parts, c)
 		}
 	}

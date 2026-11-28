@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -331,10 +332,20 @@ func (in *Instance) buildTargets() ([]*Target, error) {
 }
 
 func (in *Instance) Prepare(ctx context.Context) error {
+	return in.prepare(ctx, true)
+}
+
+func (in *Instance) prepare(ctx context.Context, token bool) error {
 	for _, cn := range sortedKeys(in.https) {
 		hc := in.https[cn]
 		if hc.oauth != nil {
-			if _, err := in.oauthToken(ctx, hc); err != nil {
+			var err error
+			if token {
+				_, err = in.oauthToken(ctx, hc)
+			} else {
+				_, err = hc.oauth.request(ctx)
+			}
+			if err != nil {
 				return err
 			}
 			continue
@@ -362,13 +373,26 @@ func (in *Instance) Prepare(ctx context.Context) error {
 }
 
 func (in *Instance) PrepareCredentials(ctx context.Context) error {
-	if err := in.Prepare(ctx); err != nil {
+	return in.prepareCredentials(ctx, true)
+}
+
+func (in *Instance) CheckCredentials(ctx context.Context) error {
+	return in.prepareCredentials(ctx, false)
+}
+
+func (in *Instance) prepareCredentials(ctx context.Context, token bool) error {
+	if err := in.prepare(ctx, token); err != nil {
 		return err
 	}
 	if in.sshName == "" || in.local {
 		return nil
 	}
 	o := in.conns[in.sshName]
+	if !token && !in.shell {
+		if err := in.checkSSHKeys(ctx, o.str("key_vault"), o.str("key_field")); err != nil {
+			return err
+		}
+	}
 	a := o.sub("auth")
 	if len(a) == 0 {
 		return nil
@@ -392,6 +416,32 @@ func (in *Instance) PrepareCredentials(ctx context.Context) error {
 		_, err = creds.ResolveRefs(ctx, a.str("user_env"), a.str("user_vault"), a.str("password_env"), a.str("password_vault"), label)
 	}
 	return err
+}
+
+func (in *Instance) checkSSHKeys(ctx context.Context, ref, field string) error {
+	refs := []string{}
+	if ref != "" {
+		refs = append(refs, ssh.KeyRef(ref, field))
+	}
+	targets, err := in.buildTargets()
+	if err != nil {
+		return err
+	}
+	for _, t := range targets {
+		r := defaultStr(t.Attrs["ssh_key_vault"], ref)
+		if r == "" {
+			continue
+		}
+		if r = ssh.KeyRef(r, defaultStr(t.Attrs["ssh_key_field"], field)); !slices.Contains(refs, r) {
+			refs = append(refs, r)
+		}
+	}
+	for _, r := range refs {
+		if err := ssh.CheckVaultKey(ctx, creds.ReadVault, r, ""); err != nil {
+			return fmt.Errorf("%s: %w", in.Name, err)
+		}
+	}
+	return nil
 }
 
 func (in *Instance) Defer(ctx context.Context, cacheDir string, ttl time.Duration, refresh bool) error {
@@ -859,7 +909,7 @@ func (in *Instance) sshEndpoint(ctx context.Context, t *Target, h *Host) (ssh.En
 	if host == "" {
 		host = h.Name
 	}
-	ep := ssh.Endpoint{Host: host, Port: port, User: pick("ssh_user", "user"), KeyPath: config.ExpandHome(pick("ssh_key_path", "key")), KeyVault: pick("ssh_key_vault", "key_vault")}
+	ep := ssh.Endpoint{Host: host, Port: port, User: pick("ssh_user", "user"), KeyPath: config.ExpandHome(pick("ssh_key_path", "key")), KeyVault: pick("ssh_key_vault", "key_vault"), KeyField: pick("ssh_key_field", "key_field")}
 	if ep.User == "" && ep.KeyVault != "" {
 		ep.User = in.vaultUser(ctx, ep.KeyVault)
 	}

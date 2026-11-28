@@ -118,6 +118,7 @@ type exportJob struct {
 	keepDir      string
 	keepName     string
 	dest         string
+	ownDest      bool
 	confidential bool
 }
 
@@ -144,7 +145,7 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 	if len(turn.CVE) > 0 {
 		dest = turn.ReportName() + "." + o.exportFmt
 	}
-	return renderExport(ctx, o, cfg, exportJob{
+	err := renderExport(ctx, o, cfg, exportJob{
 		input: template.DocumentInput{
 			Projects: documentProjects(cfg, turn.Projects),
 			Images:   reportImages(md, sess.TurnDir(n), false),
@@ -162,6 +163,78 @@ func exportReport(ctx context.Context, o *options, cfg *config.Config, sess *ses
 		dest:         dest,
 		confidential: sess.Confidential,
 	})
+	if err != nil || len(turn.CVE) == 0 {
+		return err
+	}
+	return exportRecap(ctx, o, cfg, sess, n, turn, lang, md)
+}
+
+func exportRecap(ctx context.Context, o *options, cfg *config.Config, sess *session.Session, n int, turn session.Turn, lang, md string) error {
+	recap := recapOf(lang, md)
+	if recap == "" {
+		return nil
+	}
+	name := turn.ClientRecapName(clientNames(cfg, turn))
+	dir := "."
+	if o.exportPath != "" {
+		dir = filepath.Dir(o.exportPath)
+	}
+	return renderExport(ctx, o, cfg, exportJob{
+		input: template.DocumentInput{
+			Projects: documentProjects(cfg, turn.Projects),
+			Markdown: recap,
+			Title:    exportTitle(recap, ""),
+			Mode:     report.ModeCVE,
+			Language: lang,
+			Date:     turn.Time.Local().Format("2006-01-02"),
+			Audience: template.AudienceClient,
+		},
+		keepDir:      sess.TurnDir(n),
+		keepName:     name,
+		dest:         filepath.Join(dir, name+"."+o.exportFmt),
+		ownDest:      true,
+		confidential: sess.Confidential,
+	})
+}
+
+func clientNames(cfg *config.Config, turn session.Turn) []string {
+	if cfg == nil {
+		return turn.Clients
+	}
+	var out []string
+	clients := slices.Clone(turn.Clients)
+	for _, name := range turn.Projects {
+		for _, cl := range cfg.Clients {
+			for _, p := range cl.Projects {
+				if p.Name != name {
+					continue
+				}
+				if p.Label != "" {
+					out = append(out, p.Label)
+				}
+				if !slices.Contains(clients, cl.Name) {
+					clients = append(clients, cl.Name)
+				}
+			}
+		}
+	}
+	for _, name := range clients {
+		label := name
+		for _, cl := range cfg.Clients {
+			if cl.Name == name && cl.Label != "" {
+				label = cl.Label
+			}
+		}
+		out = append(out, label)
+	}
+	return out
+}
+
+func recapOf(lang, md string) string {
+	prev := i18n.Report()
+	i18n.SetReport(lang)
+	defer i18n.SetReport(prev)
+	return cve.Recap(md)
 }
 
 func withClients(cfg *config.Config, sess *session.Session, n int) session.Turn {
@@ -221,10 +294,7 @@ func writeRecap(o *options, cfg *config.Config, sess *session.Session, n int, md
 	if len(turn.CVE) == 0 || md == "" {
 		return
 	}
-	prev := i18n.Report()
-	i18n.SetReport(reportLanguage(cmp.Or(o.langFlag, sess.Language), md))
-	recap := cve.Recap(md)
-	i18n.SetReport(prev)
+	recap := recapOf(reportLanguage(cmp.Or(o.langFlag, sess.Language), md), md)
 	if recap == "" {
 		return
 	}
@@ -292,6 +362,9 @@ func cmdExport(ctx context.Context, o *options, src string) error {
 func renderExport(ctx context.Context, o *options, cfg *config.Config, job exportJob) error {
 	md := job.input.Markdown
 	format, dest := o.exportFmt, cmp.Or(o.exportPath, job.dest)
+	if job.ownDest {
+		dest = job.dest
+	}
 	name := cmp.Or(o.exportTpl, cfg.Export.Template)
 	if name == "" {
 		return i18n.E("export.no_template")

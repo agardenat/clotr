@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -186,6 +187,20 @@ func TestEnsureLogin(t *testing.T) {
 		t.Fatalf("VAULT_TOKEN fourni: navigateur=%d", b)
 	}
 	t.Setenv("VAULT_TOKEN", "")
+
+	unattended := opts
+	unattended.Unattended = errors.New("sans terminal")
+	os.WriteFile(tokenFile, []byte("hvs.long"), 0o600)
+	if err := EnsureLogin(ctx, unattended); err != nil {
+		t.Fatalf("jeton valide sans terminal: %v", err)
+	}
+	os.WriteFile(tokenFile, []byte("hvs.revoked"), 0o600)
+	if err := EnsureLogin(ctx, unattended); err == nil || !strings.Contains(err.Error(), "sans terminal") {
+		t.Fatalf("jeton révoqué sans terminal: %v", err)
+	}
+	if b, _ := counts(); b != 3 {
+		t.Fatalf("navigateur ouvert sans terminal: %d", b)
+	}
 
 	bad := opts
 	bad.Role = "absent"

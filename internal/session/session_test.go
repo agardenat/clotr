@@ -141,6 +141,10 @@ func TestReportName(t *testing.T) {
 	if recap != "P-1_ACME_CVE-2026-114938_RECAP_20261119" {
 		t.Errorf("récap : %q", recap)
 	}
+	client := Turn{Time: at, CVE: []string{"CVE-2026-114938"}, Clients: []string{"acme"}, Projects: []string{"P-1"}}.ClientRecapName([]string{"Projet Évian", "ACME Corp", "acme corp"})
+	if client != "PROJET-EVIAN_ACME-CORP_CVE-2026-114938_RECAP_20261119" {
+		t.Errorf("récap client : %q", client)
+	}
 }
 
 func TestReportNamedAndLegacy(t *testing.T) {

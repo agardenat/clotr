@@ -19,6 +19,7 @@ type Event struct {
 	Step     int
 	Cost     float64
 	Duration time.Duration
+	Until    time.Time
 	Plan     []PlanItem
 	Card     *Card
 }
@@ -82,7 +83,7 @@ func NewPrinter(w io.Writer) *Printer {
 	go func() {
 		defer p.wg.Done()
 		for e := range p.ch {
-			if e.Kind == "stream" {
+			if e.Kind == "stream" || e.Kind == "wait_end" {
 				continue
 			}
 			elapsed := time.Since(p.start).Truncate(100 * time.Millisecond)

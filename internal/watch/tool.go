@@ -151,6 +151,45 @@ func (t sourceTool) Call(ctx context.Context, raw json.RawMessage) (string, erro
 	return fmt.Sprintf("source %s enregistrée : %s (%s) ; la capture commencera au début de l'attente", got.ID, got.Label(), state), nil
 }
 
+func (s *Store) DurationTool() tools.Tool {
+	return timerTool{s: s}
+}
+
+type timerTool struct {
+	s *Store
+}
+
+func (timerTool) Name() string { return TimerName }
+
+func (timerTool) Description() string {
+	return "Fixe la durée de la capture quand la demande en donne une (« pendant 10 minutes », « suivi d'une heure », « watch 30s ») : l'attente s'arrêtera seule au bout de cette durée, ou avant sur Ctrl-C, puis l'analyse démarrera. Sans durée dans la demande, ne l'appelle pas : l'attente dure jusqu'au Ctrl-C. duration au format Go (30s, 10m, 1h30m)."
+}
+
+func (timerTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"duration":{"type":"string","description":"durée de la capture demandée, format Go : 30s, 10m, 1h30m"}},"required":["duration"]}`)
+}
+
+func (t timerTool) Call(ctx context.Context, raw json.RawMessage) (string, error) {
+	a, err := tools.Decode[struct {
+		Duration string `json:"duration"`
+	}](raw)
+	if err != nil {
+		return "", err
+	}
+	s := t.s
+	if s.Waiting() {
+		return "", errors.New("capture déjà en cours : sa durée ne peut plus changer")
+	}
+	d, err := time.ParseDuration(strings.ReplaceAll(strings.TrimSpace(a.Duration), " ", ""))
+	if err != nil || d <= 0 {
+		return "", fmt.Errorf("duration %q invalide : durée positive au format Go (30s, 10m, 1h30m)", a.Duration)
+	}
+	s.ask(d)
+	s.audit.Log("watch_duration", map[string]any{"task": tools.CallerFrom(ctx).Task, "duration": d.String()})
+	s.Events.Emit(progress.Event{Task: tools.CallerFrom(ctx).Task, Kind: "source", Detail: i18n.T("watch.duration", fmtLimit(d))})
+	return fmt.Sprintf("durée de capture enregistrée : %s ; l'attente s'arrêtera seule au bout de cette durée, ou avant sur Ctrl-C", fmtLimit(d)), nil
+}
+
 func compact(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 || string(raw) == "null" {
 		return json.RawMessage("{}")

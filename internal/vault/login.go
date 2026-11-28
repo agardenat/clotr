@@ -21,11 +21,12 @@ import (
 )
 
 type LoginOptions struct {
-	Path   string
-	Role   string
-	Port   int
-	MinTTL time.Duration
-	Wait   time.Duration
+	Path       string
+	Role       string
+	Port       int
+	MinTTL     time.Duration
+	Wait       time.Duration
+	Unattended error
 }
 
 var TokenPath = func() string {
@@ -139,6 +140,9 @@ func EnsureLogin(ctx context.Context, o LoginOptions) error {
 		case err != nil && !refused(err):
 			return err
 		}
+	}
+	if o.Unattended != nil {
+		return i18n.E("vault.login_unattended", o.Unattended)
 	}
 	return c.loginOIDC(ctx, o)
 }

@@ -3,10 +3,14 @@
 package creds
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -164,5 +168,46 @@ func TestResolveDetailAndRefusal(t *testing.T) {
 	}
 	if strings.Contains(questions[0], "Connexion à vm3") || strings.Contains(questions[0], "⚠") {
 		t.Fatalf("contexte répété sans refus : %q", questions[0])
+	}
+}
+
+func TestOpenConsoleBackground(t *testing.T) {
+	self := func(mode string) *exec.Cmd {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestOpenConsoleBackground$")
+		cmd.Env = append(os.Environ(), "CLOTR_CONSOLE_HELPER="+mode)
+		return cmd
+	}
+	switch os.Getenv("CLOTR_CONSOLE_HELPER") {
+	case "leader":
+		c, err := openConsole()
+		if err == nil {
+			c.Close()
+		}
+		fmt.Printf("premier-plan=%v\n", err)
+		cmd := self("background")
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		_ = cmd.Run()
+		return
+	case "background":
+		_, err := openConsole()
+		fmt.Printf("arrière-plan=%v\n", errors.Is(err, ErrBackground))
+		return
+	}
+	ptm, tty, err := pty.Open()
+	if err != nil {
+		t.Skip(err)
+	}
+	defer ptm.Close()
+	defer tty.Close()
+	cmd := self("leader")
+	var out bytes.Buffer
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, &out, &out
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "premier-plan=<nil>") || !strings.Contains(out.String(), "arrière-plan=true") {
+		t.Fatalf("détection du premier plan :\n%s", out.String())
 	}
 }

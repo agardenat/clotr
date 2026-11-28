@@ -463,6 +463,7 @@ func loadConfig(o *options) (*config.Config, error) {
 	applyVaultEnv(cfg.Vault)
 	creds.UseVaultStore(cfg.Vault.CredentialsCache)
 	registerSecretSources(cfg, func(msg string) { fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), msg) })
+	mcp.Unattended(creds.CanPrompt())
 	for _, l := range []struct {
 		flag string
 		v    int
@@ -857,7 +858,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	}
 	cfg := rt.cfg
 	if l := cfg.Vault.Login; l != nil {
-		if err := vault.EnsureLogin(ctx, vault.LoginOptions{Path: l.Path, Role: l.Role, Port: l.Port, MinTTL: l.MinTTL.Duration, Wait: 5 * time.Minute}); err != nil {
+		if err := vault.EnsureLogin(ctx, vaultLogin(l, creds.CanPrompt())); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cli.warn.vault_login", err))
 		}
 	}
@@ -985,7 +986,7 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 				rt.watch.Interval = o.watchEvery
 			}
 			rt.watchFor = o.watchFor
-			rt.registry.Add(rt.watch.Tool())
+			rt.registry.Add(rt.watch.Tool(), rt.watch.DurationTool())
 		}
 		if rt.ticketSrc != nil && (o.incident || o.change) {
 			rt.tickets = ticket.New(rt.ticketSrc, rt.evidence, rt.audit)
@@ -1299,7 +1300,7 @@ func (rt *app) openTunnels(active []config.Instance, warn func(string)) map[stri
 }
 
 func renderTunnel(tc config.Tunnel, vars map[string]any) (config.Tunnel, error) {
-	fields := map[string]*string{"user": &tc.User, "key_path": &tc.KeyPath, "key_vault": &tc.KeyVault, "password_vault": &tc.PasswordVault}
+	fields := map[string]*string{"user": &tc.User, "key_path": &tc.KeyPath, "key_vault": &tc.KeyVault, "key_field": &tc.KeyField, "password_vault": &tc.PasswordVault}
 	for name, f := range fields {
 		v, err := template.Render(*f, vars)
 		if err != nil {

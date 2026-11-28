@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/agardenat/clotr/internal/creds"
+	"github.com/agardenat/clotr/internal/testutil"
 )
 
 func TestHTTPOAuth2ClientCredentials(t *testing.T) {
@@ -120,5 +121,82 @@ def discover(ctx):
 		if _, err := Parse([]byte(bad), "x.yaml"); err == nil {
 			t.Fatalf("accepté : %s", bad)
 		}
+	}
+}
+
+func TestCheckCredentialsWithoutToken(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Write([]byte(`{"access_token":"tok","expires_in":3600}`))
+	}))
+	defer srv.Close()
+	yaml := `name: x
+targets: [{kind: a}]
+tools: [{kind: inventory}]
+params:
+  url: {type: url}
+  key: {type: string, default: ""}
+  key_field: {type: string, default: private_key}
+connectors:
+  api:
+    driver: http
+    base_url: "{{.url}}"
+    auth:
+      oauth2: {grant: password, token_url: "{{.url}}/token", username: svc, password_vault: kv/api#password}
+  ssh: {driver: ssh, user: ops, key_vault: "{{.key}}", key_field: "{{.key_field}}"}
+ssh_paths: {allow: [/var/log/**]}
+`
+	_, pem := testutil.NewSSHKey(t)
+	secrets := map[string]string{"kv/api#password": "p", "kv/ssh#private_key": string(pem), "kv/bad#private_key": "pas une clé", "kv/alt#ssh_key": string(pem)}
+	read := creds.ReadVault
+	creds.ReadVault = func(_ context.Context, ref string) (string, error) {
+		if v, ok := secrets[ref]; ok {
+			return v, nil
+		}
+		return "", errors.New("absent")
+	}
+	tty := creds.OpenTTY
+	creds.OpenTTY = func() (*creds.Console, error) { return nil, errors.New("pas de terminal") }
+	t.Cleanup(func() { creds.ReadVault, creds.OpenTTY = read, tty })
+	tpl := writeTemplate(t, yaml, "")
+	delete(secrets, "kv/api#password")
+	in, err := NewInstance("chk0", tpl, map[string]any{"url": srv.URL, "key": "kv/ssh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.CheckCredentials(context.Background()); err == nil || !strings.Contains(err.Error(), "kv/api#password") || hits.Load() != 0 {
+		t.Fatalf("mot de passe OAuth absent : %v", err)
+	}
+	secrets["kv/api#password"] = "p"
+	in, err = NewInstance("chk", tpl, map[string]any{"url": srv.URL, "key": "kv/ssh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.CheckCredentials(context.Background()); err != nil || hits.Load() != 0 {
+		t.Fatalf("vérification : %v, appels au serveur de jetons %d", err, hits.Load())
+	}
+	for ref, want := range map[string]string{"kv/ssh#absente": "kv/ssh#absente", "kv/bad": "vault:kv/bad"} {
+		in, err = NewInstance("chk2", tpl, map[string]any{"url": srv.URL, "key": ref})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := in.CheckCredentials(context.Background()); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("clé SSH %s : %v", ref, err)
+		}
+	}
+	in, err = NewInstance("chk4", tpl, map[string]any{"url": srv.URL, "key": "kv/alt", "key_field": "ssh_key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.CheckCredentials(context.Background()); err != nil {
+		t.Fatalf("champ de clé surchargé par la conf : %v", err)
+	}
+	in, err = NewInstance("chk5", tpl, map[string]any{"url": srv.URL, "key": "kv/ssh#private_key", "key_field": "ssh_key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.CheckCredentials(context.Background()); err != nil {
+		t.Fatalf("#champ explicite prioritaire : %v", err)
 	}
 }

@@ -291,3 +291,33 @@ func TestBoardDoneWithoutStart(t *testing.T) {
 		t.Fatalf("durée d'une ligne terminée sans début :\n%s", out)
 	}
 }
+
+func TestBoardWaitTimer(t *testing.T) {
+	clock := time.Date(2026, 11, 27, 15, 0, 0, 0, time.UTC)
+	b := newBoard(10)
+	b.now = func() time.Time { return clock }
+	b.width, b.height = 160, 20
+	b.apply(Event{Task: "w1", Kind: "start", Model: "vm/h1"})
+	b.Update(eventMsg{Kind: "waiting", Detail: "attente", Until: clock.Add(10 * time.Minute)})
+	clock = clock.Add(3*time.Minute + 12*time.Second)
+	out := ansi.Strip(b.render())
+	for _, want := range []string{"⏱ capture 03:12 / 10:00", "6:48 left", "Ctrl-C ends the capture"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q absent :\n%s", want, out)
+		}
+	}
+	b.height = 3
+	if lines := strings.Split(ansi.Strip(b.render()), "\n"); len(lines) > 2 || !strings.Contains(lines[len(lines)-1], "⏱") {
+		t.Errorf("minuteur évincé ou tableau trop haut : %q", lines)
+	}
+	b.height = 20
+	b.Update(eventMsg{Kind: "wait_end"})
+	if strings.Contains(ansi.Strip(b.render()), "⏱") {
+		t.Error("minuteur affiché après la fin de l'attente")
+	}
+	b.Update(eventMsg{Kind: "waiting", Detail: "attente"})
+	clock = clock.Add(75 * time.Minute)
+	if out := ansi.Strip(b.render()); !strings.Contains(out, "⏱ capture 1:15:00 · Ctrl-C") || strings.Contains(out, "left") {
+		t.Errorf("minuteur sans durée :\n%s", out)
+	}
+}

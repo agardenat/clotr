@@ -6,7 +6,7 @@ func init() {
 
 var watchMsgs = map[string]msg{
 	"cli.flag.watch":          {"live follow of an action: clotr finds the logs and states tied to the action described in the request, waits while the action is reproduced and captures everything that arrives on them (matching lines shown live), then Ctrl-C ends the wait and the capture is analysed; alias --suivi", "suivi en direct d'une action : clotr repère les logs et états liés à l'action décrite dans la demande, attend pendant qu'elle est reproduite et capte tout ce qui y arrive (lignes retenues affichées en direct), puis Ctrl-C arrête l'attente et la capture est analysée ; alias --watch"},
-	"cli.flag.watch_for":      {"with --watch: end the wait after this duration (e.g. 10m) instead of waiting for Ctrl-C", "avec --suivi : arrête l'attente après cette durée (ex. 10m) au lieu d'attendre Ctrl-C"},
+	"cli.flag.watch_for":      {"with --watch: end the wait after this duration (e.g. 10m) instead of waiting for Ctrl-C; takes precedence over a duration given in the request", "avec --suivi : arrête l'attente après cette durée (ex. 10m) au lieu d'attendre Ctrl-C ; prime sur une durée donnée dans la demande"},
 	"cli.flag.watch_every":    {"with --watch: delay between two reads of each source (default 5s)", "avec --suivi : délai entre deux lectures de chaque source (défaut 5s)"},
 	"cli.err.watch_modes":     {"--watch/--suivi: incompatible with --incident, --panic, --change, --cve, --ticket, --upgrade, --dat, --diagram, --chat and --direct", "--watch/--suivi : incompatible avec --incident, --panic, --change, --cve, --ticket, --upgrade, --dat, --diagram, --chat et --direct"},
 	"cli.err.watch_for":       {"--watch-for and --watch-every require --watch", "--watch-for et --watch-every exigent --suivi"},
@@ -14,6 +14,11 @@ var watchMsgs = map[string]msg{
 	"watch.step":              {"Sources tied to the action", "Sources liées à l'action"},
 	"watch.capture":           {"Live capture", "Capture en direct"},
 	"watch.waiting":           {"waiting: reproduce the action now — Ctrl-C ends the capture and starts the analysis", "en attente : reproduisez l'action maintenant — Ctrl-C arrête la capture et lance l'analyse"},
+	"watch.waiting_for":       {"waiting: reproduce the action now — capture of %s, ends on its own at %s, Ctrl-C ends it earlier and starts the analysis", "en attente : reproduisez l'action maintenant — capture de %s, arrêt automatique à %s, Ctrl-C l'arrête avant et lance l'analyse"},
+	"watch.duration":          {"capture duration: %s", "durée de capture : %s"},
+	"watch.timer":             {"capture %s", "capture %s"},
+	"watch.timer_left":        {"%s left", "reste %s"},
+	"watch.timer_stop":        {"Ctrl-C ends the capture", "Ctrl-C arrête la capture"},
 	"watch.live_dir":          {"live capture files: %s", "fichiers de capture en direct : %s"},
 	"watch.more":              {"… %d more retained lines (all archived)", "… %d autres lignes retenues (toutes archivées)"},
 	"watch.error":             {"read failed: %s", "lecture en échec : %s"},

@@ -23,6 +23,7 @@ import (
 
 const (
 	ToolName  = "watch_source"
+	TimerName = "watch_duration"
 	TaskID    = "capture"
 	KindFile  = "file"
 	KindJour  = "journal"
@@ -143,10 +144,11 @@ type Captured struct {
 }
 
 type Summary struct {
-	Start   time.Time  `json:"start"`
-	End     time.Time  `json:"end"`
-	Reason  string     `json:"reason"`
-	Sources []Captured `json:"sources"`
+	Start   time.Time     `json:"start"`
+	End     time.Time     `json:"end"`
+	Reason  string        `json:"reason"`
+	Limit   time.Duration `json:"limit,omitempty"`
+	Sources []Captured    `json:"sources"`
 }
 
 type Store struct {
@@ -163,6 +165,7 @@ type Store struct {
 	mu         sync.Mutex
 	sources    []*Source
 	waiting    atomic.Bool
+	asked      time.Duration
 	stop       chan struct{}
 	once       sync.Once
 }
@@ -191,6 +194,18 @@ func (s *Store) Sources() []*Source {
 
 func (s *Store) Waiting() bool { return s.waiting.Load() }
 
+func (s *Store) Asked() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.asked
+}
+
+func (s *Store) ask(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.asked = d
+}
+
 func (s *Store) Stop() {
 	s.once.Do(func() { close(s.stop) })
 }
@@ -210,7 +225,10 @@ func (s *Store) add(src *Source) (*Source, bool) {
 
 func (s *Store) Capture(ctx context.Context, limit time.Duration) Summary {
 	srcs := s.Sources()
-	sum := Summary{Start: s.now()}
+	if limit <= 0 {
+		limit = s.Asked()
+	}
+	sum := Summary{Start: s.now(), Limit: limit}
 	if len(srcs) == 0 {
 		sum.End, sum.Reason = sum.Start, "no_source"
 		return sum
@@ -257,10 +275,15 @@ func (s *Store) Capture(ctx context.Context, limit time.Duration) Summary {
 	}
 	s.audit.Log("watch_start", map[string]any{"sources": len(srcs), "interval": s.Interval.String(), "limit": limit.String()})
 	msg := i18n.T("watch.waiting")
+	var until time.Time
+	if limit > 0 {
+		until = sum.Start.Add(limit)
+		msg = i18n.T("watch.waiting_for", fmtLimit(limit), until.Format("15:04:05"))
+	}
 	if s.Dir != "" {
 		msg += "\n" + i18n.T("watch.live_dir", s.Dir)
 	}
-	s.Events.Emit(progress.Event{Kind: "waiting", Detail: msg})
+	s.Events.Emit(progress.Event{Kind: "waiting", Detail: msg, Until: until})
 	s.waiting.Store(true)
 	defer s.waiting.Store(false)
 	var deadline <-chan time.Time
@@ -298,6 +321,7 @@ func (s *Store) Capture(ctx context.Context, limit time.Duration) Summary {
 		sum.Reason = "cancelled"
 	}
 	cancel()
+	s.Events.Emit(progress.Event{Kind: "wait_end"})
 	wg.Wait()
 	s.waiting.Store(false)
 	if ctx.Err() == nil {
@@ -329,6 +353,20 @@ func (s *Store) Capture(ctx context.Context, limit time.Duration) Summary {
 	}
 	s.audit.Log("watch_end", map[string]any{"reason": sum.Reason, "start": sum.Start, "end": sum.End, "sources": sum.Sources})
 	return sum
+}
+
+func fmtLimit(d time.Duration) string {
+	if d >= time.Second {
+		d = d.Round(time.Second)
+	}
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = s[:len(s)-2]
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = s[:len(s)-2]
+	}
+	return s
 }
 
 func (src *Source) detail() string {

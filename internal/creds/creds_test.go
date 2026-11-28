@@ -206,3 +206,24 @@ func TestResolveVaultUserField(t *testing.T) {
 		}
 	}
 }
+
+func TestNoPromptInBackground(t *testing.T) {
+	OpenTTY = func() (*Console, error) { return nil, ErrBackground }
+	t.Cleanup(func() { OpenTTY = openConsole })
+	if err := CanPrompt(); !errors.Is(err, ErrBackground) {
+		t.Fatalf("CanPrompt : %v", err)
+	}
+	if _, err := Resolve(context.Background(), "", "", "", "bg-test"); err == nil || !strings.Contains(err.Error(), ErrBackground.Error()) {
+		t.Fatalf("Resolve : %v", err)
+	}
+	if _, err := Ask(context.Background(), "q ? "); !errors.Is(err, ErrBackground) {
+		t.Fatalf("Ask : %v", err)
+	}
+	if _, err := AskSecret(context.Background(), "q ? "); !errors.Is(err, ErrBackground) {
+		t.Fatalf("AskSecret : %v", err)
+	}
+	OpenTTY = func() (*Console, error) { return nil, errors.New("pas de terminal") }
+	if err := CanPrompt(); err == nil || errors.Is(err, ErrBackground) {
+		t.Fatalf("CanPrompt sans terminal : %v", err)
+	}
+}

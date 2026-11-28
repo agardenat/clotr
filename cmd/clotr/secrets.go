@@ -6,6 +6,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -14,6 +15,7 @@ import (
 	"github.com/agardenat/clotr/internal/creds"
 	"github.com/agardenat/clotr/internal/i18n"
 	"github.com/agardenat/clotr/internal/template"
+	"github.com/agardenat/clotr/internal/tunnel"
 	"github.com/agardenat/clotr/internal/vault"
 )
 
@@ -77,8 +79,119 @@ func secretsCmd(o *options) *cobra.Command {
 			return cmdSecretsTest(c.Context(), o, args[0], c.OutOrStdout())
 		},
 	}
-	cmd.AddCommand(test)
+	check := &cobra.Command{
+		Use:   i18n.T("cli.secrets.check.use"),
+		Short: i18n.T("cli.secrets.check.short"),
+		Long:  i18n.T("cli.secrets.check.long"),
+		RunE: func(c *cobra.Command, args []string) error {
+			return cmdSecretsCheck(c.Context(), o, args, c.OutOrStdout())
+		},
+	}
+	cmd.AddCommand(test, check)
 	return cmd
+}
+
+func plannedTunnelURL(cfg *config.Config, ic config.Instance) string {
+	cl, ok := cfg.Client(ic.Client)
+	if !ok {
+		return ""
+	}
+	if tc, _ := cl.TunnelFor(ic.Project); tc != nil {
+		return fmt.Sprintf("socks5h://127.0.0.1:%d", tc.Port)
+	}
+	return ""
+}
+
+func vaultLogin(l *config.VaultLogin, unattended error) vault.LoginOptions {
+	return vault.LoginOptions{Path: l.Path, Role: l.Role, Port: l.Port, MinTTL: l.MinTTL.Duration, Wait: 5 * time.Minute, Unattended: unattended}
+}
+
+func cmdSecretsCheck(ctx context.Context, o *options, targets []string, w io.Writer) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cfg, err := loadConfig(o)
+	if err != nil {
+		return err
+	}
+	unattended := i18n.E("cli.secrets.check.mode")
+	saved := creds.OpenTTY
+	creds.OpenTTY = func() (*creds.Console, error) { return nil, unattended }
+	defer func() { creds.OpenTTY = saved }()
+	failed := 0
+	report := func(what string, err error) {
+		if err != nil {
+			failed++
+			fmt.Fprintln(w, i18n.T("cli.secrets.check.ko", what, err))
+			return
+		}
+		fmt.Fprintln(w, i18n.T("cli.secrets.check.ok", what))
+	}
+	if l := cfg.Vault.Login; l != nil {
+		report("Vault", vault.EnsureLogin(ctx, vaultLogin(l, unattended)))
+	}
+	for _, s := range cfg.Secrets {
+		if s.IsEnabled() {
+			report(i18n.T("cli.secrets.check.source", s.Name), creds.SourceErr(s.Name))
+		}
+	}
+	filter := toolFilter{only: expandClients(cfg, targets)}
+	var selected []config.Instance
+	for _, ic := range cfg.Instances {
+		if filter.active(ic.Name, ic.IsEnabled()) {
+			selected = append(selected, ic)
+		}
+	}
+	if len(targets) > 0 && len(selected) == 0 {
+		return i18n.E("cli.secrets.check.none", strings.Join(targets, ", "))
+	}
+	tunnels := map[string]bool{}
+	for _, ic := range selected {
+		cl, ok := cfg.Client(ic.Client)
+		if !ok {
+			continue
+		}
+		tc, key := cl.TunnelFor(ic.Project)
+		if tc == nil || tunnels[key] {
+			continue
+		}
+		tunnels[key] = true
+		project := ""
+		if pr, ok := cl.Project(ic.Project); ok && pr.Tunnel == tc {
+			project = pr.Name
+		}
+		rendered, err := renderTunnel(*tc, clientVars(cl, project))
+		if err == nil {
+			err = tunnel.CheckCredentials(ctx, key, rendered)
+		}
+		report(tunnel.Label(key), err)
+	}
+	var set *template.Set
+	if len(selected) > 0 {
+		if set, err = template.Load(cfg.Templates.Dir); err != nil {
+			return err
+		}
+	}
+	for _, ic := range selected {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		t, ok := set.Get(ic.Template)
+		if !ok {
+			report(ic.Name, i18n.E("cli.warn.template_missing", ic.Name, ic.Template))
+			continue
+		}
+		in, err := newInstance(cfg, ic, t, o.levelFor(cfg, ic), plannedTunnelURL(cfg, ic))
+		if err == nil {
+			err = in.CheckCredentials(ctx)
+			in.Close()
+		}
+		report(ic.Name, err)
+	}
+	if failed > 0 {
+		return i18n.E("cli.secrets.check.failed", failed)
+	}
+	return nil
 }
 
 func cmdSecretsTest(ctx context.Context, o *options, ref string, w io.Writer) error {
@@ -90,7 +203,7 @@ func cmdSecretsTest(ctx context.Context, o *options, ref string, w io.Writer) er
 		return err
 	}
 	if l := cfg.Vault.Login; l != nil {
-		if err := vault.EnsureLogin(ctx, vault.LoginOptions{Path: l.Path, Role: l.Role, Port: l.Port, MinTTL: l.MinTTL.Duration, Wait: 5 * time.Minute}); err != nil {
+		if err := vault.EnsureLogin(ctx, vaultLogin(l, creds.CanPrompt())); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("cli.warn.vault_login", err))
 		}
 	}

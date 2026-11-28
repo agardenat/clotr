@@ -84,6 +84,8 @@ type DocumentProject struct {
 	ClientLabel string
 }
 
+const AudienceClient = "client"
+
 type DocumentInput struct {
 	Images   map[string]Image
 	Projects []DocumentProject
@@ -95,6 +97,7 @@ type DocumentInput struct {
 	Ticket   string
 	Date     string
 	Session  string
+	Audience string
 }
 
 func (d DocumentInput) value(params map[string]any) (starlark.Value, error) {
@@ -133,6 +136,7 @@ func (d DocumentInput) value(params map[string]any) (starlark.Value, error) {
 		"ticket":   starlark.String(d.Ticket),
 		"date":     starlark.String(d.Date),
 		"session":  starlark.String(d.Session),
+		"audience": starlark.String(d.Audience),
 		"params":   p,
 	}), nil
 }

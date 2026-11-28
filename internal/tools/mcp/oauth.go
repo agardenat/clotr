@@ -33,6 +33,16 @@ const loginWait = 5 * time.Minute
 
 var loginsClosed atomic.Bool
 
+var unattended atomic.Pointer[error]
+
+func Unattended(reason error) {
+	if reason == nil {
+		unattended.Store(nil)
+		return
+	}
+	unattended.Store(&reason)
+}
+
 func CloseLogins() {
 	loginsClosed.Store(true)
 }
@@ -325,6 +335,9 @@ func stretch(ctx context.Context, d time.Duration) func() {
 
 func browserFetcher(name, redirect string) auth.AuthorizationCodeFetcher {
 	return func(ctx context.Context, a *auth.AuthorizationArgs) (*auth.AuthorizationResult, error) {
+		if r := unattended.Load(); r != nil {
+			return nil, i18n.E("mcp.oauth_unattended", name, *r)
+		}
 		if loginsClosed.Load() {
 			return nil, i18n.E("mcp.oauth_closed", name)
 		}

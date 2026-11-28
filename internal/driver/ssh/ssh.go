@@ -39,6 +39,7 @@ type Endpoint struct {
 	User     string
 	KeyPath  string
 	KeyVault string
+	KeyField string
 	Password func(ctx context.Context) (string, error)
 	Refused  func(pass string)
 }
@@ -48,7 +49,7 @@ const passwordAttempts = 3
 var ErrAuth error = i18n.Key("ssh.auth")
 
 func (e Endpoint) key() string {
-	return e.User + "@" + net.JoinHostPort(e.Host, strconv.Itoa(e.Port)) + "#" + e.KeyPath + "#" + e.KeyVault
+	return e.User + "@" + net.JoinHostPort(e.Host, strconv.Itoa(e.Port)) + "#" + e.KeyPath + "#" + e.KeyVault + "#" + e.KeyField
 }
 
 type Options struct {
@@ -104,7 +105,7 @@ func (p *Pool) Close() {
 func (p *Pool) signer(ctx context.Context, e Endpoint) (gossh.Signer, error) {
 	path := e.KeyPath
 	if e.KeyVault != "" {
-		path = "vault:" + e.KeyVault
+		path = "vault:" + KeyRef(e.KeyVault, e.KeyField)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -116,21 +117,54 @@ func (p *Pool) signer(ctx context.Context, e Endpoint) (gossh.Signer, error) {
 		if p.opts.ReadVault == nil {
 			return nil, i18n.E("ssh.vault_unavailable")
 		}
-		ref := e.KeyVault
-		if !strings.Contains(ref, "#") {
-			ref += "#private_key"
+		var err error
+		if data, err = readVaultKey(ctx, p.opts.ReadVault, KeyRef(e.KeyVault, e.KeyField)); err != nil {
+			return nil, err
 		}
-		pem, err := p.opts.ReadVault(ctx, ref)
-		if err != nil {
-			return nil, i18n.E("ssh.vault_key", ref, err)
-		}
-		data = decodeKey(pem)
 	} else {
 		var err error
 		if data, err = os.ReadFile(path); err != nil {
 			return nil, i18n.E("ssh.key", err)
 		}
 	}
+	s, err := parseKey(data, path)
+	if err != nil {
+		return nil, err
+	}
+	p.signers[path] = s
+	return s, nil
+}
+
+const DefaultKeyField = "private_key"
+
+func KeyRef(ref, field string) string {
+	if strings.Contains(ref, "#") {
+		return ref
+	}
+	if field == "" {
+		field = DefaultKeyField
+	}
+	return ref + "#" + field
+}
+
+func CheckVaultKey(ctx context.Context, read func(context.Context, string) (string, error), ref, field string) error {
+	ref = KeyRef(ref, field)
+	data, err := readVaultKey(ctx, read, ref)
+	if err == nil {
+		_, err = parseKey(data, "vault:"+ref)
+	}
+	return err
+}
+
+func readVaultKey(ctx context.Context, read func(context.Context, string) (string, error), ref string) ([]byte, error) {
+	pem, err := read(ctx, ref)
+	if err != nil {
+		return nil, i18n.E("ssh.vault_key", ref, err)
+	}
+	return decodeKey(pem), nil
+}
+
+func parseKey(data []byte, path string) (gossh.Signer, error) {
 	s, err := gossh.ParsePrivateKey(data)
 	if err != nil {
 		var pp *gossh.PassphraseMissingError
@@ -139,7 +173,6 @@ func (p *Pool) signer(ctx context.Context, e Endpoint) (gossh.Signer, error) {
 		}
 		return nil, i18n.E("ssh.key_path", path, err)
 	}
-	p.signers[path] = s
 	return s, nil
 }
 

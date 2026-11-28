@@ -451,7 +451,7 @@ func (ti *testInstance) Attr(name string) (starlark.Value, error) {
 			var d DocumentInput
 			var images *starlark.Dict
 			var projects *starlark.List
-			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "markdown", &d.Markdown, "title?", &d.Title, "mode?", &d.Mode, "language?", &d.Language, "request?", &d.Request, "ticket?", &d.Ticket, "date?", &d.Date, "session?", &d.Session, "images?", &images, "projects?", &projects); err != nil {
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "markdown", &d.Markdown, "title?", &d.Title, "mode?", &d.Mode, "language?", &d.Language, "request?", &d.Request, "ticket?", &d.Ticket, "date?", &d.Date, "session?", &d.Session, "audience?", &d.Audience, "images?", &images, "projects?", &projects); err != nil {
 				return nil, err
 			}
 			if projects != nil {

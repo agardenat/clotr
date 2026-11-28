@@ -150,6 +150,31 @@ var ErrNoPrompter = errors.New("creds: prompter unavailable")
 
 var ErrNoAnswer = errors.New("creds: no answer")
 
+type backgroundError struct{}
+
+func (backgroundError) Error() string { return i18n.T("creds.background") }
+
+var ErrBackground error = backgroundError{}
+
+func CanPrompt() error {
+	tty, err := OpenTTY()
+	if err != nil {
+		return noTTY(err)
+	}
+	defer tty.Close()
+	if !term.IsTerminal(tty.In.Fd()) {
+		return i18n.E("creds.notty")
+	}
+	return nil
+}
+
+func noTTY(err error) error {
+	if errors.Is(err, ErrBackground) {
+		return ErrBackground
+	}
+	return i18n.E("creds.notty")
+}
+
 var promptMu sync.Mutex
 
 var Prompter func(ctx context.Context, in *os.File, question string, secret bool) (string, error)
@@ -275,6 +300,9 @@ func resolve(ctx context.Context, user, userEnv, userVault, passEnv, passVault, 
 	}
 	tty, err := OpenTTY()
 	if err != nil {
+		if errors.Is(err, ErrBackground) {
+			missing += " (" + err.Error() + ")"
+		}
 		return Pair{}, errors.New(missing)
 	}
 	defer tty.Close()
@@ -439,7 +467,7 @@ func AskWithin(ctx context.Context, question string, within time.Duration) (stri
 	}
 	tty, err := OpenTTY()
 	if err != nil {
-		return "", i18n.E("creds.notty")
+		return "", noTTY(err)
 	}
 	defer tty.Close()
 	if !term.IsTerminal(tty.In.Fd()) {
@@ -467,7 +495,7 @@ func AskSecret(ctx context.Context, question string) (string, error) {
 	}
 	tty, err := OpenTTY()
 	if err != nil {
-		return "", i18n.E("creds.notty")
+		return "", noTTY(err)
 	}
 	defer tty.Close()
 	if !term.IsTerminal(tty.In.Fd()) {

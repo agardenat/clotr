@@ -284,6 +284,7 @@ type Tunnel struct {
 	User          string   `yaml:"user"`
 	KeyPath       string   `yaml:"key_path"`
 	KeyVault      string   `yaml:"key_vault"`
+	KeyField      string   `yaml:"key_field"`
 	PasswordVault string   `yaml:"password_vault"`
 	HostKey       string   `yaml:"host_key"`
 }

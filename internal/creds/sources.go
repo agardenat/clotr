@@ -36,6 +36,18 @@ func DisableSecretSource(name string, err error) {
 	sourceErrs[name] = err
 }
 
+func SourceErr(name string) error {
+	sourcesMu.Lock()
+	defer sourcesMu.Unlock()
+	if _, ok := sources[name]; ok {
+		return nil
+	}
+	if err := sourceErrs[name]; err != nil {
+		return err
+	}
+	return i18n.E("creds.source_down", name, "?")
+}
+
 func ResetSecretSources() {
 	sourcesMu.Lock()
 	defer sourcesMu.Unlock()
