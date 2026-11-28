@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/integrity"
 )
 
 var maxScriptSteps uint64 = 500_000_000
@@ -146,7 +146,7 @@ func sleepCtx(ctx context.Context, d gotime.Duration) error {
 }
 
 func (in *Instance) readModule(path string) ([]byte, error) {
-	return os.ReadFile(path)
+	return integrity.ReadFile(path)
 }
 
 func (in *Instance) loadScript() error {

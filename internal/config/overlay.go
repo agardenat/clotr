@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/integrity"
 )
 
 const removeTag = "!remove"
@@ -38,7 +39,80 @@ func readOverlay(path string, target any) ([]byte, error) {
 		}
 		return nil, i18n.E("config.local", path, err)
 	}
+	if integrity.Active() {
+		if err := checkOverlay(path, data, target); err != nil {
+			return nil, err
+		}
+	}
 	return data, nil
+}
+
+var (
+	overlayConfig   = []string{"language", "ui_language", "params", "instances", "mcp", "secrets"}
+	overlayClient   = []string{"name", "label", "aliases", "context", "vars", "params", "cve_sources", "instances", "projects"}
+	overlayProject  = []string{"name", "label", "aliases", "context", "vars", "params", "instances"}
+	overlayInstance = []string{"name", "template", "enabled", "params", "describes"}
+	overlaySecret   = []string{"name", "template", "enabled", "params"}
+	overlayMCP      = []string{"name", "enabled", "servers"}
+	overlayAlias    = []string{"alias", "name", "enabled", "auth"}
+)
+
+func checkOverlay(path string, data []byte, target any) error {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Content) == 0 {
+		return err
+	}
+	root := doc.Content[0]
+	if _, ok := target.(*Client); ok {
+		return overlayKeys(path, root, "", overlayClient)
+	}
+	return overlayKeys(path, root, "", overlayConfig)
+}
+
+func overlayKeys(path string, n *yaml.Node, at string, allowed []string) error {
+	if n.Kind == yaml.AliasNode && n.Alias != nil {
+		n = n.Alias
+	}
+	if n.Kind != yaml.MappingNode {
+		return integrity.Overlay(path, at)
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, v := n.Content[i].Value, n.Content[i+1]
+		name := k
+		if at != "" {
+			name = at + "." + k
+		}
+		if !slices.Contains(allowed, k) {
+			return integrity.Overlay(path, name)
+		}
+		var item []string
+		switch k {
+		case "instances":
+			item = overlayInstance
+		case "projects":
+			item = overlayProject
+		case "secrets":
+			item = overlaySecret
+		case "mcp":
+			item = overlayMCP
+		case "servers":
+			item = overlayAlias
+		default:
+			continue
+		}
+		if isNull(v) {
+			continue
+		}
+		if v.Kind != yaml.SequenceNode {
+			return integrity.Overlay(path, name)
+		}
+		for _, it := range v.Content {
+			if err := overlayKeys(path, it, name, item); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func mergeYAML(base, over []byte) ([]byte, error) {

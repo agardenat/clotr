@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.94.0] - 2026-11-28
+- Ajout : contrôle d'intégrité activé par `/etc/clotr/allowed_signers` (root) : templates, modules Starlark, ressources de document et configuration partagée identiques au HEAD signé (clé SSH matérielle) de leur clone, sinon arrêt ; exécutable clotr à root exigé.
+- Ajout : avec le contrôle d'intégrité, surcharge `local/` limitée aux identités, paramètres, instances, sources de secrets et activation MCP.
+
 ## [0.93.0] - 2026-11-28
 - Ajout : `clotr sessions commands [--all]`, commandes soumises à l'utilisateur dans les audits des sessions, rejouées avec l'analyse de lecture seule et les templates actuels.
 - Ajout : sans terminal, commande non reconnue en lecture seule ou appel exigeant un niveau d'accès supérieur mis en attente (`pending.json` du tour, section « Commandes en attente de validation » du rapport) au lieu d'être refusé.

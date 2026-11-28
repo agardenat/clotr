@@ -30,6 +30,7 @@ import (
 	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/gitsync"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/integrity"
 )
 
 func TestPath(t *Template) string {
@@ -41,7 +42,7 @@ func TestPath(t *Template) string {
 
 func RunTests(ctx context.Context, t *Template, w io.Writer) (passed, failed int, err error) {
 	path := TestPath(t)
-	src, err := os.ReadFile(path)
+	src, err := integrity.ReadFile(path)
 	if err != nil {
 		return 0, 0, i18n.E("tpl.test.err", t.Name, err)
 	}

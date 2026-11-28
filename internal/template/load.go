@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/integrity"
 )
 
 type Set struct {
@@ -35,13 +36,27 @@ func Load(dir string) (*Set, error) {
 	more, _ := filepath.Glob(filepath.Join(dir, "*.yml"))
 	files = append(files, more...)
 	sort.Strings(files)
+	if integrity.Active() {
+		stars, _ := filepath.Glob(filepath.Join(dir, "*.star"))
+		for _, f := range stars {
+			if _, err := integrity.ReadFile(f); err != nil {
+				return nil, err
+			}
+		}
+	}
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		data, err := integrity.ReadFile(f)
+		if integrity.IsError(err) {
+			return nil, err
+		}
 		if err != nil {
 			s.Warnings = append(s.Warnings, fmt.Sprintf("template %s: %v", f, err))
 			continue
 		}
 		t, err := Parse(data, f)
+		if integrity.IsError(err) {
+			return nil, err
+		}
 		if err != nil {
 			s.Warnings = append(s.Warnings, err.Error()+i18n.T("tpl.ignored"))
 			continue

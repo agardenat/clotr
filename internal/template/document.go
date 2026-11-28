@@ -13,6 +13,7 @@ import (
 	"go.starlark.net/starlarkstruct"
 
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/integrity"
 )
 
 const (
@@ -63,7 +64,7 @@ func (in *Instance) builtinAsset(_ *starlark.Thread, b *starlark.Builtin, args s
 	if !st.Mode().IsRegular() || st.Size() > maxAssetBytes {
 		return nil, i18n.E("tpl.doc.asset_file", name)
 	}
-	data, err := os.ReadFile(p)
+	data, err := integrity.ReadFile(p)
 	if err != nil {
 		return nil, fmt.Errorf("asset: %w", err)
 	}

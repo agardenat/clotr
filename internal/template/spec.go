@@ -3,7 +3,6 @@ package template
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -16,6 +15,7 @@ import (
 	"github.com/agardenat/clotr/internal/config"
 	"github.com/agardenat/clotr/internal/driver/ssh"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/integrity"
 	"github.com/agardenat/clotr/internal/report"
 )
 
@@ -106,7 +106,7 @@ func Parse(data []byte, source string) (*Template, error) {
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(filepath.Dir(source), p)
 		}
-		src, err := os.ReadFile(p)
+		src, err := integrity.ReadFile(p)
 		if err != nil {
 			return nil, fmt.Errorf("template %s: script: %w", source, err)
 		}

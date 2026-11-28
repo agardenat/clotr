@@ -38,6 +38,7 @@ import (
 	"github.com/agardenat/clotr/internal/evidence"
 	"github.com/agardenat/clotr/internal/httpx"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/integrity"
 	"github.com/agardenat/clotr/internal/lead"
 	"github.com/agardenat/clotr/internal/llm"
 	"github.com/agardenat/clotr/internal/markdown"
@@ -181,6 +182,13 @@ func main() {
 	defer signal.Stop(sigs)
 	go watchInterrupts(ctx, cancel, sigs, &interruptHook)
 	initUILanguage(os.Args[1:])
+	switch mode, err := integrity.Init(version); {
+	case err != nil:
+		fmt.Fprintln(os.Stderr, i18n.T("cli.error"), err)
+		os.Exit(1)
+	case mode == integrity.Dev:
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), i18n.T("integrity.dev", integrity.TrustFile))
+	}
 	if err := newRoot().ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.T("cli.error"), err)
 		os.Exit(1)
@@ -1725,6 +1733,9 @@ func cmdTools(ctx context.Context, o *options, w io.Writer) error {
 }
 
 func cmdTemplatesTest(ctx context.Context, o *options, dir, name string, w io.Writer) error {
+	if dir != "" {
+		integrity.Exempt()
+	}
 	if dir == "" {
 		cfg, err := loadConfig(o)
 		if err != nil {

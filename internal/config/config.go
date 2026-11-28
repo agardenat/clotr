@@ -21,6 +21,7 @@ import (
 	"github.com/agardenat/clotr/internal/access"
 	"github.com/agardenat/clotr/internal/cve/sources"
 	"github.com/agardenat/clotr/internal/i18n"
+	"github.com/agardenat/clotr/internal/integrity"
 	"github.com/agardenat/clotr/internal/report"
 )
 
@@ -635,7 +636,7 @@ func (e *LocalError) Error() string { return e.Err.Error() }
 func (e *LocalError) Unwrap() error { return e.Err }
 
 func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := integrity.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -671,7 +672,7 @@ func localError(data []byte, path string, err error) error {
 }
 
 func LoadShared(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := integrity.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -734,7 +735,12 @@ func (c *Config) loadClients(dir, localDir string) error {
 	}
 	slices.SortFunc(files, func(a, b string) int { return strings.Compare(filepath.Base(a), filepath.Base(b)) })
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		var data []byte
+		if l := filepath.Join(localDir, "clients", filepath.Base(f)); localDir != "" && l == f {
+			data, err = readOverlay(f, &Client{})
+		} else {
+			data, err = integrity.ReadFile(f)
+		}
 		if err != nil {
 			return err
 		}
