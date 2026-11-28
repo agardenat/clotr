@@ -48,13 +48,14 @@ func readOverlay(path string, target any) ([]byte, error) {
 }
 
 var (
-	overlayConfig   = []string{"language", "ui_language", "params", "instances", "mcp", "secrets"}
+	overlayConfig   = []string{"language", "ui_language", "params", "instances", "mcp", "secrets", "providers"}
 	overlayClient   = []string{"name", "label", "aliases", "context", "vars", "params", "cve_sources", "instances", "projects"}
 	overlayProject  = []string{"name", "label", "aliases", "context", "vars", "params", "instances"}
 	overlayInstance = []string{"name", "template", "enabled", "params", "describes"}
 	overlaySecret   = []string{"name", "template", "enabled", "params"}
 	overlayMCP      = []string{"name", "enabled", "servers"}
 	overlayAlias    = []string{"alias", "name", "enabled", "auth"}
+	overlayProvider = []string{"name", "max_requests_per_minute"}
 )
 
 func checkOverlay(path string, data []byte, target any) error {
@@ -97,6 +98,8 @@ func overlayKeys(path string, n *yaml.Node, at string, allowed []string) error {
 			item = overlayMCP
 		case "servers":
 			item = overlayAlias
+		case "providers":
+			item = overlayProvider
 		default:
 			continue
 		}
@@ -107,6 +110,9 @@ func overlayKeys(path string, n *yaml.Node, at string, allowed []string) error {
 			return integrity.Overlay(path, name)
 		}
 		for _, it := range v.Content {
+			if k == "providers" && it.Tag == removeTag {
+				return integrity.Overlay(path, name+"."+removeTag)
+			}
 			if err := overlayKeys(path, it, name, item); err != nil {
 				return err
 			}

@@ -19,7 +19,10 @@ func TestOverlayRestrictedWhenIntegrityActive(t *testing.T) {
 	}{
 		{name: "allowed config", body: "ui_language: fr\nmcp:\n  - name: gw\n    servers:\n      - alias: files\n        auth: oauth\n        enabled: true\nsecrets:\n  - name: s\n    template: t\n    params: {user: u}\ninstances:\n  - name: i\n    template: t\n    params: {host: h}\n"},
 		{name: "allowed client", client: true, body: "name: acme\ncontext: c\ninstances:\n  - name: i\n    template: t\nprojects:\n  - name: p\n    instances:\n      - name: j\n        params: {a: b}\n"},
-		{name: "providers", body: "providers:\n  - name: x\n    base_url: http://x\n", bad: "providers"},
+		{name: "provider rate", body: "providers:\n  - name: x\n    max_requests_per_minute: 60\n"},
+		{name: "providers", body: "providers:\n  - name: x\n    base_url: http://x\n", bad: "providers.base_url"},
+		{name: "provider key", body: "providers:\n  - name: x\n    api_key: k\n", bad: "providers.api_key"},
+		{name: "provider remove", body: "providers:\n  - !remove {name: x}\n", bad: "providers.!remove"},
 		{name: "templates", body: "templates:\n  dir: /tmp/x\n", bad: "templates"},
 		{name: "startup", body: "startup: ~\n", bad: "startup"},
 		{name: "instance commands", body: "instances:\n  - name: i\n    commands: {allow: [rm]}\n", bad: "instances.commands"},
@@ -62,5 +65,19 @@ func TestOverlayFreeWhenIntegrityInactive(t *testing.T) {
 	}
 	if _, err := readOverlay(p, &Config{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOverlayProviderRateMerged(t *testing.T) {
+	path := writeTree(t, map[string]string{
+		"config.yaml":       sharedConfig,
+		"local/config.yaml": "providers:\n  - name: a\n    max_requests_per_minute: 60\n",
+	})
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Providers) != 2 || c.Providers[0].MaxRequestsPerMinute != 60 || c.Providers[0].BaseURL != "http://a/v1" || c.Providers[0].MaxConcurrency != 2 {
+		t.Fatalf("providers: %+v", c.Providers)
 	}
 }

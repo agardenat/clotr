@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.97.0] - 2026-11-28
+- Modification : avec le contrôle d'intégrité, surcharge `local/` de `max_requests_per_minute` d'un fournisseur (`providers` : `name`, `max_requests_per_minute`, sans `!remove`).
+
 ## [0.96.0] - 2026-11-28
 - Ajout : `--progress-json` (`run`, `cve`), progression en JSON Lines sur stderr, un objet par événement (`kind`, `task`, `detail`, `status`, `plan`…).
 - Ajout : `clotr clients [--json]`, clients de la configuration avec leurs projets et libellés.
