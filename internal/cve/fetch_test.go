@@ -127,6 +127,36 @@ func TestPrepareCacheAndChanges(t *testing.T) {
 	}
 }
 
+func TestForceAndDistroSubset(t *testing.T) {
+	cache := t.TempDir()
+	s, _ := preparedStore(t, cache, nil)
+	ctx := tools.WithCaller(context.Background(), tools.Caller{Task: "t0"})
+	if _, err := s.Tools()[0].Call(ctx, json.RawMessage(narrative)); err != nil {
+		t.Fatal(err)
+	}
+	fiche := s.Fiche("CVE-2024-6387")
+	if regexp.MustCompile(`\[E\d{3,}\]`).MatchString(fiche) || !strings.Contains(fiche, "Condition de course") || !strings.Contains(fiche, "LoginGraceTime") {
+		t.Fatalf("fiche autonome:\n%s", fiche)
+	}
+
+	forced := New([]string{"CVE-2024-6387"}, memory.NewStore(), evidence.Open(t.TempDir(), 1), audit.Nop())
+	forced.CacheDir, forced.Force = cache, true
+	forced.Sources = fixtureClient(t, cache, nil)
+	forced.Prepare(context.Background())
+	if len(forced.Missing()) != 1 || forced.NeedsWeb() {
+		t.Fatalf("--force : fiche reprise du cache %v", forced.Missing())
+	}
+
+	subset := New([]string{"CVE-2024-6387"}, memory.NewStore(), evidence.Open(t.TempDir(), 1), audit.Nop())
+	subset.CacheDir = cache
+	subset.Sources = fixtureClient(t, cache, nil)
+	subset.Sources.Distros = []string{sources.RedHat}
+	subset.Prepare(context.Background())
+	if len(subset.Missing()) != 0 {
+		t.Fatalf("fiche établie sur toutes les distributions non reprise pour un sous-ensemble")
+	}
+}
+
 func TestUnknownIDNeedsWeb(t *testing.T) {
 	ev := evidence.Open(t.TempDir(), 1)
 	s := New([]string{"CVE-2099-0001", "LiteLLM supply chain"}, memory.NewStore(), ev, audit.Nop())

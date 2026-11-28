@@ -113,6 +113,7 @@ type Store struct {
 	IDs        []string
 	Sources    *sources.Client
 	CacheDir   string
+	Force      bool
 	facts      map[string]*sources.Facts
 	prior      map[string]*cached
 	mem        *memory.Store

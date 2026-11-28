@@ -118,6 +118,7 @@ type options struct {
 	access       access.Level
 	cveFlag      string
 	cveIDs       []string
+	cveForce     bool
 	cveDistros   []string
 	datFlag      string
 	diagramFlag  string
@@ -430,7 +431,7 @@ func newRoot() *cobra.Command {
 		},
 	}
 
-	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, exportCmd, toolsCmd, templatesCmd, syncCmd, secretsCmd(o), ver)
+	root.AddCommand(models, plan, run, sessionsCmd, sessionCmd, exportCmd, toolsCmd, templatesCmd, syncCmd, secretsCmd(o), cveCmd(o), ver)
 	localizeCobra(root)
 	return root
 }
@@ -951,14 +952,8 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 		}
 	}
 	if kind, ref := webTarget(cfg, o.exclude); o.webAllowed && kind == "model" {
-		prov, model, _ := strings.Cut(ref, "/")
-		p, _ := cfg.Provider(prov)
-		if t, err := websearch.New(p, model, cfg.WebSearch.API, cfg.Limits.RequestTimeout.Duration); err != nil {
-			warn(i18n.T("cli.warn.web_off", err))
-		} else {
-			rt.registry.Add(t)
-			rt.webTools = append(rt.webTools, t.Name())
-			envLines = append(envLines, fmt.Sprintf("- Recherche web: %s (recherche native du modèle %s)", t.Name(), t.Ref()))
+		if line := rt.addModelWeb(ref, warn); line != "" {
+			envLines = append(envLines, line)
 		}
 	}
 	rt.setupInstances(ctx, o, filter, warn)
@@ -1030,6 +1025,19 @@ func setup(ctx context.Context, o *options, withAudit bool) (*app, error) {
 	}
 	mcp.CloseLogins()
 	return rt, nil
+}
+
+func (rt *app) addModelWeb(ref string, warn func(string)) string {
+	prov, model, _ := strings.Cut(ref, "/")
+	p, _ := rt.cfg.Provider(prov)
+	t, err := websearch.New(p, model, rt.cfg.WebSearch.API, rt.cfg.Limits.RequestTimeout.Duration)
+	if err != nil {
+		warn(i18n.T("cli.warn.web_off", err))
+		return ""
+	}
+	rt.registry.Add(t)
+	rt.webTools = append(rt.webTools, t.Name())
+	return fmt.Sprintf("- Recherche web: %s (recherche native du modèle %s)", t.Name(), t.Ref())
 }
 
 func (rt *app) setupInstances(ctx context.Context, o *options, filter toolFilter, warn func(string)) {

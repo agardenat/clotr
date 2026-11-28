@@ -647,6 +647,17 @@ func exposureRank(e string) int {
 	return 3
 }
 
+func (s *Store) Fiche(id string) string {
+	var adv *Advisory
+	advs := s.Advisories()
+	for i := range advs {
+		if advs[i].CVE == id {
+			adv = &advs[i]
+		}
+	}
+	return citation.ReplaceAllString(s.fiche(id, adv, nil), "")
+}
+
 func (s *Store) positives(adv *Advisory, finds []Finding) string {
 	var rows []Finding
 	for _, f := range finds {

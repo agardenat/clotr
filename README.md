@@ -81,6 +81,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 | `clotr plan "<demande>"` | plan sans exécution |
 | `clotr run "<demande>"` | plan, sous-agents, rapport |
 | `clotr run -s <session\|last> "<demande>"` | nouveau tour d'une session |
+| `clotr cve <CVE\|GHSA>… [--force] [--json]` | fiche CVE seule, sources officielles et cache partagé avec `run --cve`, `--force` la rédige de nouveau |
 | `clotr sessions` | liste des sessions |
 | `clotr sessions commands [--all]` | commandes soumises à l'utilisateur dans les audits, rejouées avec l'analyse de lecture seule et les templates actuels |
 | `clotr session <nom\|last>` | rapport d'un tour, `--evidence`, `--synthesize`, `--export` |
@@ -152,7 +153,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 - Suivi : sources déclarées par `watch_source`, capture sans modèle, modèle `watch`.
 - Relevés système : sondes `system`, `cpu`, `memory`, `disk`, `network`, `connections`, attribution de l'iowait.
 - Compte rendu de réunion : transcription, décisions, actions, suivi du compte rendu précédent, modèle `minutes`.
-- CVE : fiches depuis les sources officielles, cache des fiches, `cve_report` par actif, récapitulatif des positifs (.md, et document client au format de `--export`).
+- CVE : fiches depuis les sources officielles, cache des fiches (établi aussi par `clotr cve` sur les distributions de tous les clients), `cve_report` par actif, récapitulatif des positifs (.md, et document client au format de `--export`).
 - DAT et schéma : plan fixe par instance, variantes `iac`, `drift`, `clean`, rendu drawio et PNG.
 - Réponse directe : un agent, sans planner.
 - Conversation : écran plein terminal, un tour par échange.

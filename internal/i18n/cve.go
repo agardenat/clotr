@@ -43,10 +43,21 @@ var cveMsgs = map[string]msg{
 	"cve.modes":             {"--cve is not available with --incident, --panic, --chat or --direct", "--cve n'est pas disponible avec --incident, --panic, --chat ou --direct"},
 	"cve.triage":            {"CVE advisories", "fiches CVE"},
 	"kind.cve":              {"cve", "cve"},
+	"cli.cve.use":           {"cve <CVE|GHSA>...", "cve <CVE|GHSA>..."},
+	"cli.cve.short":         {"Fetches or refreshes CVE advisories, without checking any asset", "Récupère ou met à jour des fiches CVE, sans vérifier aucun actif"},
+	"cli.cve.long":          {"Builds the advisory of each CVE or GHSA identifier the same way as the first step of run --cve: queries the official sources (CVE.org, NVD, CISA KEV, EPSS, GitHub and the distributions of every client), reuses the cached advisory when these sources are unchanged, otherwise has the model write it again, then saves it in the cache that run --cve reuses. --force rewrites the advisory even when the sources are unchanged. Prints the advisories as Markdown, or with --json the advisories, their Markdown under fiches and the identifiers without advisory under missing. Language of the advisory: --lang, otherwise the language setting when it is fr or en, otherwise the interface language.", "Établit la fiche de chaque identifiant CVE ou GHSA de la même façon que la première étape de run --cve : interroge les sources officielles (CVE.org, NVD, CISA KEV, EPSS, GitHub et les distributions de tous les clients), reprend la fiche du cache si ces sources n'ont pas changé, sinon la fait rédiger de nouveau par le modèle, puis l'enregistre dans le cache que run --cve réutilise. --force rédige de nouveau la fiche même si les sources n'ont pas changé. Affiche les fiches en Markdown, ou avec --json les fiches, leur Markdown sous fiches et les identifiants sans fiche sous missing. Langue de la fiche : --lang, sinon le réglage language s'il vaut fr ou en, sinon la langue de l'interface."},
+	"cli.cve.example":       {"  clotr cve CVE-2026-12345\n  clotr cve --force CVE-2026-12345 GHSA-xxxx-xxxx-xxxx\n  clotr cve --json --plain CVE-2026-12345", "  clotr cve CVE-2026-12345\n  clotr cve --force CVE-2026-12345 GHSA-xxxx-xxxx-xxxx\n  clotr cve --json --plain CVE-2026-12345"},
+	"cli.cve.no_id":         {"no CVE or GHSA identifier in the arguments", "aucun identifiant CVE ou GHSA dans les arguments"},
+	"cli.cve.no_web":        {"without web search: an identifier unknown to the official sources will have an unverified advisory", "sans recherche web : un identifiant inconnu des sources officielles aura une fiche non vérifiée"},
+	"cli.cve.missing":       {"no advisory for %s", "aucune fiche pour %s"},
+	"cli.cve.failed":        {"no advisory for %s: %s", "aucune fiche pour %s : %s"},
+	"cli.flag.cve_force":    {"rewrite the advisory even when the official sources are unchanged", "rédiger de nouveau la fiche même si les sources officielles n'ont pas changé"},
+	"cli.flag.cve_json":     {"JSON output: advisories, fiches (Markdown by identifier), missing", "sortie JSON : advisories, fiches (Markdown par identifiant), missing"},
 	"cli.flag.cve":          {"CVE mode: advisories of the CVE or GHSA identifiers of the request (or of --cve=\"<subject>\" for a compromise without CVE) first, then status of each asset shown as it is found (✅ clean, 🚨 vulnerable, ☠️ compromised, ❓ undetermined); tools above an instance's access level are offered and authorized call by call", "mode CVE : fiche des identifiants CVE ou GHSA de la demande (ou du sujet --cve=\"<sujet>\" pour une compromission sans CVE) d'abord, puis statut de chaque actif affiché dès qu'il est établi (✅ sain, 🚨 vulnérable, ☠️ compromis, ❓ indéterminé) ; les outils au-delà du niveau d'accès d'une instance sont proposés et autorisés appel par appel"},
 }
 
 var cveReportMsgs = map[string]msg{
+	"cve.fiche_request":        {"Advisory %s", "Fiche %s"},
 	"report.missing_blocks":    {"CVE data", "Données CVE"},
 	"cve.col.product":          {"Product", "Produit"},
 	"cve.col.affected":         {"Affected versions", "Versions touchées"},

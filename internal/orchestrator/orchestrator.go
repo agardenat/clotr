@@ -221,6 +221,13 @@ func (o *Orchestrator) triageTools() []string {
 	return slices.DeleteFunc(names, func(n string) bool { return !slices.Contains(allowed, n) })
 }
 
+func (o *Orchestrator) Advisories(ctx context.Context, request string) Result {
+	if len(o.CVE.Missing()) == 0 {
+		return o.cachedAdvisories()
+	}
+	return o.triage(ctx, request)
+}
+
 func (o *Orchestrator) advisoriesDone() string {
 	if len(o.CVE.Missing()) == 0 {
 		return cveDone
@@ -256,11 +263,16 @@ func (o *Orchestrator) Run(ctx context.Context, request string) (*Report, error)
 			return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
 		}
 	}
-	if o.CVE != nil && len(o.CVE.Missing()) == 0 {
-		t := o.cachedAdvisories()
+	if o.CVE != nil {
+		t := o.Advisories(ctx, request)
 		results = append(results, t)
-		o.triaged = &t
-	} else if o.Incident || o.CVE != nil {
+		if t.Status == "ok" {
+			o.triaged = &t
+		}
+		if ctx.Err() != nil {
+			return &Report{Plan: &Plan{}, Results: results}, ctx.Err()
+		}
+	} else if o.Incident {
 		t := o.triage(ctx, request)
 		results = append(results, t)
 		if t.Status == "ok" {

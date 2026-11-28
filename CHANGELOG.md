@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.95.0] - 2026-11-28
+- Ajout : `clotr cve <CVE|GHSA>…`, fiche seule comme la première étape de `run --cve` (sources officielles, fiche du cache si inchangées, sinon rédaction par le modèle et mise en cache) ; `--force`, `--json` (`advisories`, `fiches`, `missing`).
+
 ## [0.94.1] - 2026-11-28
 - Modification : contrôle d'intégrité sous macOS, exécutable modifiable sans root (Homebrew) signalé par un avertissement au lieu d'un arrêt ; templates et configuration toujours contrôlés.
 

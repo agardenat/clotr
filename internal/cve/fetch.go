@@ -114,7 +114,7 @@ func (s *Store) Prepare(ctx context.Context) {
 		s.mu.Lock()
 		s.facts[id] = facts
 		s.mu.Unlock()
-		if !facts.Found() {
+		if !facts.Found() || s.Force {
 			continue
 		}
 		prev := s.load(id)
