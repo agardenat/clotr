@@ -183,6 +183,8 @@ func main() {
 	go watchInterrupts(ctx, cancel, sigs, &interruptHook)
 	initUILanguage(os.Args[1:])
 	switch mode, err := integrity.Init(version); {
+	case mode == integrity.Partial:
+		fmt.Fprintln(os.Stderr, i18n.T("cli.warning"), err)
 	case err != nil:
 		fmt.Fprintln(os.Stderr, i18n.T("cli.error"), err)
 		os.Exit(1)

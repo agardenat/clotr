@@ -287,8 +287,15 @@ func TestInit(t *testing.T) {
 		}
 		return errors.New("writable")
 	}
-	if _, err := Init("v1.0.0"); err == nil || !strings.Contains(err.Error(), "writable") {
-		t.Fatalf("writable exe accepted: %v", err)
+	prevLax := exeLax
+	defer func() { exeLax = prevLax }()
+	exeLax = false
+	if m, err := Init("v1.0.0"); m != Off || err == nil || !strings.Contains(err.Error(), "writable") {
+		t.Fatalf("writable exe accepted: %v %v", m, err)
+	}
+	exeLax = true
+	if m, err := Init("v1.0.0"); m != Partial || err == nil || !Active() {
+		t.Fatalf("lax: %v %v %v", m, err, Active())
 	}
 	ownerOK = func(string) error { return errors.New("writable") }
 	if _, err := Init("v1.0.0"); err == nil {

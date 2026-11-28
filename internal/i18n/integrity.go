@@ -10,6 +10,7 @@ var integrityMsgs = map[string]msg{
 	"integrity.not_root":        {"%s is not owned by root or is writable by group or others", "%s n'appartient pas à root ou est modifiable par le groupe ou les autres"},
 	"integrity.not_regular":     {"%s is not a regular file", "%s n'est pas un fichier ordinaire"},
 	"integrity.exe":             {"integrity: the clotr executable %s can be replaced without root (%v): install clotr in a location owned by root (package .deb/.rpm)", "intégrité : l'exécutable clotr %s est remplaçable sans root (%v) : installer clotr dans un emplacement appartenant à root (paquet .deb/.rpm)"},
+	"integrity.exe_partial":     {"integrity: the clotr executable %s can be replaced without root (%v): templates and configuration are checked, the executable is not", "intégrité : l'exécutable clotr %s est remplaçable sans root (%v) : templates et configuration contrôlés, exécutable non contrôlé"},
 	"integrity.no_signers":      {"no signing key", "aucune clé de signature"},
 	"integrity.signer_line":     {"line %d: %v", "ligne %d : %v"},
 	"integrity.signer_key_type": {"key type %s refused: only security keys (sk-ssh-ed25519@openssh.com, sk-ecdsa-sha2-nistp256@openssh.com) are accepted", "type de clé %s refusé : seules les clés matérielles (sk-ssh-ed25519@openssh.com, sk-ecdsa-sha2-nistp256@openssh.com) sont acceptées"},

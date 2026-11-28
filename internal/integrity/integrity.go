@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sync"
 
 	"github.com/agardenat/clotr/internal/i18n"
@@ -17,6 +18,7 @@ const (
 	Off Mode = iota
 	Dev
 	On
+	Partial
 )
 
 type Error struct {
@@ -45,6 +47,7 @@ var (
 	trustLoc = TrustFile
 	ownerOK  = rootOwned
 	exePath  = os.Executable
+	exeLax   = runtime.GOOS == "darwin"
 )
 
 var releaseRe = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$`)
@@ -78,16 +81,20 @@ func Init(version string) (Mode, error) {
 	if err == nil {
 		exe, err = filepath.EvalSymlinks(exe)
 	}
-	if err != nil {
-		return Off, fail(i18n.E("integrity.exe", exe, err))
+	if err == nil {
+		err = ownerOK(exe)
 	}
-	if err := ownerOK(exe); err != nil {
-		return Off, fail(i18n.E("integrity.exe", exe, err))
+	mode := On
+	if err != nil {
+		if !exeLax {
+			return Off, fail(i18n.E("integrity.exe", exe, err))
+		}
+		mode, err = Partial, fail(i18n.E("integrity.exe_partial", exe, err))
 	}
 	mu.Lock()
 	active, signers, repos = true, keys, map[string]*repo{}
 	mu.Unlock()
-	return On, nil
+	return mode, err
 }
 
 func Active() bool {

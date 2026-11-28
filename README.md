@@ -187,7 +187,7 @@ Le workflow `release` publie la release GitHub (notes = section du CHANGELOG) et
 - Clés matérielles seulement (`sk-ssh-ed25519@openssh.com`, `sk-ecdsa-sha2-nistp256@openssh.com`), présence exigée, options `namespaces` et `verify-required`.
 - Templates, modules Starlark, ressources de document, tests de template et configuration partagée lus seulement s'ils sont identiques au HEAD de leur clone, commit signé par une clé de `allowed_signers` ; sinon arrêt.
 - Signature et objets git vérifiés par clotr, sans `git verify-commit` ni configuration git de l'utilisateur.
-- Exécutable clotr et répertoires parents à root exigés.
+- Exécutable clotr et répertoires parents à root exigés sous Linux ; sous macOS (Homebrew), avertissement, templates et configuration contrôlés, exécutable non contrôlé.
 - Surcharge `local/` limitée à `language`, `ui_language`, `params`, `secrets`, `instances` (`name`, `template`, `enabled`, `params`, `describes`), `mcp` (`name`, `enabled`, `servers` : `alias`, `name`, `enabled`, `auth`) ; client : `label`, `aliases`, `context`, `vars`, `params`, `cve_sources`, `instances`, `projects`.
 - `clotr templates test --dir` exempté (réseau, Vault, environnement et fichiers simulés).
 

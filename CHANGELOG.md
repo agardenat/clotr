@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.94.1] - 2026-11-28
+- Modification : contrôle d'intégrité sous macOS, exécutable modifiable sans root (Homebrew) signalé par un avertissement au lieu d'un arrêt ; templates et configuration toujours contrôlés.
+
 ## [0.94.0] - 2026-11-28
 - Ajout : contrôle d'intégrité activé par `/etc/clotr/allowed_signers` (root) : templates, modules Starlark, ressources de document et configuration partagée identiques au HEAD signé (clé SSH matérielle) de leur clone, sinon arrêt ; exécutable clotr à root exigé.
 - Ajout : avec le contrôle d'intégrité, surcharge `local/` limitée aux identités, paramètres, instances, sources de secrets et activation MCP.
